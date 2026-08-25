@@ -40,6 +40,8 @@ three entity strategies, an optional stage, mandatory completion reports,
 deadline escalation, and both of the interesting reactions to a rejected
 approval.
 
+![Route across departments](img/route-lanes.en.svg)
+
 ## Step 0. Verify the installation
 
 **Setup → Plugins** — itilflow must be enabled.
@@ -244,6 +246,8 @@ The route is started by an action on a **stock business rule**, not by a separat
 mechanism in the plugin. This is deliberate: the administrator configures the
 start with the same criteria as everything else in GLPI, and no second condition
 language appears in the system.
+
+![Route start chain](img/start-chain.en.svg)
 
 **Administration → Rules → Business rules for tickets → Add**
 
