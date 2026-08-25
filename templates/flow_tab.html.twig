@@ -1,0 +1,238 @@
+{% set action_url = path('/plugins/itilflow/front/step.form.php') %}
+
+<div class="d-flex align-items-center justify-content-between mb-3">
+   <div>
+      <h3 class="mb-0"><i class="ti ti-route me-1"></i>{{ process_name }}</h3>
+      {% if is_staff %}
+         <div class="text-muted small">Режим контроля: {{ enforcement }}</div>
+      {% else %}
+         <div class="text-muted small">Ход обработки вашей заявки по регламенту</div>
+      {% endif %}
+   </div>
+   <div class="d-flex align-items-center gap-2">
+      {% if is_staff %}
+         <a class="btn btn-sm btn-outline-secondary" href="{{ sheet_url }}" target="_blank" rel="noopener">
+            <i class="ti ti-file-text me-1"></i>Лист согласования
+         </a>
+      {% endif %}
+      <span class="badge {% if instance.fields['state'] == 'running' %}bg-blue-lt{% elseif instance.fields['state'] == 'done' %}bg-green-lt{% else %}bg-red-lt{% endif %} fs-5">{{ state_label }}</span>
+   </div>
+</div>
+
+{% if instance.fields['state'] == 'halted' %}
+   <div class="alert alert-danger d-flex align-items-center justify-content-between">
+      <span>{% if is_staff %}Маршрут остановлен. Исправьте настройку этапа и возобновите.{% else %}Обработка приостановлена, заявка передана ответственному за процесс.{% endif %}</span>
+      {% if can_admin %}
+      <form method="post" action="{{ action_url }}">
+         <input type="hidden" name="_glpi_csrf_token" value="{{ csrf_token() }}">
+         <input type="hidden" name="instances_id" value="{{ instance.fields['id'] }}">
+         <button class="btn btn-sm btn-warning" name="resume" value="1">Возобновить</button>
+      </form>
+      {% endif %}
+   </div>
+{% endif %}
+
+<div class="table-responsive">
+   <table class="table table-hover align-middle">
+      <thead>
+         <tr>
+            <th style="width:56px">№</th>
+            <th>Этап</th>
+            {% if is_staff %}<th>Режим</th>{% endif %}
+            <th>Ответственные</th>
+            <th>Состояние</th>
+            <th>Срок</th>
+            {% if is_staff %}<th>Объект</th>{% endif %}
+            <th>Длительность</th>
+            {% if is_staff %}<th style="width:220px"></th>{% endif %}
+         </tr>
+      </thead>
+      <tbody>
+      {% for s in steps %}
+         <tr {% if s['id'] == current_id %}class="table-active"{% endif %}>
+            <td class="text-center fw-bold">
+               {{ s['ranking'] }}{% if s['pass_number'] > 1 %}<span class="text-muted small">.{{ s['pass_number'] }}</span>{% endif %}
+            </td>
+            <td>{{ s['stage_name'] }}</td>
+            {% if is_staff %}<td class="text-muted">{{ s['mode_label'] }}</td>{% endif %}
+            <td>{{ s['owner_name'] }}</td>
+            <td>
+               {% if s['state'] == 'done' %}<span class="badge bg-green-lt">{{ s['state_label'] }}</span>
+               {% elseif s['state'] == 'running' %}<span class="badge bg-blue-lt">{{ s['state_label'] }}</span>
+               {% elseif s['state'] == 'rejected' %}<span class="badge bg-red-lt">{{ s['state_label'] }}</span>
+               {% elseif s['state'] == 'skipped' %}<span class="badge bg-yellow-lt">{{ s['state_label'] }}</span>
+               {% else %}<span class="badge bg-secondary-lt">{{ s['state_label'] }}</span>
+               {% endif %}
+            </td>
+            <td class="{{ s['overdue'] ? 'text-danger fw-bold' : 'text-muted' }}">
+               {% if s['due'] %}{{ s['due'] }}{% if s['overdue'] %} <span class="badge bg-red-lt">просрочен</span>{% endif %}{% else %}—{% endif %}
+            </td>
+            {% if is_staff %}<td>{{ s['artifact_link']|raw }}</td>{% endif %}
+            <td class="text-muted">{{ s['duration_h'] }}</td>
+            {% if is_staff %}
+            <td>
+               {% if s['id'] == current_id and instance.fields['state'] == 'running' %}
+                  {% if s['execution_mode'] == 'approval' %}
+                     <span class="text-muted small">решается во вкладке «Согласования»</span>
+                     {% if can_admin %}
+                        <form method="post" action="{{ action_url }}" class="d-inline">
+                           <input type="hidden" name="_glpi_csrf_token" value="{{ csrf_token() }}">
+                           <input type="hidden" name="steps_id" value="{{ s['id'] }}">
+                           <button class="btn btn-sm btn-outline-secondary ms-1" name="complete" value="1"
+                                   onclick="return confirm('Закрыть этап согласования принудительно, без решения согласующего?');">
+                              Закрыть принудительно
+                           </button>
+                        </form>
+                     {% endif %}
+                  {% elseif s['execution_mode'] == 'delegated' %}
+                     <span class="text-muted small">закроется решением дочерней заявки</span>
+                     {% if can_admin %}
+                        <form method="post" action="{{ action_url }}" class="d-inline">
+                           <input type="hidden" name="_glpi_csrf_token" value="{{ csrf_token() }}">
+                           <input type="hidden" name="steps_id" value="{{ s['id'] }}">
+                           <button class="btn btn-sm btn-outline-secondary ms-1" name="complete" value="1"
+                                   onclick="return confirm('Закрыть этап принудительно, не дожидаясь дочерней заявки?');">
+                              Закрыть принудительно
+                           </button>
+                        </form>
+                     {% endif %}
+                  {% elseif s['is_mine'] or can_admin %}
+                     <span class="badge bg-blue-lt">ваш этап — форма ниже</span>
+                  {% else %}
+                     <span class="text-muted small">этап другой группы</span>
+                  {% endif %}
+               {% endif %}
+            </td>
+            {% endif %}
+         </tr>
+      {% endfor %}
+      </tbody>
+   </table>
+</div>
+
+{% if form is not null %}
+   <div class="card mt-3">
+      <div class="card-header">
+         <h4 class="card-title mb-0">Завершение этапа — {{ form['title'] }}</h4>
+      </div>
+      <div class="card-body">
+         {% if form['instruction']|striptags|trim != '' %}
+            <div class="alert alert-info py-2">{{ form['instruction']|raw }}</div>
+         {% endif %}
+         <form method="post" action="{{ action_url }}">
+            <input type="hidden" name="_glpi_csrf_token" value="{{ csrf_token() }}">
+            <input type="hidden" name="steps_id" value="{{ form['steps_id'] }}">
+
+            {% if form['comment'] != 'none' %}
+               <label class="form-label" for="itilflow_report">
+                  Что сделано
+                  {% if form['comment'] == 'required' %}<span class="text-danger">*</span>{% endif %}
+               </label>
+               <textarea class="form-control mb-2" id="itilflow_report" name="report" rows="3"
+                         placeholder="Коротко опишите результат — это увидит инициатор заявки"
+                         {% if form['comment'] == 'required' %}required{% endif %}></textarea>
+            {% endif %}
+
+            <div class="d-flex gap-2">
+               <button class="btn btn-primary" name="complete" value="1">
+                  <i class="ti ti-check me-1"></i>Завершить этап
+               </button>
+               {% if form['is_optional'] %}
+                  <button class="btn btn-outline-secondary" name="skip" value="1"
+                          formnovalidate
+                          onclick="return confirm('Пропустить этап? Укажите причину в поле выше.');">
+                     Пропустить этап
+                  </button>
+               {% endif %}
+            </div>
+            {% if form['is_optional'] %}
+               <div class="form-text">При пропуске причина обязательна.</div>
+            {% endif %}
+         </form>
+      </div>
+   </div>
+{% endif %}
+
+{% if reassign is not null %}
+   <div class="card mt-3">
+      <div class="card-header py-2">
+         <h4 class="card-title mb-0 fs-5">Передать этап другому исполнителю — {{ reassign['title'] }}</h4>
+      </div>
+      <div class="card-body">
+         <form method="post" action="{{ action_url }}">
+            <input type="hidden" name="_glpi_csrf_token" value="{{ csrf_token() }}">
+            <input type="hidden" name="steps_id" value="{{ reassign['steps_id'] }}">
+            <div class="row g-2 align-items-end">
+               <div class="col-md-4">
+                  <label class="form-label">Новая группа</label>
+                  {{ call('Group::dropdown', [{
+                     'name': 'to_groups_id', 'value': 0, 'entity': -1,
+                     'condition': {'is_assign': 1}, 'display': false, 'width': '100%'
+                  }])|raw }}
+               </div>
+               <div class="col-md-4">
+                  <label class="form-label">…или конкретный сотрудник</label>
+                  {{ call('User::dropdown', [{
+                     'name': 'to_users_id', 'value': 0, 'right': 'all',
+                     'display': false, 'width': '100%'
+                  }])|raw }}
+               </div>
+               <div class="col-md-4">
+                  <label class="form-label">Причина <span class="text-danger">*</span></label>
+                  <input type="text" class="form-control" name="reassign_reason" required
+                         placeholder="Например: склад закрыт на инвентаризацию">
+               </div>
+            </div>
+            <button class="btn btn-outline-primary mt-3" name="reassign" value="1">
+               <i class="ti ti-arrows-exchange me-1"></i>Передать этап
+            </button>
+            <div class="form-text">
+               В листе согласования останется отметка: кто был назначен и кому передали.
+            </div>
+         </form>
+      </div>
+   </div>
+{% endif %}
+
+{% if withdraw is not null %}
+   <form method="post" action="{{ action_url }}" class="mt-3 d-flex gap-2 align-items-center flex-wrap">
+      <input type="hidden" name="_glpi_csrf_token" value="{{ csrf_token() }}">
+      <input type="hidden" name="instances_id" value="{{ withdraw['instances_id'] }}">
+      <input type="text" class="form-control" style="max-width:340px" name="withdraw_reason"
+             required placeholder="Причина отзыва заявки">
+      <button class="btn btn-outline-danger" name="withdraw" value="1"
+              onclick="return confirm('Отозвать заявку? Обработка по регламенту прекратится.');">
+         <i class="ti ti-arrow-back-up me-1"></i>Отозвать заявку
+      </button>
+   </form>
+{% endif %}
+
+{% if can_admin and instance.fields['state'] == 'running' %}
+   <form method="post" action="{{ action_url }}" class="mt-3">
+      <input type="hidden" name="_glpi_csrf_token" value="{{ csrf_token() }}">
+      <input type="hidden" name="instances_id" value="{{ instance.fields['id'] }}">
+      <button class="btn btn-sm btn-outline-danger" name="abort" value="1"
+              onclick="return confirm('Прервать маршрут? Незавершённые этапы будут помечены пропущенными.');">
+         Прервать маршрут
+      </button>
+   </form>
+{% endif %}
+
+{% if violations|length > 0 %}
+   <h4 class="mt-4"><i class="ti ti-alert-triangle me-1"></i>Попытки действий вне очереди</h4>
+   <div class="table-responsive">
+      <table class="table table-sm">
+         <thead><tr><th>Когда</th><th>Кто</th><th>Что произошло</th><th>Результат</th></tr></thead>
+         <tbody>
+         {% for v in violations %}
+            <tr>
+               <td class="text-muted">{{ v['date'] }}</td>
+               <td>{{ v['user_name'] }}</td>
+               <td>{{ v['message'] }}</td>
+               <td>{% if v['was_blocked'] %}<span class="badge bg-red-lt">заблокировано</span>{% else %}<span class="badge bg-yellow-lt">разрешено, записано</span>{% endif %}</td>
+            </tr>
+         {% endfor %}
+         </tbody>
+      </table>
+   </div>
+{% endif %}

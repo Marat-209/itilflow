@@ -1,0 +1,24 @@
+{% import 'components/form/fields_macros.html.twig' as fields %}
+
+{% if processes|length == 0 %}
+   <div class="alert alert-info">
+      Для этого типа объекта в текущей сущности не описано ни одного активного маршрута.
+   </div>
+{% elseif not can_start %}
+   <div class="alert alert-info">Маршрут на этой заявке не запущен.</div>
+{% else %}
+   <form method="post" action="{{ path('/plugins/itilflow/front/step.form.php') }}">
+      <input type="hidden" name="_glpi_csrf_token" value="{{ csrf_token() }}">
+      <input type="hidden" name="itemtype" value="{{ item.getType() }}">
+      <input type="hidden" name="items_id" value="{{ item.fields['id'] }}">
+
+      <div class="row">
+         {{ fields.dropdownArrayField('processes_id', 0, processes, 'Маршрут', {
+            'display_emptychoice': true
+         }) }}
+      </div>
+      <button class="btn btn-primary" name="start" value="1">
+         <i class="ti ti-player-play me-1"></i>Запустить маршрут
+      </button>
+   </form>
+{% endif %}

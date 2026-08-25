@@ -1,0 +1,87 @@
+{% import 'components/form/fields_macros.html.twig' as fields %}
+
+<div class="asset">
+   {% set rand = random() %}
+   {% set params = params ?? [] %}
+   {% set target = params['target'] ?? item.getFormURL() %}
+
+   <form name="itilflow_process_form" method="post" action="{{ target }}" data-submit-once>
+      <input type="hidden" name="_glpi_csrf_token" value="{{ csrf_token() }}">
+      {% if not item.isNewItem() %}
+         <input type="hidden" name="id" value="{{ item.fields['id'] }}">
+      {% endif %}
+
+      <div class="card-body d-flex flex-wrap">
+         <div class="col-12 col-xxl-8 flex-column">
+            <div class="d-flex flex-row flex-wrap flex-xl-nowrap">
+               <div class="row flex-row align-items-start flex-grow-1">
+                  <div class="row flex-row">
+
+                     {{ fields.textField('name', item.fields['name'], 'Название маршрута', {
+                        'required': true,
+                        'helper': 'Как процесс называется в регламенте. Это название видит и исполнитель, и инициатор. Например: «Выдача рабочего места».'
+                     }) }}
+
+                     {{ fields.dropdownArrayField('itemtype', item.fields['itemtype'], itemtypes, 'Тип объекта', {
+                        'helper': 'К чему применяется маршрут. Заявка — обычные обращения; Изменение — плановые работы с согласованием; Проблема — расследования. Тип нельзя поменять после запуска маршрутов.'
+                     }) }}
+
+                     {{ fields.dropdownArrayField('enforcement', item.fields['enforcement'], enforcements, 'Режим контроля', {
+                        'helper': 'Что происходит при попытке закрыть чужой этап или этап вне очереди. Журнал — только записать; Предупреждение — пропустить и предупредить; Запрет — отменить действие. При внедрении начинайте с журнала: месяц покажет реальную статистику отклонений.'
+                     }) }}
+
+                     {{ fields.dropdownYesNo('block_resolution', item.fields['block_resolution'], 'Запрещать решение до прохождения маршрута', {
+                        'helper': 'Да — заявку нельзя перевести в «Решена» и нельзя добавить решение, пока остались незакрытые этапы или маршрут остановлен. Нет — маршрут только подсказывает порядок, но закрыть заявку можно в любой момент.'
+                     }) }}
+
+                     {{ fields.dropdownYesNo('public_log', item.fields['public_log'], 'Писать ход этапов в ленту заявки', {
+                        'helper': 'Да — каждый переход пишется публичным комментарием: какой этап взят в работу и кем, что сделано, почему пропущен, что сказал согласующий. Инициатор видит это в своём интерфейсе. Выключайте для внутренних процессов, детали которых заявителю не показывают.'
+                     }) }}
+
+                     {{ fields.dropdownYesNo('helpdesk_tab', item.fields['helpdesk_tab'], 'Показывать вкладку маршрута инициатору', {
+                        'helper': 'Да — в интерфейсе самообслуживания появится вкладка «Маршрут этапов» с таблицей: этап, ответственные, состояние, длительность. Нет — инициатору останется только журнал в ленте.'
+                     }) }}
+
+                     {{ fields.dropdownYesNo('allow_withdraw', item.fields['allow_withdraw'], 'Инициатор может отозвать заявку', {
+                        'helper': 'Да — у инициатора появляется кнопка «Отозвать заявку» с обязательной причиной. Маршрут прекращается, заявку можно закрыть. Выключайте для процессов, которые нельзя остановить по желанию заявителя.'
+                     }) }}
+
+                     {{ fields.dropdownField('Calendar', 'calendars_id', item.fields['calendars_id'], 'Рабочий календарь для сроков этапов', {
+                        'entity': -1,
+                        'helper': 'По какому календарю отсчитывать сроки этапов. Не задан — считается круглосуточно. Это тот же механизм, которым GLPI считает SLA.'
+                     }) }}
+
+                     {{ fields.dropdownYesNo('is_active', item.fields['is_active'], 'Маршрут активен', {
+                        'helper': 'Неактивный маршрут нельзя запустить на новых заявках. Уже запущенные продолжают идти.'
+                     }) }}
+
+                     {% if not item.isNewItem() %}
+                        {{ fields.readOnlyField('version', item.fields['version'], 'Версия определения', {
+                           'helper': 'Растёт при каждом сохранении. Заявка запоминает версию на старте и доигрывает её до конца, поэтому правка регламента не переписывает историю уже идущих заявок.'
+                        }) }}
+                     {% endif %}
+
+                     {{ fields.textareaField('comment', item.fields['comment'], 'Описание регламента', {
+                        'full_width': true,
+                        'helper': 'Для администраторов: зачем нужен процесс, на какой документ опирается, кто владелец. Инициатору не показывается.'
+                     }) }}
+
+                  </div>
+               </div>
+            </div>
+         </div>
+      </div>
+
+      <div class="card-footer mx-n2 mb-n2 mt-4">
+         <div class="d-flex flex-row-reverse align-items-start">
+            {% if item.isNewItem() %}
+               <button class="btn btn-primary" type="submit" name="add" value="1">{{ __('Add') }}</button>
+            {% else %}
+               <button class="btn btn-primary" type="submit" name="update" value="1">{{ __('Save') }}</button>
+               <button class="btn btn-outline-danger me-2" type="submit" name="purge" value="1"
+                       onclick="return confirm('{{ __('Confirm the final deletion?') }}');">{{ __('Delete permanently') }}</button>
+            {% endif %}
+         </div>
+      </div>
+   </form>
+</div>

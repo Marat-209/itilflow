@@ -1,0 +1,95 @@
+<style>
+   .flow-sheet { font-size: 12px; }
+   .flow-sheet h2 { font-size: 17px; margin: 0 0 4px; }
+   .flow-sheet .muted { color: #6c757d; }
+   .flow-sheet table { width: 100%; border-collapse: collapse; }
+   .flow-sheet th, .flow-sheet td { border: 1px solid #ccc; padding: 5px 7px; vertical-align: top; }
+   .flow-sheet th { background: #f1f5f2; font-size: 10.5px; text-transform: uppercase; letter-spacing: .04em; }
+   .flow-sheet .num { width: 34px; text-align: center; font-weight: 600; }
+   .flow-sheet .late { color: #9E2F2F; font-weight: 600; }
+   .flow-sheet .swap { color: #96650D; }
+   @media print {
+      .no-print { display: none !important; }
+      .flow-sheet { font-size: 10.5px; }
+   }
+</style>
+
+<div class="flow-sheet p-3">
+
+   <div class="d-flex justify-content-between align-items-start mb-3">
+      <div>
+         <h2>Лист согласования</h2>
+         <div class="muted">Маршрут «{{ header.process }}», редакция {{ header.version }}</div>
+      </div>
+      <div class="no-print">
+         <button class="btn btn-sm btn-primary" onclick="window.print();">
+            <i class="ti ti-printer me-1"></i>Печать
+         </button>
+      </div>
+   </div>
+
+   <table class="mb-3">
+      <tr>
+         <th style="width:22%">{{ header.item_type }}</th>
+         <td>№{{ header.item_id }} — {{ header.item_name }}</td>
+         <th style="width:16%">Организация</th>
+         <td>{{ header.entity }}</td>
+      </tr>
+      <tr>
+         <th>Инициатор</th>
+         <td>{{ header.requester|default('—') }}</td>
+         <th>Состояние маршрута</th>
+         <td>{{ header.state }} ({{ header.progress }})</td>
+      </tr>
+      <tr>
+         <th>Начат</th>
+         <td>{{ header.date_start|default('—') }}</td>
+         <th>Завершён</th>
+         <td>{{ header.date_end|default('—') }}</td>
+      </tr>
+   </table>
+
+   <table>
+      <thead>
+         <tr>
+            <th class="num">№</th>
+            <th>Этап</th>
+            <th>Режим</th>
+            <th>Ответственный</th>
+            <th>Начат</th>
+            <th>Срок</th>
+            <th>Завершён</th>
+            <th>Длит.</th>
+            <th>Результат</th>
+            <th>Отчёт о выполнении</th>
+         </tr>
+      </thead>
+      <tbody>
+      {% for r in rows %}
+         <tr>
+            <td class="num">{{ r.no }}</td>
+            <td>{{ r.name }}</td>
+            <td class="muted">{{ r.mode }}</td>
+            <td>
+               {{ r.actual|default('—') }}
+               {% if r.reassigned %}
+                  <div class="swap">передан от: {{ r.planned }}</div>
+                  {% if r.reason %}<div class="muted">причина: {{ r.reason }}</div>{% endif %}
+               {% endif %}
+               {% if r.closed_by %}<div class="muted">закрыл: {{ r.closed_by }}</div>{% endif %}
+            </td>
+            <td>{{ r.date_start|default('—') }}</td>
+            <td class="{{ r.overdue ? 'late' : '' }}">{{ r.date_due|default('—') }}</td>
+            <td>{{ r.date_end|default('—') }}</td>
+            <td>{{ r.duration|default('—') }}</td>
+            <td class="{{ r.overdue ? 'late' : '' }}">
+               {{ r.result }}{% if r.overdue %} · просрочен{% endif %}
+            </td>
+            <td>{{ r.comment|default('—') }}</td>
+         </tr>
+      {% endfor %}
+      </tbody>
+   </table>
+
+   <div class="muted mt-3">Сформировано {{ header.printed }}</div>
+</div>
