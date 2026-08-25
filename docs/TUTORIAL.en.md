@@ -135,6 +135,8 @@ the transition period. Only once the process has settled, **Strict**. Turning on
 strict enforcement over live traffic means a wave of complaints and no insight
 into what is actually wrong with the procedure.
 
+![Route form](img/ui-route-form.png)
+
 ## Step 4. Define the stages
 
 The **Stages** tab inside the route → "Add stage".
@@ -207,6 +209,11 @@ itself and halts the route with a clear message instead of creating a dead
 ticket. If a route halts the moment a stage opens, this is almost always why:
 make the group recursive from a parent entity, or pick a group from the target
 entity.
+
+This is a complete stage form — the optional purchase stage in child-ticket
+mode:
+
+![Stage configuration form](img/ui-stage-form.png)
 
 ### A task stage (80)
 
@@ -331,12 +338,16 @@ What to check along the way:
 - **Lateness.** A stage with a deadline left open past it is flagged red once the
   automatic action runs, and a private comment appears on the ticket.
 
+![Route tab on a ticket](img/ui-ticket-tab.png)
+
 ## What to look at afterwards
 
 **Approval sheet** — the button in the route tab header. A printable summary of
 the run: per stage pass, the owner, a reassignment note with its reason, who
 actually closed it, start, due, end, duration, the lateness flag, the performer's
 report. This is the document for review and audit.
+
+![Approval sheet](img/ui-approval-sheet.png)
 
 **Bottleneck report** — **Administration → Stage routes → Bottlenecks**. Per
 stage: runs, mean, median, maximum duration, breaches, returns, reassignments.
