@@ -406,6 +406,8 @@ procedure diverges from practice.
 | The ticket will not close although every stage is done | the route is halted after a rejected approval | Stage route tab → Resume or Abort |
 | Two stages share an order number | manual edit of the order | the plugin moved the second to the end and warned; fix the number |
 | The requester sees internal detail | the public log is on for a process not meant for the requester | switch off the timeline log and the requester tab for that route |
+| The child ticket has a different SLA than the stage specifies | the stage sets the SLA when the child ticket is created, and a GLPI business rule then overrides it | look for rules with an SLA action, exclude the stage's category from them, or drop the SLA from the stage and let the rules decide |
+| A performer or approver can do nothing with the ticket | in that ticket's entity they only hold a self-service profile | grant a technician profile in the right entity: the right depends not only on the profile but on where it was granted |
 
 ## Next
 
