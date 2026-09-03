@@ -1,0 +1,42 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 900 128" width="900" height="128"
+     role="img" aria-label="Start chain: an employee fills in the form, a ticket is created in their department with the fixed category, the business rule sees the category, the route starts and opens the first stage">
+  <defs>
+    <marker id="c" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,1 L9,5 L0,9 z" fill="#5B6A7A"/>
+    </marker>
+  </defs>
+  <rect x="0" y="0" width="900" height="128" fill="#FFFFFF"/>
+
+  <rect x="8" y="26" width="176" height="54" rx="3" fill="#FFFFFF" stroke="#C6D1DB" stroke-width="1.5"/>
+  <rect x="240" y="26" width="176" height="54" rx="3" fill="#FFFFFF" stroke="#C6D1DB" stroke-width="1.5"/>
+  <rect x="472" y="26" width="176" height="54" rx="3" fill="#FFFFFF" stroke="#C6D1DB" stroke-width="1.5"/>
+  <rect x="704" y="26" width="188" height="54" rx="3" fill="#E3EEF6" stroke="#1D5F8A" stroke-width="1.5"/>
+
+  <g font-family="Segoe UI, system-ui, sans-serif" font-size="13" fill="#14202C" text-anchor="middle">
+    <text x="96" y="49">An employee fills</text>
+    <text x="96" y="66">in the form</text>
+    <text x="328" y="49">A ticket is created</text>
+    <text x="328" y="66">in their department</text>
+    <text x="560" y="49">The business rule</text>
+    <text x="560" y="66">sees the category</text>
+  </g>
+  <g font-family="Segoe UI, system-ui, sans-serif" font-size="13" fill="#1D5F8A" text-anchor="middle">
+    <text x="798" y="49">Route started,</text>
+    <text x="798" y="66">stage 10 open</text>
+  </g>
+
+  <g stroke="#5B6A7A" stroke-width="1.6" fill="none">
+    <line x1="186" y1="53" x2="236" y2="53" marker-end="url(#c)"/>
+    <line x1="418" y1="53" x2="468" y2="53" marker-end="url(#c)"/>
+    <line x1="650" y1="53" x2="700" y2="53" marker-end="url(#c)"/>
+  </g>
+
+  <g font-family="Segoe UI, system-ui, sans-serif" font-size="10" fill="#8695A5" text-anchor="middle">
+    <text x="211" y="98">category fixed</text>
+    <text x="211" y="110">by the form</text>
+    <text x="443" y="98">fires on</text>
+    <text x="443" y="110">creation</text>
+    <text x="675" y="98">rule</text>
+    <text x="675" y="110">action</text>
+  </g>
+</svg>

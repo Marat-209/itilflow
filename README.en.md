@@ -34,6 +34,12 @@ and half of them get forgotten, or six separate tickets that nobody ties
 together. With a route it is one ticket that creates the right object in the
 right department at the right moment — and physically cannot skip a step.
 
+![Route across departments](docs/img/route-lanes.en.svg)
+
+*Eight stages, five departments. The columns show how one ticket crosses
+organisational boundaries seven times. A dashed outline marks the optional stage;
+the red line is the only backward transition.*
+
 ## What the plugin adds
 
 Exactly one thing the stock system lacks: **controlled transition between stages,
@@ -119,6 +125,24 @@ The mode is set per route.
 A separate **route bypass** right lifts enforcement for a given profile — for the
 duty dispatcher who has to be able to clear a jam. The action still lands in the
 violation log.
+
+## How a route starts
+
+The route is started by an action on a **stock business rule**, not by a separate
+mechanism in the plugin. The administrator configures the start with the same
+criteria as everything else in GLPI, and no second condition language appears in
+the system.
+
+- **Criterion:** the ticket category equals yours.
+- **Action:** "start stage route" → assign → your route.
+
+Add a service catalogue form and fix the category in its destination settings,
+and the requester cannot pick the wrong one — the chain closes by itself:
+
+![Route start chain](docs/img/start-chain.en.svg)
+
+A route can also be started by hand: on the ticket, the stage route tab → pick a
+route → "start route". Requires the stage routes right.
 
 ## Organisational entities
 

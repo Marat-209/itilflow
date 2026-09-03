@@ -1,0 +1,103 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 900 640" width="900" height="640"
+     role="img" aria-label="Route diagram: eight stages run top to bottom, each executed in its own department shown as a column; a rejection at stage 60 returns the route to stage 40">
+  <defs>
+    <marker id="a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,1 L9,5 L0,9 z" fill="#5B6A7A"/>
+    </marker>
+    <marker id="b" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,1 L9,5 L0,9 z" fill="#B3382C"/>
+    </marker>
+  </defs>
+
+  <rect x="0" y="0" width="900" height="640" fill="#FFFFFF"/>
+
+  <g stroke="#DCE3EA" stroke-width="1">
+    <line x1="300" y1="66" x2="300" y2="600"/>
+    <line x1="420" y1="66" x2="420" y2="600"/>
+    <line x1="540" y1="66" x2="540" y2="600"/>
+    <line x1="660" y1="66" x2="660" y2="600"/>
+    <line x1="780" y1="66" x2="780" y2="600"/>
+  </g>
+
+  <g font-family="Segoe UI, system-ui, sans-serif" font-size="11.5" fill="#5B6A7A" text-anchor="middle">
+    <text x="300" y="52">Production</text>
+    <text x="420" y="52">Warehouse</text>
+    <text x="540" y="52">HR</text>
+    <text x="660" y="52">Security</text>
+    <text x="780" y="52">IT</text>
+  </g>
+  <line x1="256" y1="60" x2="824" y2="60" stroke="#C6D1DB" stroke-width="1"/>
+
+  <rect x="240" y="76" width="120" height="22" rx="2" fill="#E3EEF6" stroke="#1D5F8A" stroke-width="1"/>
+  <text x="300" y="91.5" text-anchor="middle" font-family="Segoe UI, system-ui, sans-serif"
+        font-size="11" fill="#1D5F8A">form → ticket</text>
+
+  <g stroke="#5B6A7A" stroke-width="1.6" fill="none">
+    <path d="M300,98 L300,112 L780,112 L780,131" marker-end="url(#a)"/>
+    <path d="M780,169 L780,183 L420,183 L420,201" marker-end="url(#a)"/>
+    <path d="M420,239 L420,263" marker-end="url(#a)"/>
+    <path d="M420,301 L420,315 L540,315 L540,325" marker-end="url(#a)"/>
+    <path d="M540,363 L540,377 L660,377 L660,387" marker-end="url(#a)"/>
+    <path d="M660,425 L660,449" marker-end="url(#a)"/>
+    <path d="M660,487 L660,501 L780,501 L780,511" marker-end="url(#a)"/>
+    <path d="M780,549 L780,563 L300,563 L300,573" marker-end="url(#a)"/>
+  </g>
+
+  <path d="M690,404 L726,404 L726,282 L570,282" stroke="#B3382C" stroke-width="1.6"
+        fill="none" stroke-dasharray="5 4" marker-end="url(#b)"/>
+  <g font-family="Segoe UI, system-ui, sans-serif" font-size="10.5" fill="#B3382C">
+    <text x="732" y="338">rejected →</text>
+    <text x="732" y="352">returned</text>
+  </g>
+
+  <g font-family="Segoe UI, system-ui, sans-serif" font-size="13.5" fill="#14202C">
+    <text x="18" y="155">Budget approval</text>
+    <text x="18" y="225">Stock check</text>
+    <text x="18" y="287">Equipment purchase</text>
+    <text x="18" y="349">HR onboarding</text>
+    <text x="18" y="411">Security clearance</text>
+    <text x="18" y="473">Access approval</text>
+    <text x="18" y="535">Setup and software</text>
+    <text x="18" y="597">Handover, signed form</text>
+  </g>
+  <g font-family="Segoe UI, system-ui, sans-serif" font-size="11" fill="#8695A5">
+    <text x="18" y="139">10 · 100% threshold</text>
+    <text x="18" y="209">20 · SLA 4 h</text>
+    <text x="18" y="271">30 · optional</text>
+    <text x="18" y="333">40 · SLA 1 day</text>
+    <text x="18" y="395">50 · SLA 2 h</text>
+    <text x="18" y="457">60 · 50% threshold</text>
+    <text x="18" y="519">70 · SLA 8 h, due</text>
+    <text x="18" y="581">80 · due 2 h</text>
+  </g>
+
+  <g stroke-width="2">
+    <circle cx="780" cy="150" r="18" fill="#EEE9F7" stroke="#6B4CA8"/>
+    <circle cx="420" cy="220" r="18" fill="#E2F1ED" stroke="#0E7462"/>
+    <circle cx="420" cy="282" r="18" fill="#E2F1ED" stroke="#0E7462" stroke-dasharray="4 3"/>
+    <circle cx="540" cy="344" r="18" fill="#E2F1ED" stroke="#0E7462"/>
+    <circle cx="660" cy="406" r="18" fill="#E2F1ED" stroke="#0E7462"/>
+    <circle cx="660" cy="468" r="18" fill="#EEE9F7" stroke="#6B4CA8"/>
+    <circle cx="780" cy="530" r="18" fill="#E2F1ED" stroke="#0E7462"/>
+    <circle cx="300" cy="592" r="18" fill="#F8EEDE" stroke="#A6620A"/>
+  </g>
+  <g font-family="Segoe UI, system-ui, sans-serif" font-size="12" font-weight="600" text-anchor="middle">
+    <text x="780" y="154.5" fill="#6B4CA8">10</text>
+    <text x="420" y="224.5" fill="#0E7462">20</text>
+    <text x="420" y="286.5" fill="#0E7462">30</text>
+    <text x="540" y="348.5" fill="#0E7462">40</text>
+    <text x="660" y="410.5" fill="#0E7462">50</text>
+    <text x="660" y="472.5" fill="#6B4CA8">60</text>
+    <text x="780" y="534.5" fill="#0E7462">70</text>
+    <text x="300" y="596.5" fill="#A6620A">80</text>
+  </g>
+
+  <g font-family="Segoe UI, system-ui, sans-serif" font-size="12" fill="#33465A">
+    <circle cx="26" cy="620" r="6" fill="#EEE9F7" stroke="#6B4CA8" stroke-width="2"/>
+    <text x="38" y="624">approval</text>
+    <circle cx="140" cy="620" r="6" fill="#E2F1ED" stroke="#0E7462" stroke-width="2"/>
+    <text x="152" y="624">child ticket</text>
+    <circle cx="270" cy="620" r="6" fill="#F8EEDE" stroke="#A6620A" stroke-width="2"/>
+    <text x="282" y="624">task in the ticket</text>
+  </g>
+</svg>
