@@ -55,6 +55,11 @@ final class Sheet
                 'result'      => $result,
                 'comment'     => (string) ($row['comment'] ?? ''),
                 'state'       => (string) $row['state'],
+                // Согласующего указали при прохождении: в документе для аудита
+                // должно быть видно, кто выбрал и на каком основании.
+                'approver_set_by' => (int) ($row['approver_set_by'] ?? 0) > 0
+                    ? getUserName((int) $row['approver_set_by']) : '',
+                'approver_reason' => (string) ($row['approver_reason'] ?? ''),
             ];
         }
         return $out;

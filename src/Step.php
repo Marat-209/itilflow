@@ -62,6 +62,30 @@ class Step extends CommonDBChild
     }
 
     /** Может ли пользователь закрыть этот шаг: он в группе этапа или это его шаг. */
+    /**
+     * Этап-согласование, который ждёт, чтобы ему указали согласующего.
+     *
+     * Признак вычисляемый, без отдельного поля: этап в режиме согласования
+     * идёт, объекта согласования ещё нет, а этап настроен так, что согласующего
+     * указывают при прохождении.
+     */
+    public function awaitsApprover(): bool
+    {
+        if ($this->fields['execution_mode'] !== Stage::MODE_APPROVAL) {
+            return false;
+        }
+        if ($this->fields['state'] !== self::RUNNING) {
+            return false;
+        }
+        if ((int) $this->fields['artifact_items_id'] > 0) {
+            return false;
+        }
+        $stage = $this->getStage();
+        return $stage !== null
+            && ($stage->fields['approver_source'] ?? Stage::APPROVER_FIXED)
+               === Stage::APPROVER_RUNTIME;
+    }
+
     public function isOwnedBy(int $users_id, array $groups_ids): bool
     {
         if ((int) $this->fields['users_id'] > 0 && (int) $this->fields['users_id'] === $users_id) {

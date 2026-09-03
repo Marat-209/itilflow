@@ -81,7 +81,7 @@ header.
 
 ```bash
 # unpack into the GLPI plugins directory
-tar -xzf itilflow-1.3.2.tar.gz -C /var/www/glpi/plugins/
+tar -xzf itilflow-1.4.0.tar.gz -C /var/www/glpi/plugins/
 chown -R www-data:www-data /var/www/glpi/plugins/itilflow
 
 # install and enable
@@ -111,10 +111,27 @@ owning a task.
 | **Child ticket** | a separate ticket in the target entity, linked as a child | the stage leaves for another department; gives the stage its own SLA and its own visibility scope | automatically, when the child ticket is resolved |
 | **Approval** | a stock GLPI approval request with a step and a percentage threshold | sign-off by a manager, security, a system owner, a budget holder | automatically, on the approver's decision |
 
-Approval is not reinvented: GLPI already provides requester-manager
-substitution, substitute approvers, collective approval with a percentage
-threshold, notifications and reports. The plugin only creates the request and
-waits for the outcome.
+Approval is not reinvented: GLPI already provides substitute approvers,
+collective approval with a percentage threshold, notifications and reports.
+The plugin only creates the request and waits for the outcome.
+
+### When the approver is not known in advance
+
+An approval stage has a **who approves** field. By default the approver is set
+when the stage is configured. The second value is **chosen while the ticket
+runs**: the stage opens and waits until the ticket's assignee or a process
+administrator names a specific person and gives a **reason for the choice**.
+
+This is for cases where the approver follows from the circumstances of the
+request and from a source outside GLPI. The example the feature grew from:
+access to a network folder needs its owner's sign-off, and the registry of
+resource owners is kept outside the system. The dispatcher checks the registry
+and names the owner — and the system records who chose whom, and why.
+
+A waiting route does not count as halted. The ticket timeline gets an entry
+about the wait, and another with the reason once the approver is named. The
+approval sheet shows both the choice and its justification, so the document
+remains fit for audit. The approver cannot be swapped once the request exists.
 
 ## Order enforcement
 

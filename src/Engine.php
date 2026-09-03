@@ -565,6 +565,20 @@ final class Engine
         }
         $fk = $item::getForeignKeyField();
 
+        $source = (string) ($stage->fields['approver_source'] ?? Stage::APPROVER_FIXED);
+
+        // Согласующего указывает исполнитель уже по факту обращения — например
+        // когда владелец ресурса известен только по внешнему реестру. Запрос
+        // здесь не создаём: этап открывается и ждёт указания.
+        if ($source === Stage::APPROVER_RUNTIME) {
+            self::announce($i, sprintf(
+                '<p><strong>%s</strong> — ожидает указания согласующего.</p>'
+                . '<p>Согласующего на этом этапе назначает исполнитель.</p>',
+                htmlescape(self::stageLabel($step))
+            ));
+            return true;
+        }
+
         $target_type = (int) $stage->fields['groups_id'] > 0 ? Group::class : \User::class;
         $target_id = $target_type === Group::class
             ? (int) $stage->fields['groups_id']
@@ -590,6 +604,45 @@ final class Engine
             $input['_validationsteps_id'] = $vs;
         }
 
+        return self::openValidation($step, $stage, $item, $target_type, $target_id);
+    }
+
+    /**
+     * Создать штатный запрос на согласование конкретному адресату и привязать
+     * его к шагу. Общий код для этапа с заданным согласующим и для случая,
+     * когда согласующего указали при прохождении.
+     */
+    private static function openValidation(
+        Step $step,
+        Stage $stage,
+        CommonITILObject $item,
+        string $target_type,
+        int $target_id
+    ): bool|string {
+        $val = $item::getValidationClassInstance();
+        if ($val === null) {
+            return 'Для типа ' . $item->getType() . ' согласование не поддерживается.';
+        }
+        $fk = $item::getForeignKeyField();
+
+        $input = [
+            $fk                  => $item->getID(),
+            'entities_id'        => (int) $item->fields['entities_id'],
+            'itemtype_target'    => $target_type,
+            'items_id_target'    => $target_id,
+            'comment_submission' => sprintf(
+                'Согласование этапа %d «%s».%s',
+                (int) $step->fields['ranking'],
+                $stage->fields['name'],
+                trim((string) $stage->fields['content']) !== ''
+                    ? ' ' . strip_tags((string) $stage->fields['content']) : ''
+            ),
+        ];
+        $vs = self::ensureValidationStep((int) $stage->fields['approval_percent']);
+        if ($vs > 0) {
+            $input['_validationsteps_id'] = $vs;
+        }
+
         $vid = $val->add($input);
         if (!$vid) {
             return 'Не удалось создать запрос на согласование.';
@@ -599,6 +652,82 @@ final class Engine
             'artifact_itemtype' => get_class($val),
             'artifact_items_id' => (int) $vid,
         ]);
+        return true;
+    }
+
+    /**
+     * Указать согласующего на этапе, который его ждёт.
+     *
+     * Нужно там, где согласующий известен только по факту обращения: например
+     * владелец сетевого ресурса числится во внешнем реестре, и диспетчер
+     * находит его сам. Основание выбора обязательно и остаётся в истории.
+     */
+    public static function designateApprover(
+        Step $step,
+        int $groups_id,
+        int $users_id,
+        string $reason
+    ): bool {
+        $instance = $step->getInstance();
+        $stage = $step->getStage();
+        $item = $instance?->getItilItem();
+        if ($instance === null || $stage === null || $item === null) {
+            return false;
+        }
+        if (!$step->awaitsApprover()) {
+            self::msg('Этот этап не ждёт указания согласующего.', ERROR);
+            return false;
+        }
+        if ($groups_id <= 0 && $users_id <= 0) {
+            self::msg('Укажите согласующего: группу или сотрудника.', ERROR);
+            return false;
+        }
+        if ($groups_id > 0 && $users_id > 0) {
+            self::msg('Укажите либо группу, либо сотрудника, но не обоих.', ERROR);
+            return false;
+        }
+        if (trim($reason) === '') {
+            self::msg(
+                'Укажите основание выбора согласующего — оно попадёт в лист согласования.',
+                ERROR
+            );
+            return false;
+        }
+
+        $target_type = $groups_id > 0 ? Group::class : \User::class;
+        $target_id = $groups_id > 0 ? $groups_id : $users_id;
+
+        self::enter();
+        try {
+            $res = self::openValidation($step, $stage, $item, $target_type, $target_id);
+            if (is_string($res)) {
+                self::msg($res, ERROR);
+                return false;
+            }
+            $step->update([
+                'id'              => $step->getID(),
+                'groups_id'       => $groups_id,
+                'users_id'        => $users_id,
+                'approver_set_by' => (int) (Session::getLoginUserID() ?: 0),
+                'approver_reason' => trim($reason),
+            ]);
+        } finally {
+            self::leave();
+        }
+
+        $step->getFromDB($step->getID());
+        $who = self::nameOf($groups_id, $users_id);
+        $by = Session::getLoginUserID()
+            ? getUserName((int) Session::getLoginUserID()) : 'система';
+        self::msg(sprintf('Согласующий указан: %s.', $who));
+        self::announce($instance, sprintf(
+            '<p><strong>%s</strong> — согласующий указан.</p><p>Согласует: %s.</p>'
+            . '<p>Указал: %s. Основание: %s</p>',
+            htmlescape(self::stageLabel($step)),
+            htmlescape($who),
+            htmlescape($by),
+            htmlescape(trim($reason))
+        ));
         return true;
     }
 

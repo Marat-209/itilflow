@@ -76,6 +76,12 @@
                   <div class="swap">передан от: {{ r.planned }}</div>
                   {% if r.reason %}<div class="muted">причина: {{ r.reason }}</div>{% endif %}
                {% endif %}
+               {% if r.approver_set_by %}
+                  <div class="swap">согласующего указал: {{ r.approver_set_by }}</div>
+                  {% if r.approver_reason %}
+                     <div class="muted">основание: {{ r.approver_reason }}</div>
+                  {% endif %}
+               {% endif %}
                {% if r.closed_by %}<div class="muted">закрыл: {{ r.closed_by }}</div>{% endif %}
             </td>
             <td>{{ r.date_start|default('—') }}</td>

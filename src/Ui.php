@@ -130,6 +130,24 @@ final class Ui
             }
         }
 
+        // Указание согласующего: этап-согласование, у которого согласующий
+        // определяется при прохождении.
+        //
+        // Проверять принадлежность этапа здесь нельзя: у такого этапа
+        // ответственный ещё не задан, и isOwnedBy() вернул бы false для всех.
+        // Поэтому право даём тем, кто фактически ведёт заявку: администратору
+        // процессов и исполнителям заявки — это и есть диспетчер.
+        $approver = null;
+        if ($is_staff && $current !== null && $instance->fields['state'] === Instance::RUNNING
+            && $current->awaitsApprover()
+            && ($can_admin || self::isAssignee($item, $me))) {
+            $approver = [
+                'steps_id' => $current->getID(),
+                'title'    => sprintf('Этап %d. %s',
+                    (int) $current->fields['ranking'], (string) $current->fields['stage_name']),
+            ];
+        }
+
         // Отзыв заявки — право инициатора.
         $withdraw = null;
         if ($process_obj !== null && $process_obj->fields['allow_withdraw']
@@ -151,10 +169,25 @@ final class Ui
             'current_id'    => $current ? $current->getID() : 0,
             'can_admin'     => $can_admin,
             'reassign'      => $reassign,
+            'approver'      => $approver,
             'withdraw'      => $withdraw,
             'sheet_url'     => \Plugin::getWebDir('itilflow') . '/front/sheet.php?id=' . $instance->getID(),
             'violations'    => $is_staff ? self::violations($instance) : [],
         ]);
+    }
+
+    /** Ведёт ли этот сотрудник заявку: назначен лично или через свою группу. */
+    private static function isAssignee(CommonITILObject $item, int $users_id): bool
+    {
+        if ($item->isUser(\CommonITILActor::ASSIGN, $users_id)) {
+            return true;
+        }
+        foreach (Engine::myGroups() as $gid) {
+            if ($item->isGroup(\CommonITILActor::ASSIGN, $gid)) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private static function violations(Instance $instance): array

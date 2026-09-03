@@ -2,6 +2,7 @@
 
 use GlpiPlugin\Itilflow\Engine;
 use GlpiPlugin\Itilflow\Instance;
+use GlpiPlugin\Itilflow\Stage;
 use GlpiPlugin\Itilflow\Step;
 
 Session::checkCentralAccess();
@@ -62,6 +63,48 @@ if (isset($_POST['complete']) || isset($_POST['skip'])) {
 }
 
 /* ------------------------------------------------ переназначение этапа */
+if (isset($_POST['set_approver'])) {
+    $step = new Step();
+    if (!$step->getFromDB((int) ($_POST['steps_id'] ?? 0))) {
+        Html::back();
+    }
+    $instance = $step->getInstance();
+    $item = $instance?->getItilItem();
+    if ($instance === null || $item === null || !$item->can($item->getID(), UPDATE)) {
+        Session::addMessageAfterRedirect('Недостаточно прав.', false, ERROR);
+        Html::back();
+    }
+    // Указать согласующего может тот, кто ведёт заявку, либо администратор
+    // процессов. Принадлежность этапа не проверяем: у этапа, ждущего
+    // согласующего, ответственного ещё нет.
+    $admin = Session::haveRight('plugin_itilflow_process', UPDATE);
+    $mine = $item->isUser(CommonITILActor::ASSIGN, (int) Session::getLoginUserID());
+    if (!$mine) {
+        foreach (Engine::myGroups() as $gid) {
+            if ($item->isGroup(CommonITILActor::ASSIGN, $gid)) {
+                $mine = true;
+                break;
+            }
+        }
+    }
+    if (!$mine && !$admin) {
+        Session::addMessageAfterRedirect(
+            'Указать согласующего может исполнитель заявки или администратор процессов.',
+            false,
+            ERROR
+        );
+        Html::back();
+    }
+
+    Engine::designateApprover(
+        $step,
+        (int) ($_POST['appr_groups_id'] ?? 0),
+        (int) ($_POST['appr_users_id'] ?? 0),
+        trim(strip_tags((string) ($_POST['appr_reason'] ?? '')))
+    );
+    Html::back();
+}
+
 if (isset($_POST['reassign'])) {
     $step = new Step();
     if (!$step->getFromDB((int) ($_POST['steps_id'] ?? 0))) {
@@ -78,6 +121,22 @@ if (isset($_POST['reassign'])) {
     if (!$mine && !$admin) {
         Session::addMessageAfterRedirect(
             'Передать этап может его текущий исполнитель или администратор процессов.',
+            false,
+            ERROR
+        );
+        Html::back();
+    }
+
+    // Проверка режима нужна и здесь, не только при отрисовке формы: у этапа
+    // согласования объект — запрос согласования, а Engine::reassign() переносит
+    // только задачи. Без этой проверки прямой POST развёл бы шаг и запрос
+    // по разным ответственным.
+    $rstage = $step->getStage();
+    if ($rstage !== null && $rstage->fields['execution_mode'] === Stage::MODE_APPROVAL) {
+        Session::addMessageAfterRedirect(
+            'Этап-согласование так не передаётся: у согласования свой штатный механизм '
+            . 'замещения в GLPI. Если согласующего нужно выбрать по обстоятельствам, '
+            . 'настройте этап с источником «указывается при прохождении».',
             false,
             ERROR
         );
