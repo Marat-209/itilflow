@@ -72,7 +72,7 @@
 
 ```bash
 # распаковать в каталог плагинов GLPI
-tar -xzf itilflow-1.4.0.tar.gz -C /var/www/glpi/plugins/
+tar -xzf itilflow-1.5.0.tar.gz -C /var/www/glpi/plugins/
 chown -R www-data:www-data /var/www/glpi/plugins/itilflow
 
 # установить и включить
