@@ -120,6 +120,8 @@ across nights and weekends by itself.
 |---|---|---|
 | Route name | what the process is called in your company | both the performer and the requester see it |
 | Object type | Ticket | cannot be changed once the first routes have run |
+| Organisational entity | where the route itself lives | decides whether the route is offered in a business rule's action |
+| Visible in child entities | **Yes**, if the rule will live in a sub-entity | otherwise the rule's route dropdown comes up empty |
 | Enforcement mode | **Audit** | see below |
 | Block resolution until complete | Yes | otherwise the route is a hint with no teeth |
 | Write stage progress to the timeline | Yes | the requester follows along and stops calling the desk |
@@ -171,11 +173,13 @@ substantive decision:
 - **Abort** — the route is cancelled and the ticket can be closed. For when a
   rejection means the whole thing is off.
 
-**Check the approver's rights.** The Technician profile lacks the approve-request
-and approve-incident flags — it can only *request* approval. Such an approver
-will see the request and be unable to answer, and the route will stall dead. The
-plugin warns when the stage is saved, but the right has to be granted by hand:
-**Administration → Profiles → [profile] → Assistance**.
+**The approver needs no special right.** Being named as the approver on the
+stage is enough. In GLPI 11 the answer buttons are shown based on `canAnswer()`,
+which only checks that assignment and ignores profile rights. The
+approve-request / approve-incident right governs something else — who GLPI
+offers in its own approver picker — and the route sets the approver itself
+without using that picker. Verified on 11.0.8: an approver on the stock
+Technician profile answers normally.
 
 ### A child-ticket stage (20)
 
@@ -264,8 +268,15 @@ language appears in the system.
 You can combine this with any other criteria: ticket type, location, requester's
 group, organisational entity.
 
+**If the rule's route dropdown is empty**, the route lives in a different
+organisational entity and is not marked visible in child entities. The action's
+dropdown is filtered by the rule's entity: a rule in a sub-entity sees routes of
+that sub-entity and of its parents, but only those with child-entity visibility
+switched on. This is the most common cause of "the rule does not fire" — the rule
+saves without a usable value and silently does nothing.
+
 Rules have an order and a stop-processing flag. If the route does not start when
-a ticket is created, check this first: another rule higher in the order may have
+a ticket is created, check that too: another rule higher in the order may have
 pre-empted it.
 
 The route can also be started by hand: on the ticket, the **Stage route** tab →
@@ -370,7 +381,7 @@ procedure diverges from practice.
 | The route does not start when a ticket is created | the business rule did not fire: wrong category, rule inactive, or pre-empted by a rule higher in the order | check the rule, its order and the stop-processing flag |
 | The group is missing from the stage dropdown | the "can be assigned to tickets" flag is not set | set the flag on the group |
 | The performer cannot see the ticket or close the stage | the group is not among the ticket's assignees, or the profile cannot see its groups' tickets | the plugin adds the group itself for the stage; if that did not help, check the "show assigned tickets" right |
-| The approver sees the request but cannot answer | the profile lacks the approve-request/incident right | Administration → Profiles → [profile] → Assistance |
+| The approver sees no answer buttons | they are not the approver on the current stage, or the stage is already closed | check the ticket's approvals tab; the profile right is irrelevant here |
 | The route halted the moment a stage opened | the owner group does not belong to the target entity and is not visible in it | make the group recursive from a parent entity, or pick one from the target |
 | The ticket will not close although every stage is done | the route is halted after a rejected approval | Stage route tab → Resume or Abort |
 | Two stages share an order number | manual edit of the order | the plugin moved the second to the end and warned; fix the number |
