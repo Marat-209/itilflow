@@ -1,0 +1,78 @@
+<div class="mb-3">
+   {% if can_edit %}
+      <a class="btn btn-primary"
+         href="{{ path('/plugins/itilflow/front/stage.form.php') }}?plugin_itilflow_processes_id={{ process.fields['id'] }}">
+         <i class="ti ti-plus me-1"></i>Добавить этап
+      </a>
+   {% endif %}
+</div>
+
+{% if stages|length == 0 %}
+   <div class="alert alert-info">
+      В маршруте пока нет этапов. Маршрут без этапов не запускается.
+   </div>
+{% else %}
+   <div class="table-responsive">
+      <table class="table table-hover">
+         <thead>
+            <tr>
+               <th style="width:64px">Порядок</th>
+               <th>Этап</th>
+               <th>Режим</th>
+               <th>Ответственные</th>
+               <th>Сущность</th>
+               <th>Норматив</th>
+               <th>Отчёт</th>
+               <th>При отклонении</th>
+            </tr>
+         </thead>
+         <tbody>
+         {% for s in stages %}
+            <tr>
+               <td class="text-center fw-bold">{{ s['ranking'] }}</td>
+               <td>
+                  {% if can_edit %}
+                     <a href="{{ path('/plugins/itilflow/front/stage.form.php') }}?id={{ s['id'] }}">{{ s['name'] }}</a>
+                  {% else %}
+                     {{ s['name'] }}
+                  {% endif %}
+                  {% if s['is_optional'] %}<span class="badge bg-secondary ms-2">необязательный</span>{% endif %}
+               </td>
+               <td>{{ modes[s['execution_mode']]|default(s['execution_mode']) }}</td>
+               <td>
+                  {% if s['groups_id'] %}
+                     {{ group_names[s['groups_id']]|default('—') }}
+                  {% elseif s['users_id'] %}
+                     {{ call('getUserName', [s['users_id']]) }}
+                  {% else %}
+                     <span class="text-danger">не назначен</span>
+                  {% endif %}
+               </td>
+               <td>
+                  {% if s['entity_strategy'] == 'fixed' %}
+                     {{ call('Dropdown::getDropdownName', ['glpi_entities', s['entities_id_target']]) }}
+                  {% elseif s['entity_strategy'] == 'by_group' %}
+                     сущность группы
+                  {% else %}
+                     как у заявки
+                  {% endif %}
+               </td>
+               <td>{% if s['duration'] %}{{ (s['duration'] // 60) }} мин{% else %}—{% endif %}</td>
+               <td>
+                  {% if s['completion_comment'] == 'required' %}<span class="badge bg-red-lt">обязателен</span>
+                  {% elseif s['completion_comment'] == 'none' %}<span class="text-muted">—</span>
+                  {% else %}<span class="text-muted">по желанию</span>{% endif %}
+               </td>
+               <td>
+                  {% if s['execution_mode'] == 'approval' %}
+                     {% if s['on_reject'] == 'back' %}вернуть на этап
+                     {% elseif s['on_reject'] == 'abort' %}прервать маршрут
+                     {% else %}остановить маршрут{% endif %}
+                  {% else %}—{% endif %}
+               </td>
+            </tr>
+         {% endfor %}
+         </tbody>
+      </table>
+   </div>
+{% endif %}

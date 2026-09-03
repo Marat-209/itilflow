@@ -1,0 +1,90 @@
+{% import 'components/form/fields_macros.html.twig' as fields %}
+
+<div class="card">
+   <div class="card-header d-flex align-items-center justify-content-between">
+      <h3 class="card-title mb-0"><i class="ti ti-chart-bar me-1"></i>Узкие места маршрутов</h3>
+      <form method="get" action="{{ path('/plugins/itilflow/front/report.php') }}" class="d-flex gap-2 align-items-center">
+         <select name="processes_id" class="form-select form-select-sm" onchange="this.form.submit();">
+            {% for id, name in processes %}
+               <option value="{{ id }}" {{ id == pid ? 'selected' : '' }}>{{ name }}</option>
+            {% endfor %}
+         </select>
+      </form>
+   </div>
+
+   <div class="card-body">
+      {% if summary.total|default(0) == 0 %}
+         <div class="alert alert-info mb-0">По этому маршруту ещё нет ни одной заявки.</div>
+      {% else %}
+         <div class="row mb-3">
+            <div class="col-auto">
+               <div class="text-muted small">Заявок по маршруту</div>
+               <div class="fs-2 fw-bold">{{ summary.total }}</div>
+            </div>
+            <div class="col-auto">
+               <div class="text-muted small">Средний срок прохождения</div>
+               <div class="fs-2 fw-bold">{{ summary.lead_avg > 0 ? call('Html::timestampToString', [summary.lead_avg, false]) : '—' }}</div>
+            </div>
+            <div class="col-auto">
+               <div class="text-muted small">Медиана</div>
+               <div class="fs-2 fw-bold">{{ summary.lead_med > 0 ? call('Html::timestampToString', [summary.lead_med, false]) : '—' }}</div>
+            </div>
+            <div class="col-auto">
+               <div class="text-muted small">Максимум</div>
+               <div class="fs-2 fw-bold text-danger">{{ summary.lead_max > 0 ? call('Html::timestampToString', [summary.lead_max, false]) : '—' }}</div>
+            </div>
+            <div class="col">
+               <div class="text-muted small">Состояния</div>
+               <div class="mt-1">
+               {% for state, n in summary.by_state %}
+                  <span class="badge {% if state == 'done' %}bg-green-lt{% elseif state == 'running' %}bg-blue-lt{% else %}bg-red-lt{% endif %} me-1">{{ state }}: {{ n }}</span>
+               {% endfor %}
+               </div>
+            </div>
+         </div>
+
+         <p class="text-muted small">
+            Средняя длительность обманчива: затор обычно виден в максимуме и в числе
+            просрочек, а не в среднем. Смотрите строки, где максимум сильно больше медианы —
+            это и есть места, где процесс встаёт.
+         </p>
+
+         <div class="table-responsive">
+            <table class="table table-hover align-middle">
+               <thead>
+                  <tr>
+                     <th style="width:46px">№</th>
+                     <th>Этап</th>
+                     <th>Режим</th>
+                     <th class="text-end">Прохождений</th>
+                     <th class="text-end">Средняя</th>
+                     <th class="text-end">Медиана</th>
+                     <th class="text-end">Максимум</th>
+                     <th class="text-end">Просрочек</th>
+                     <th class="text-end">Возвратов</th>
+                     <th class="text-end">Передач</th>
+                  </tr>
+               </thead>
+               <tbody>
+               {% for s in stages %}
+                  <tr>
+                     <td class="text-center fw-bold">{{ s.ranking }}</td>
+                     <td>{{ s.name }}</td>
+                     <td class="text-muted">{{ modes[s.mode]|default(s.mode) }}</td>
+                     <td class="text-end">{{ s.passes }}</td>
+                     <td class="text-end">{{ s.avg > 0 ? call('Html::timestampToString', [s.avg, false]) : '—' }}</td>
+                     <td class="text-end">{{ s.median > 0 ? call('Html::timestampToString', [s.median, false]) : '—' }}</td>
+                     <td class="text-end {{ s.max > s.median * 3 and s.median > 0 ? 'text-danger fw-bold' : '' }}">
+                        {{ s.max > 0 ? call('Html::timestampToString', [s.max, false]) : '—' }}
+                     </td>
+                     <td class="text-end">{% if s.overdue %}<span class="badge bg-red-lt">{{ s.overdue }}</span>{% else %}—{% endif %}</td>
+                     <td class="text-end">{% if s.rejected %}<span class="badge bg-yellow-lt">{{ s.rejected }}</span>{% else %}—{% endif %}</td>
+                     <td class="text-end">{% if s.reassigned %}<span class="badge bg-secondary-lt">{{ s.reassigned }}</span>{% else %}—{% endif %}</td>
+                  </tr>
+               {% endfor %}
+               </tbody>
+            </table>
+         </div>
+      {% endif %}
+   </div>
+</div>

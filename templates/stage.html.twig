@@ -1,0 +1,123 @@
+{% import 'components/form/fields_macros.html.twig' as fields %}
+
+<div class="asset">
+   {% set target = params['target'] ?? item.getFormURL() %}
+
+   <form name="itilflow_stage_form" method="post" action="{{ target }}" data-submit-once>
+      <input type="hidden" name="_glpi_csrf_token" value="{{ csrf_token() }}">
+      <input type="hidden" name="plugin_itilflow_processes_id" value="{{ processes_id }}">
+      {% if not item.isNewItem() %}
+         <input type="hidden" name="id" value="{{ item.fields['id'] }}">
+      {% endif %}
+
+      <div class="card-body d-flex flex-wrap">
+         <div class="col-12 col-xxl-9 flex-column">
+            <div class="row flex-row">
+
+               {{ fields.textField('name', item.fields['name'], 'Название этапа', {
+                  'required': true,
+                  'helper': 'Короткая формулировка действия. Видна исполнителю и инициатору. Например: Проверка наличия на складе.'
+               }) }}
+
+               {{ fields.numberField('ranking', item.fields['ranking'], 'Порядок', {
+                  'min': 1,
+                  'helper': 'Этапы выполняются строго по возрастанию номера. Пока не закрыт этап 1, этап 2 не существует — его физически нечем отметить. Номера удобно оставлять с промежутками (10, 20, 30), чтобы потом вставлять этапы между ними.'
+               }) }}
+
+               {{ fields.dropdownArrayField('execution_mode', item.fields['execution_mode'], modes, 'Режим исполнения', {
+                  'helper': 'Задача в заявке — работа внутри той же заявки, самый простой режим. Дочерняя заявка — этап уходит в другой отдел или организационную единицу, получает свой SLA и свою видимость. Согласование — штатное утверждение GLPI, этап закроется решением согласующего.'
+               }) }}
+
+               {{ fields.dropdownField('Group', 'groups_id', item.fields['groups_id'], 'Группа-ответственный', {
+                  'condition': {'is_assign': 1},
+                  'entity': -1,
+                  'helper': 'Кто выполняет этап. Только участники этой группы смогут его закрыть — остальным кнопка недоступна. На время этапа группа становится исполнителем заявки, иначе она её просто не увидит. Для этапа-согласования это согласующая группа.'
+               }) }}
+
+               {{ fields.dropdownField('User', 'users_id', item.fields['users_id'], 'Персональный ответственный', {
+                  'right': 'all',
+                  'helper': 'Вместо группы, когда этап закреплён за конкретным человеком — например согласование руководителем. Достаточно указать что-то одно: группу или человека.'
+               }) }}
+
+               {{ fields.dropdownTimestampField('duration', item.fields['duration'], 'Норматив этапа', {
+                  'max': 86400 * 5,
+                  'helper': 'Плановая трудоёмкость. Записывается в задачу этапа и участвует в отчётах по трудозатратам. Это не срок и не таймер: срок этапа задаётся через SLA дочерней заявки.'
+               }) }}
+
+               {{ fields.numberField('deadline_minutes', item.fields['deadline_minutes'], 'Срок этапа, минут', {
+                  'min': 0,
+                  'helper': 'Через сколько минут рабочего времени этап считается просроченным. 0 — срок не контролируется. Отсчёт идёт по рабочему календарю маршрута, поэтому ночь и выходные норматив не съедают. Просроченные этапы помечаются автоматическим действием и видны в отчёте по узким местам.'
+               }) }}
+
+               {{ fields.smallTitle('Организационная единица', 'ti ti-building') }}
+
+               {{ fields.dropdownArrayField('entity_strategy', item.fields['entity_strategy'], strategies, 'Где исполняется этап', {
+                  'helper': 'Заявка в GLPI принадлежит ровно одной организационной единице, поэтому передать работу в другой отдел можно только дочерней заявкой. Сущность родительской — этап остаётся там же; Заданная — всегда в указанной единице (централизованная служба); Сущность группы — вычисляется от группы-исполнителя.'
+               }) }}
+
+               {{ fields.dropdownField('Entity', 'entities_id_target', item.fields['entities_id_target'], 'Целевая сущность', {
+                  'entity': -1,
+                  'helper': 'Заполняется только при стратегии «Заданная сущность». Группа-ответственный должна быть видима в этой единице — своя или рекурсивная из вышестоящей, иначе маршрут остановится с ошибкой при открытии этапа.'
+               }) }}
+
+               {{ fields.smallTitle('Дочерняя заявка', 'ti ti-git-branch') }}
+
+               {{ fields.dropdownField('ITILCategory', 'itilcategories_id', item.fields['itilcategories_id'], 'Категория дочерней заявки', {
+                  'entity': -1,
+                  'helper': 'Категория, с которой создаётся заявка этапа. Через неё работают ваши обычные бизнес-правила: назначение SLA, маршрутизация, уведомления.'
+               }) }}
+
+               {{ fields.dropdownField('SLA', 'slas_id', item.fields['slas_id'], 'SLA дочерней заявки (время до решения)', {
+                  'entity': -1,
+                  'condition': {'type': 0},
+                  'helper': 'Собственный срок этапа — обычный SLA GLPI с рабочим календарём, обратным отсчётом и эскалациями. Удобно задавать накопительно от старта: этап 4 закрыт к 230-й минуте — тогда срок не зависит от того, когда за этап взялись.'
+               }) }}
+
+               {{ fields.smallTitle('Согласование', 'ti ti-checkbox') }}
+
+               {{ fields.numberField('approval_percent', item.fields['approval_percent'], 'Порог согласования, %', {
+                  'min': 0, 'max': 100,
+                  'helper': 'Сколько процентов согласующих должны утвердить, чтобы этап был пройден. 100 — нужны все; 50 — большинство. Работает через штатные ступени согласования GLPI. Важно: у согласующих должно быть право Согласовать запрос / инцидент в профиле, иначе они увидят запрос, но не смогут ответить.'
+               }) }}
+
+               {{ fields.dropdownArrayField('on_reject', item.fields['on_reject'], rejects, 'При отклонении', {
+                  'helper': 'Что делать, если согласующий отказал. Остановить — маршрут встаёт, заявку по-прежнему нельзя закрыть, нужно решение администратора. Вернуться на этап — новый проход с указанного этапа, история прошлого сохраняется. Прервать — маршрут отменяется, заявку можно закрывать.'
+               }) }}
+
+               {{ fields.dropdownArrayField('plugin_itilflow_stages_id_reject', item.fields['plugin_itilflow_stages_id_reject'], siblings, 'Вернуть на этап', {
+                  'helper': 'Заполняется только при действии Вернуться на указанный этап. Обычно это тот этап, ошибку которого и нашёл согласующий. Число возвратов ограничено десятью — защита от бесконечного круга.'
+               }) }}
+
+               {{ fields.smallTitle('Прочее', 'ti ti-dots') }}
+
+               {{ fields.dropdownYesNo('is_optional', item.fields['is_optional'], 'Этап необязательный', {
+                  'helper': 'Да — у исполнителя появляется кнопка Пропустить этап. Причина пропуска обязательна всегда и попадает в ленту заявки, чтобы инициатор понимал, почему часть регламента не выполнялась.'
+               }) }}
+
+               {{ fields.dropdownArrayField('completion_comment', item.fields['completion_comment'], completions, 'Отчёт о выполнении', {
+                  'helper': 'Требовать ли от исполнителя описание сделанного при закрытии этапа. Текст попадает в журнал и в ленту заявки — инициатор видит не только «этап выполнен», но и что именно сделано. Правило действует и при работе через API, не только в форме.'
+               }) }}
+
+               {{ fields.textareaField('content', item.fields['content'], 'Инструкция исполнителю', {
+                  'full_width': true,
+                  'enable_richtext': true,
+                  'helper': 'Что именно нужно сделать на этапе. Показывается исполнителю в форме завершения и попадает в описание задачи. Если публичный журнал включён, инициатор тоже увидит эту формулировку.'
+               }) }}
+
+            </div>
+         </div>
+      </div>
+
+      <div class="card-footer mx-n2 mb-n2 mt-4">
+         <div class="d-flex flex-row-reverse align-items-start">
+            {% if item.isNewItem() %}
+               <button class="btn btn-primary" type="submit" name="add" value="1">{{ __('Add') }}</button>
+            {% else %}
+               <button class="btn btn-primary" type="submit" name="update" value="1">{{ __('Save') }}</button>
+               <button class="btn btn-outline-danger me-2" type="submit" name="purge" value="1"
+                       onclick="return confirm('{{ __('Confirm the final deletion?') }}');">{{ __('Delete permanently') }}</button>
+            {% endif %}
+         </div>
+      </div>
+   </form>
+</div>
