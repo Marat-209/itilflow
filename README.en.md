@@ -60,6 +60,23 @@ stages therefore do not physically exist, and there is nothing to mark as done.
 That, rather than a check in the interface which an API call could bypass, is
 what enforces the order.
 
+## What it looks like
+
+Routes and their stages are configured in a dedicated administration section.
+The stage table shows the whole procedure on one screen: order, execution mode,
+owners, organisational entity, whether a completion report is required, and the
+reaction to a rejected approval.
+
+![Stage list of a route](docs/img/ui-stages-list.png)
+
+The ticket gains a "stage route" tab: the state of every stage, the object that
+was created, the control buttons, and a counter of completed stages in the tab
+header.
+
+![Route tab on a ticket](docs/img/ui-ticket-tab.png)
+
+*The interface is in Russian — see the language notice above.*
+
 ## Installation
 
 ```bash
