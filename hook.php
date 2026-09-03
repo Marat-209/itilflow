@@ -116,6 +116,7 @@ function plugin_itilflow_install(): bool
             `reassign_reason` TEXT DEFAULT NULL,
             `approver_set_by` INT UNSIGNED NOT NULL DEFAULT 0,
             `approver_reason` TEXT DEFAULT NULL,
+            `approver_items_ids` VARCHAR(255) NOT NULL DEFAULT '',
             `comment` TEXT DEFAULT NULL,
             PRIMARY KEY (`id`),
             KEY `instance` (`plugin_itilflow_instances_id`,`ranking`),
@@ -166,6 +167,12 @@ function plugin_itilflow_install(): bool
         ['value' => 0]);
     $migration->addField('glpi_plugin_itilflow_steps', 'approver_reason', 'text',
         ['value' => null]);
+
+    // 1.5.0 — на одном этапе может быть несколько отдельных согласований:
+    // например руководитель заявителя и владелец ресурса согласуют по отдельности.
+    // Список объектов согласования шага, через запятую.
+    $migration->addField('glpi_plugin_itilflow_steps', 'approver_items_ids', 'string',
+        ['value' => '']);
 
     $migration->addRight('plugin_itilflow_process', ALLSTANDARDRIGHT);
     $migration->addRight('plugin_itilflow_bypass', 0);

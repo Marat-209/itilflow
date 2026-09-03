@@ -133,6 +133,14 @@ about the wait, and another with the reason once the approver is named. The
 approval sheet shows both the choice and its justification, so the document
 remains fit for audit. The approver cannot be swapped once the request exists.
 
+**Several approvers can be named, each approving separately** — own request,
+own decision. That is how a rule like "the requester's manager signs off, and
+so does the resource owner" fits into one stage instead of two. The outcome is
+decided by the stage's own **approval threshold**: at 100% every sign-off is
+required (after the first one the timeline says how many are still awaited),
+at 50% half of them suffice. A refusal rejects the stage as soon as the
+threshold becomes unreachable.
+
 ## Order enforcement
 
 GLPI checks permissions and mutates data at two different levels, and the plugin

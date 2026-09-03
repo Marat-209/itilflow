@@ -73,7 +73,13 @@
             <td>
                {% if s['id'] == current_id and instance.fields['state'] == 'running' %}
                   {% if s['execution_mode'] == 'approval' %}
-                     <span class="text-muted small">решается во вкладке «Согласования»</span>
+                     {% if s['awaits_approver'] %}
+                        <span class="text-warning small">
+                           <i class="ti ti-user-question me-1"></i>ожидает указания согласующего
+                        </span>
+                     {% else %}
+                        <span class="text-muted small">решается во вкладке «Согласования»</span>
+                     {% endif %}
                      {% if can_admin %}
                         <form method="post" action="{{ action_url }}" class="d-inline">
                            <input type="hidden" name="_glpi_csrf_token" value="{{ csrf_token() }}">
@@ -164,24 +170,28 @@
          <p class="text-secondary mb-3">
             На этом этапе согласующий заранее неизвестен и определяется по обстоятельствам
             обращения. Укажите, кто должен согласовать, и на каком основании вы его выбрали.
-            Запрос на согласование будет создан после сохранения.
+            Согласующих может быть несколько — например руководитель заявителя
+            и владелец ресурса: каждому уйдёт отдельный запрос, а этап будет пройден
+            по порогу согласования. Запросы создаются после сохранения.
          </p>
          <form method="post" action="{{ action_url }}">
             <input type="hidden" name="_glpi_csrf_token" value="{{ csrf_token() }}">
             <input type="hidden" name="steps_id" value="{{ approver['steps_id'] }}">
             <div class="row g-2 align-items-end">
                <div class="col-md-4">
-                  <label class="form-label">Согласующий — сотрудник</label>
+                  <label class="form-label">Согласующие — сотрудники</label>
                   {{ call('User::dropdown', [{
-                     'name': 'appr_users_id', 'value': 0, 'right': 'all',
-                     'display': false, 'width': '100%'
+                     'name': 'appr_users_id[]', 'value': [], 'right': 'all',
+                     'multiple': true, 'display': false, 'width': '100%'
                   }])|raw }}
+                  <div class="form-text">Можно выбрать нескольких: каждый согласует отдельно.</div>
                </div>
                <div class="col-md-4">
-                  <label class="form-label">…или группа</label>
+                  <label class="form-label">…и/или группы</label>
                   {{ call('Group::dropdown', [{
-                     'name': 'appr_groups_id', 'value': 0, 'entity': -1,
-                     'condition': {'is_assign': 1}, 'display': false, 'width': '100%'
+                     'name': 'appr_groups_id[]', 'value': [], 'entity': -1,
+                     'condition': {'is_assign': 1}, 'multiple': true,
+                     'display': false, 'width': '100%'
                   }])|raw }}
                </div>
                <div class="col-md-4">

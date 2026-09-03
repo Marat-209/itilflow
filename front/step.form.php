@@ -96,10 +96,17 @@ if (isset($_POST['set_approver'])) {
         Html::back();
     }
 
+    // Согласующих может быть несколько: поля приходят массивами.
+    $to_array = static function ($v): array {
+        if ($v === null || $v === '') {
+            return [];
+        }
+        return array_map('intval', is_array($v) ? $v : [$v]);
+    };
     Engine::designateApprover(
         $step,
-        (int) ($_POST['appr_groups_id'] ?? 0),
-        (int) ($_POST['appr_users_id'] ?? 0),
+        $to_array($_POST['appr_groups_id'] ?? null),
+        $to_array($_POST['appr_users_id'] ?? null),
         trim(strip_tags((string) ($_POST['appr_reason'] ?? '')))
     );
     Html::back();
