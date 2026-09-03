@@ -54,6 +54,7 @@ function plugin_itilflow_install(): bool
             `completion_comment` VARCHAR(20) NOT NULL DEFAULT 'optional',
             `deadline_minutes` INT NOT NULL DEFAULT 0,
             `approval_percent` TINYINT UNSIGNED NOT NULL DEFAULT 100,
+            `approver_source` VARCHAR(20) NOT NULL DEFAULT 'fixed',
             `on_reject` VARCHAR(20) NOT NULL DEFAULT 'block',
             `plugin_itilflow_stages_id_reject` INT UNSIGNED NOT NULL DEFAULT 0,
             `content` TEXT DEFAULT NULL,
@@ -113,6 +114,8 @@ function plugin_itilflow_install(): bool
             `groups_id_from` INT UNSIGNED NOT NULL DEFAULT 0,
             `users_id_from` INT UNSIGNED NOT NULL DEFAULT 0,
             `reassign_reason` TEXT DEFAULT NULL,
+            `approver_set_by` INT UNSIGNED NOT NULL DEFAULT 0,
+            `approver_reason` TEXT DEFAULT NULL,
             `comment` TEXT DEFAULT NULL,
             PRIMARY KEY (`id`),
             KEY `instance` (`plugin_itilflow_instances_id`,`ranking`),
@@ -154,6 +157,15 @@ function plugin_itilflow_install(): bool
     $migration->addField('glpi_plugin_itilflow_steps', 'groups_id_from', 'integer', ['value' => 0]);
     $migration->addField('glpi_plugin_itilflow_steps', 'users_id_from', 'integer', ['value' => 0]);
     $migration->addField('glpi_plugin_itilflow_steps', 'reassign_reason', 'text', ['value' => null]);
+
+    // 1.4.0 — откуда берётся согласующий: задан в этапе, указывается при
+    // прохождении или вычисляется как руководитель инициатора.
+    $migration->addField('glpi_plugin_itilflow_stages', 'approver_source', 'string',
+        ['value' => 'fixed']);
+    $migration->addField('glpi_plugin_itilflow_steps', 'approver_set_by', 'integer',
+        ['value' => 0]);
+    $migration->addField('glpi_plugin_itilflow_steps', 'approver_reason', 'text',
+        ['value' => null]);
 
     $migration->addRight('plugin_itilflow_process', ALLSTANDARDRIGHT);
     $migration->addRight('plugin_itilflow_bypass', 0);

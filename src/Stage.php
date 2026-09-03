@@ -19,6 +19,10 @@ class Stage extends CommonDBChild
     public const MODE_DELEGATED = 'delegated'; // дочерняя заявка (в т.ч. в другой сущности)
     public const MODE_APPROVAL  = 'approval';  // штатное согласование
 
+    // Откуда берётся согласующий на этапе-согласовании.
+    public const APPROVER_FIXED   = 'fixed';    // задан в настройке этапа
+    public const APPROVER_RUNTIME = 'runtime';  // указывается при прохождении
+
     public const REJECT_BLOCK = 'block';
     public const REJECT_BACK  = 'back';
     public const REJECT_ABORT = 'abort';
@@ -57,6 +61,14 @@ class Stage extends CommonDBChild
             'none'     => 'Не запрашивать',
             'optional' => 'Запрашивать, заполнение по желанию',
             'required' => 'Запрашивать, заполнение обязательно',
+        ];
+    }
+
+    public static function getApproverSourceLabels(): array
+    {
+        return [
+            self::APPROVER_FIXED   => 'Задан в этапе (группа или сотрудник)',
+            self::APPROVER_RUNTIME => 'Указывается при прохождении этапа',
         ];
     }
 
@@ -134,6 +146,7 @@ class Stage extends CommonDBChild
             'strategies'   => self::getEntityStrategyLabels(),
             'rejects'      => self::getRejectLabels(),
             'completions'  => self::getCompletionCommentLabels(),
+            'approver_sources' => self::getApproverSourceLabels(),
             'siblings'     => $siblings,
         ]);
         return true;
@@ -151,6 +164,7 @@ class Stage extends CommonDBChild
         $this->fields['execution_mode']     = self::MODE_INLINE;
         $this->fields['entity_strategy']    = 'inherit';
         $this->fields['approval_percent']   = 100;
+        $this->fields['approver_source']    = self::APPROVER_FIXED;
         $this->fields['on_reject']          = self::REJECT_BLOCK;
         $this->fields['completion_comment'] = 'optional';
         $this->fields['is_optional']        = 0;
@@ -199,13 +213,39 @@ class Stage extends CommonDBChild
 
         $groups_id = (int) ($input['groups_id'] ?? $this->fields['groups_id'] ?? 0);
         $users_id  = (int) ($input['users_id'] ?? $this->fields['users_id'] ?? 0);
-        if ($groups_id === 0 && $users_id === 0) {
+        $src = (string) ($input['approver_source'] ?? $this->fields['approver_source']
+            ?? self::APPROVER_FIXED);
+
+        if (!array_key_exists($src, self::getApproverSourceLabels())) {
+            Session::addMessageAfterRedirect('Неизвестный источник согласующего.', false, ERROR);
+            return [];
+        }
+        // Источник согласующего осмыслен только для этапа-согласования.
+        if ($mode !== self::MODE_APPROVAL) {
+            $src = self::APPROVER_FIXED;
+            $input['approver_source'] = self::APPROVER_FIXED;
+        }
+        // При двух новых источниках согласующий заранее неизвестен, и требовать
+        // его в настройке этапа нельзя: он появится при прохождении заявки.
+        $approver_known_later = ($mode === self::MODE_APPROVAL && $src !== self::APPROVER_FIXED);
+
+        if ($groups_id === 0 && $users_id === 0 && !$approver_known_later) {
             Session::addMessageAfterRedirect(
                 'У этапа должен быть ответственный: группа или пользователь.',
                 false,
                 ERROR
             );
             return [];
+        }
+        if ($approver_known_later && ($groups_id > 0 || $users_id > 0)) {
+            Session::addMessageAfterRedirect(
+                'Для выбранного источника согласующего группа и сотрудник в этапе не нужны — '
+                . 'они будут определены при прохождении заявки. Поля очищены.',
+                false,
+                WARNING
+            );
+            $input['groups_id'] = 0;
+            $input['users_id']  = 0;
         }
 
         // Два этапа с одинаковым номером делают порядок неопределённым,

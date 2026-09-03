@@ -173,6 +173,13 @@ substantive decision:
 - **Abort** — the route is cancelled and the ticket can be closed. For when a
   rejection means the whole thing is off.
 
+**If the approver is not known in advance**, set the "who approves" field to
+"chosen while the ticket runs" and leave the group and the individual empty.
+The stage opens and waits: the route tab shows a form where the ticket's
+assignee or a process administrator names the approver and gives a mandatory
+reason for the choice. This is how owner approval works when the registry of
+resource owners lives outside GLPI.
+
 **The approver needs no special right.** Being named as the approver on the
 stage is enough. In GLPI 11 the answer buttons are shown based on `canAnswer()`,
 which only checks that assignment and ignores profile rights. The

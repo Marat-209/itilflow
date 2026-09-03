@@ -153,6 +153,55 @@
    </div>
 {% endif %}
 
+{% if approver is not null %}
+   <div class="card mt-3 border-warning">
+      <div class="card-header py-2">
+         <h4 class="card-title mb-0 fs-5">
+            <i class="ti ti-user-question me-1"></i>Указать согласующего — {{ approver['title'] }}
+         </h4>
+      </div>
+      <div class="card-body">
+         <p class="text-secondary mb-3">
+            На этом этапе согласующий заранее неизвестен и определяется по обстоятельствам
+            обращения. Укажите, кто должен согласовать, и на каком основании вы его выбрали.
+            Запрос на согласование будет создан после сохранения.
+         </p>
+         <form method="post" action="{{ action_url }}">
+            <input type="hidden" name="_glpi_csrf_token" value="{{ csrf_token() }}">
+            <input type="hidden" name="steps_id" value="{{ approver['steps_id'] }}">
+            <div class="row g-2 align-items-end">
+               <div class="col-md-4">
+                  <label class="form-label">Согласующий — сотрудник</label>
+                  {{ call('User::dropdown', [{
+                     'name': 'appr_users_id', 'value': 0, 'right': 'all',
+                     'display': false, 'width': '100%'
+                  }])|raw }}
+               </div>
+               <div class="col-md-4">
+                  <label class="form-label">…или группа</label>
+                  {{ call('Group::dropdown', [{
+                     'name': 'appr_groups_id', 'value': 0, 'entity': -1,
+                     'condition': {'is_assign': 1}, 'display': false, 'width': '100%'
+                  }])|raw }}
+               </div>
+               <div class="col-md-4">
+                  <label class="form-label">Основание выбора <span class="text-danger">*</span></label>
+                  <input type="text" class="form-control" name="appr_reason" required
+                         placeholder="Например: владелец ресурса по реестру доступов">
+               </div>
+            </div>
+            <button class="btn btn-warning mt-3" name="set_approver" value="1">
+               <i class="ti ti-user-check me-1"></i>Указать согласующего
+            </button>
+            <div class="form-text">
+               Основание попадёт в лист согласования и в ленту заявки: будет видно,
+               кто выбрал согласующего и почему.
+            </div>
+         </form>
+      </div>
+   </div>
+{% endif %}
+
 {% if reassign is not null %}
    <div class="card mt-3">
       <div class="card-header py-2">

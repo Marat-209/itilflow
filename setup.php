@@ -21,7 +21,7 @@
 
 use Glpi\Plugin\Hooks;
 
-define('PLUGIN_ITILFLOW_VERSION', '1.3.2');
+define('PLUGIN_ITILFLOW_VERSION', '1.4.0');
 define('PLUGIN_ITILFLOW_MIN_GLPI', '11.0.0');
 define('PLUGIN_ITILFLOW_MAX_GLPI', '11.99.99');
 
