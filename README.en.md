@@ -81,7 +81,7 @@ header.
 
 ```bash
 # unpack into the GLPI plugins directory
-tar -xzf itilflow-1.3.1.tar.gz -C /var/www/glpi/plugins/
+tar -xzf itilflow-1.3.2.tar.gz -C /var/www/glpi/plugins/
 chown -R www-data:www-data /var/www/glpi/plugins/itilflow
 
 # install and enable
@@ -273,11 +273,17 @@ log and explained to the user in words rather than an error code.
 | Stage routes | process administrator, support lead | creating and editing routes and stages, manual start, halt and resume, the violation log |
 | Route bypass | dispatcher, duty administrator — grant deliberately | closing someone else's stage and out-of-order stages, bypassing enforcement |
 
-**The right that is easy to forget.** The Technician profile can *request*
-approval but not *grant* it: the ticket validation right lacks the approve flags.
-An approver will see the request and be unable to answer, and the route will
-stall. The plugin checks this when a stage is saved and warns, but the right must
-be granted by hand.
+**About the approve-request / approve-incident right.** An approver does **not**
+need it for the route to work. In GLPI 11 the answer form is gated by
+`CommonITILValidation::canAnswer()`, which only checks whether the user is a
+target of the validation and ignores profile rights. The right filters something
+else — who is offered in GLPI's own approver picker (`dropdownValidator`) — and
+the plugin sets the approver programmatically, bypassing that picker.
+
+Verified on GLPI 11.0.8: a user on the stock Technician profile, without the
+approve flags, answered the request successfully and the route advanced. Before
+version 1.3.2 the plugin raised a warning for such a setup; that warning was a
+false alarm and has been removed.
 
 ## Documentation
 
@@ -285,6 +291,8 @@ be granted by hand.
   process. Start here.
 - **Administrator and performer manual** — the complete field-by-field reference,
   17 pages: [docs/itilflow-manual.pdf](docs/itilflow-manual.pdf) *(Russian)*.
+  Written for 1.3.1: its section on the approve-request / approve-incident right
+  is outdated — see "Profile rights" above for the current behaviour.
 - **[Changelog](CHANGELOG.md)** *(Russian)*
 
 ## Licence

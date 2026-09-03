@@ -225,51 +225,16 @@ class Stage extends CommonDBChild
             return [];
         }
 
-        // Согласующий должен иметь право согласовывать, иначе он увидит запрос,
-        // но не сможет на него ответить. GLPI об этом не предупреждает.
-        if ($mode === self::MODE_APPROVAL && !self::someoneCanValidate($users_id, $groups_id)) {
-            Session::addMessageAfterRedirect(
-                'Внимание: ни у одного из назначенных согласующих нет права '
-                . '«Согласовать запрос / инцидент». Запрос они увидят, но ответить не смогут. '
-                . 'Проверьте профиль в Администрирование → Профили → Помощь.',
-                false,
-                WARNING
-            );
-        }
+        // Проверки права «Согласовать запрос / инцидент» здесь нет намеренно.
+        // В GLPI 11 ответить на запрос может любой, кто назначен согласующим:
+        // форма ответа гасится по CommonITILValidation::canAnswer(), а он смотрит
+        // только на itemtype_target / items_id_target и права профиля не учитывает.
+        // Право же фильтрует, кого предлагать в штатном выборе согласующего
+        // (dropdownValidator) — а плагин назначает согласующего программно и этот
+        // выбор не использует. Прежняя проверка выдавала предупреждение на
+        // работоспособной настройке и вводила администраторов в заблуждение.
 
         return $input;
-    }
-
-    /** Есть ли среди назначенных согласующих хотя бы один с правом согласования. */
-    public static function someoneCanValidate(int $users_id, int $groups_id): bool
-    {
-        $need = \TicketValidation::VALIDATEREQUEST | \TicketValidation::VALIDATEINCIDENT;
-
-        $user_ids = [];
-        if ($users_id > 0) {
-            $user_ids[] = $users_id;
-        }
-        if ($groups_id > 0) {
-            foreach ((new \Group_User())->find(['groups_id' => $groups_id]) as $row) {
-                $user_ids[] = (int) $row['users_id'];
-            }
-        }
-        if (!count($user_ids)) {
-            return false;
-        }
-
-        foreach ($user_ids as $uid) {
-            foreach ((new \Profile_User())->find(['users_id' => $uid]) as $pu) {
-                $rights = (new \ProfileRight())->find([
-                    'profiles_id' => (int) $pu['profiles_id'],
-                    'name'        => 'ticketvalidation',
-                ], [], 1);
-                if (count($rights) && ((int) reset($rights)['rights'] & $need)) {
-                    return true;
-                }
-            }
-        }
-        return false;
     }
 
     /** Сущность, в которой должен исполняться этап для конкретной заявки. */
