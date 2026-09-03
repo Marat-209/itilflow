@@ -261,18 +261,18 @@ final class Hook
         if (!in_array('status', $val->updates ?? [], true)) {
             return;
         }
-        $step = Step::getByArtifact($val->getType(), $val->getID());
+        // Шаг ищем по списку своих запросов: на этапе может быть несколько
+        // отдельных согласующих, и artifact_items_id указывает лишь на первый.
+        $step = Step::getByValidation($val->getType(), $val->getID());
         if ($step === null || $step->fields['state'] !== Step::RUNNING) {
             return;
         }
-        $status = (int) $val->fields['status'];
         $comment = strip_tags((string) ($val->fields['comment_validation'] ?? ''));
 
-        if ($status === CommonITILValidation::ACCEPTED) {
-            Engine::completeStep($step, 'Согласовано. ' . $comment);
-        } elseif ($status === CommonITILValidation::REFUSED) {
-            Engine::rejectStep($step, 'Отклонено. ' . $comment);
-        }
+        // Решение принимает движок: он смотрит все запросы шага и порог этапа.
+        // Один ответ не обязательно закрывает этап — при нескольких согласующих
+        // ждём, пока порог будет достигнут или станет недостижим.
+        Engine::evaluateApproval($step, $comment);
     }
 
     /** Запуск маршрута действием штатного бизнес-правила. */

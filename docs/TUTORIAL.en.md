@@ -180,6 +180,13 @@ assignee or a process administrator names the approver and gives a mandatory
 reason for the choice. This is how owner approval works when the registry of
 resource owners lives outside GLPI.
 
+That form accepts **several people and groups at once** — each one gets its own
+separate request. For example, access to a network folder is signed off by the
+requester's manager and by the folder's owner, and those are two independent
+decisions. How many sign-offs the stage needs is set by its own **approval
+threshold**: 100% requires all of them, 50% requires half. While sign-offs are
+still missing, the ticket timeline says how many are awaited.
+
 **The approver needs no special right.** Being named as the approver on the
 stage is enough. In GLPI 11 the answer buttons are shown based on `canAnswer()`,
 which only checks that assignment and ignores profile rights. The

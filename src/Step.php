@@ -62,6 +62,52 @@ class Step extends CommonDBChild
     }
 
     /** Может ли пользователь закрыть этот шаг: он в группе этапа или это его шаг. */
+    /** Объекты согласования этого шага. Их может быть несколько. */
+    public function validationIds(): array
+    {
+        $raw = trim((string) ($this->fields['approver_items_ids'] ?? ''));
+        if ($raw === '') {
+            // Шаги, созданные до 1.5.0, знают только один объект.
+            $one = (int) ($this->fields['artifact_items_id'] ?? 0);
+            return $one > 0 ? [$one] : [];
+        }
+        return array_values(array_filter(array_map(
+            static fn($x) => (int) trim((string) $x),
+            explode(',', $raw)
+        )));
+    }
+
+    /**
+     * Шаг, которому принадлежит объект согласования.
+     *
+     * Ищем по списку: на одном этапе может быть несколько отдельных
+     * согласований, и artifact_items_id указывает лишь на первое из них.
+     */
+    public static function getByValidation(string $itemtype, int $items_id): ?self
+    {
+        global $DB;
+        foreach ($DB->request([
+            'SELECT' => ['id'],
+            'FROM'   => self::getTable(),
+            'WHERE'  => [
+                'execution_mode' => Stage::MODE_APPROVAL,
+                'state'          => self::RUNNING,
+                new \QueryExpression(
+                    'FIND_IN_SET(' . (int) $items_id . ', '
+                    . $DB->quoteName('approver_items_ids') . ') > 0'
+                ),
+            ],
+            'ORDER'  => 'id DESC',
+        ]) as $row) {
+            $s = new self();
+            if ($s->getFromDB((int) $row['id'])) {
+                return $s;
+            }
+        }
+        // Совместимость со шагами до 1.5.0.
+        return self::getByArtifact($itemtype, $items_id);
+    }
+
     /**
      * Этап-согласование, который ждёт, чтобы ему указали согласующего.
      *

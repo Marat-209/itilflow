@@ -39,7 +39,12 @@ final class Ui
                     } elseif ($a instanceof \CommonITILTask) {
                         $link = sprintf('<span class="text-muted">задача #%d</span>', $aid);
                     } elseif ($a instanceof \CommonITILValidation) {
-                        $link = sprintf('<span class="text-muted">согласование #%d</span>', $aid);
+                        $n = count($step->validationIds());
+                        $link = $n > 1
+                            ? sprintf(
+                                '<span class="text-muted">согласований: %d</span>', $n
+                            )
+                            : sprintf('<span class="text-muted">согласование #%d</span>', $aid);
                     }
                 }
             }
@@ -57,6 +62,10 @@ final class Ui
                 'state_label'  => Step::getStateLabels()[$row['state']] ?? $row['state'],
                 'mode_label'   => Stage::getModeLabels()[$row['execution_mode']] ?? $row['execution_mode'],
                 'is_mine'      => $step->isOwnedBy($me, $mygroups),
+                // Пока согласующий не указан, подсказка про вкладку
+                // «Согласования» неверна: там ещё нечего решать.
+                'awaits_approver' => $step->awaitsApprover(),
+                'validations'  => count($step->validationIds()),
                 'artifact_link' => $link,
                 'duration_h'   => (int) $row['duration'] > 0
                     ? \Html::timestampToString((int) $row['duration'], false)

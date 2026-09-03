@@ -604,7 +604,12 @@ final class Engine
             $input['_validationsteps_id'] = $vs;
         }
 
-        return self::openValidation($step, $stage, $item, $target_type, $target_id);
+        $res = self::openValidation($step, $stage, $item, $target_type, $target_id);
+        if (is_string($res)) {
+            return $res;
+        }
+        self::bindValidations($step, get_class($item::getValidationClassInstance()), [$res]);
+        return true;
     }
 
     /**
@@ -618,7 +623,7 @@ final class Engine
         CommonITILObject $item,
         string $target_type,
         int $target_id
-    ): bool|string {
+    ): int|string {
         $val = $item::getValidationClassInstance();
         if ($val === null) {
             return 'Для типа ' . $item->getType() . ' согласование не поддерживается.';
@@ -643,16 +648,96 @@ final class Engine
             $input['_validationsteps_id'] = $vs;
         }
 
-        $vid = $val->add($input);
+        $vid = (int) $val->add($input);
         if (!$vid) {
             return 'Не удалось создать запрос на согласование.';
         }
+        return $vid;
+    }
+
+    /** Привязать к шагу созданные объекты согласования. */
+    private static function bindValidations(Step $step, string $itemtype, array $ids): void
+    {
+        $ids = array_values(array_filter(array_map('intval', $ids)));
+        if (!count($ids)) {
+            return;
+        }
         $step->update([
-            'id'                => $step->getID(),
-            'artifact_itemtype' => get_class($val),
-            'artifact_items_id' => (int) $vid,
+            'id'                 => $step->getID(),
+            'artifact_itemtype'  => $itemtype,
+            'artifact_items_id'  => $ids[0],
+            'approver_items_ids' => implode(',', $ids),
         ]);
-        return true;
+    }
+
+    /**
+     * Решить судьбу этапа-согласования по всем его запросам.
+     *
+     * На этапе может быть несколько отдельных согласующих — например
+     * руководитель заявителя и владелец ресурса. Этап пройден, когда доля
+     * согласовавших дошла до порога; отклонён, когда порога уже не достичь.
+     */
+    public static function evaluateApproval(Step $step, string $comment = ''): void
+    {
+        global $DB;
+        $ids = $step->validationIds();
+        if (!count($ids)) {
+            return;
+        }
+        $type = (string) $step->fields['artifact_itemtype'];
+        if ($type === '' || !class_exists($type)) {
+            return;
+        }
+        $total = 0;
+        $accepted = 0;
+        $refused = 0;
+        foreach ($DB->request([
+            'SELECT' => ['status'],
+            'FROM'   => $type::getTable(),
+            'WHERE'  => ['id' => $ids],
+        ]) as $row) {
+            $total++;
+            if ((int) $row['status'] === CommonITILValidation::ACCEPTED) {
+                $accepted++;
+            } elseif ((int) $row['status'] === CommonITILValidation::REFUSED) {
+                $refused++;
+            }
+        }
+        if ($total === 0) {
+            return;
+        }
+        $stage = $step->getStage();
+        $need = $stage !== null ? (int) $stage->fields['approval_percent'] : 100;
+        $need = max(0, min(100, $need));
+
+        $accepted_pct = (int) floor(100 * $accepted / $total);
+        // Максимум, которого ещё можно достичь, если все неответившие согласуют.
+        $possible_pct = (int) floor(100 * ($total - $refused) / $total);
+
+        if ($accepted_pct >= $need) {
+            self::completeStep($step, sprintf(
+                'Согласовано (%d из %d, порог %d%%). %s', $accepted, $total, $need, $comment
+            ));
+            return;
+        }
+        if ($possible_pct < $need) {
+            self::rejectStep($step, sprintf(
+                'Не согласовано: отказов %d из %d, порог %d%% недостижим. %s',
+                $refused, $total, $need, $comment
+            ));
+            return;
+        }
+        // Порог ещё достижим — ждём остальных.
+        $left = $total - $accepted - $refused;
+        self::announce($step->getInstance(), sprintf(
+            '<p><strong>%s</strong> — получен ответ согласующего.</p>'
+            . '<p>Согласовали %d из %d, порог %d%%. Ожидаем ещё %d.</p>',
+            htmlescape(self::stageLabel($step)),
+            $accepted,
+            $total,
+            $need,
+            $left
+        ));
     }
 
     /**
@@ -662,10 +747,21 @@ final class Engine
      * владелец сетевого ресурса числится во внешнем реестре, и диспетчер
      * находит его сам. Основание выбора обязательно и остаётся в истории.
      */
+    /**
+     * Указать согласующих на этапе, который их ждёт.
+     *
+     * Нужно там, где согласующий известен только по факту обращения: например
+     * руководителя заявителя и владельца сетевого ресурса диспетчер находит
+     * сам, каждого по своему источнику. Согласующих может быть несколько,
+     * и каждый согласует отдельно — по порогу этапа.
+     *
+     * @param int[] $users_ids
+     * @param int[] $groups_ids
+     */
     public static function designateApprover(
         Step $step,
-        int $groups_id,
-        int $users_id,
+        array $groups_ids,
+        array $users_ids,
         string $reason
     ): bool {
         $instance = $step->getInstance();
@@ -678,12 +774,11 @@ final class Engine
             self::msg('Этот этап не ждёт указания согласующего.', ERROR);
             return false;
         }
-        if ($groups_id <= 0 && $users_id <= 0) {
-            self::msg('Укажите согласующего: группу или сотрудника.', ERROR);
-            return false;
-        }
-        if ($groups_id > 0 && $users_id > 0) {
-            self::msg('Укажите либо группу, либо сотрудника, но не обоих.', ERROR);
+
+        $groups_ids = array_values(array_unique(array_filter(array_map('intval', $groups_ids))));
+        $users_ids  = array_values(array_unique(array_filter(array_map('intval', $users_ids))));
+        if (!count($groups_ids) && !count($users_ids)) {
+            self::msg('Укажите хотя бы одного согласующего: сотрудника или группу.', ERROR);
             return false;
         }
         if (trim($reason) === '') {
@@ -694,20 +789,39 @@ final class Engine
             return false;
         }
 
-        $target_type = $groups_id > 0 ? Group::class : \User::class;
-        $target_id = $groups_id > 0 ? $groups_id : $users_id;
+        $targets = [];
+        foreach ($users_ids as $uid) {
+            $targets[] = [\User::class, $uid];
+        }
+        foreach ($groups_ids as $gid) {
+            $targets[] = [Group::class, $gid];
+        }
 
+        $created = [];
+        $vclass = get_class($item::getValidationClassInstance());
         self::enter();
         try {
-            $res = self::openValidation($step, $stage, $item, $target_type, $target_id);
-            if (is_string($res)) {
-                self::msg($res, ERROR);
+            foreach ($targets as [$ttype, $tid]) {
+                $res = self::openValidation($step, $stage, $item, $ttype, $tid);
+                if (is_string($res)) {
+                    self::msg($res, ERROR);
+                    continue;
+                }
+                $created[] = (int) $res;
+            }
+            if (!count($created)) {
+                self::msg('Ни одного запроса на согласование создать не удалось.', ERROR);
                 return false;
             }
+            self::bindValidations($step, $vclass, $created);
+            // Ответственным у шага пишем группу, если она одна и сотрудников нет,
+            // иначе первого сотрудника: колонки под список ответственных нет,
+            // а полный состав виден по запросам согласования и в листе.
             $step->update([
                 'id'              => $step->getID(),
-                'groups_id'       => $groups_id,
-                'users_id'        => $users_id,
+                'groups_id'       => (count($groups_ids) === 1 && !count($users_ids))
+                    ? $groups_ids[0] : 0,
+                'users_id'        => count($users_ids) === 1 ? $users_ids[0] : 0,
                 'approver_set_by' => (int) (Session::getLoginUserID() ?: 0),
                 'approver_reason' => trim($reason),
             ]);
@@ -716,15 +830,34 @@ final class Engine
         }
 
         $step->getFromDB($step->getID());
-        $who = self::nameOf($groups_id, $users_id);
+        $names = [];
+        foreach ($users_ids as $uid) {
+            $names[] = getUserName($uid);
+        }
+        foreach ($groups_ids as $gid) {
+            $names[] = \Dropdown::getDropdownName('glpi_groups', $gid);
+        }
+        $who = implode(', ', $names);
         $by = Session::getLoginUserID()
             ? getUserName((int) Session::getLoginUserID()) : 'система';
-        self::msg(sprintf('Согласующий указан: %s.', $who));
+        $need = (int) $stage->fields['approval_percent'];
+
+        self::msg(sprintf(
+            count($created) > 1
+                ? 'Согласующие указаны (%d): %s.'
+                : 'Согласующий указан: %2$s.',
+            count($created),
+            $who
+        ));
         self::announce($instance, sprintf(
-            '<p><strong>%s</strong> — согласующий указан.</p><p>Согласует: %s.</p>'
-            . '<p>Указал: %s. Основание: %s</p>',
+            '<p><strong>%s</strong> — %s.</p><p>Согласует: %s.</p>'
+            . '%s<p>Указал: %s. Основание: %s</p>',
             htmlescape(self::stageLabel($step)),
+            count($created) > 1 ? 'согласующие указаны' : 'согласующий указан',
             htmlescape($who),
+            count($created) > 1
+                ? sprintf('<p>Каждый согласует отдельно, порог этапа — %d%%.</p>', $need)
+                : '',
             htmlescape($by),
             htmlescape(trim($reason))
         ));
