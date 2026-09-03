@@ -21,7 +21,7 @@
 
 use Glpi\Plugin\Hooks;
 
-define('PLUGIN_ITILFLOW_VERSION', '1.5.0');
+define('PLUGIN_ITILFLOW_VERSION', '1.5.1');
 define('PLUGIN_ITILFLOW_MIN_GLPI', '11.0.0');
 define('PLUGIN_ITILFLOW_MAX_GLPI', '11.99.99');
 
@@ -97,7 +97,10 @@ function plugin_init_itilflow(): void
     }
     Plugin::registerClass(\GlpiPlugin\Itilflow\Cron::class);
     if (Session::haveRight('plugin_itilflow_process', UPDATE)) {
-        $PLUGIN_HOOKS[Hooks::CONFIG_PAGE]['itilflow'] = '/front/process.php';
+        // Без ведущего слеша: GLPI склеивает адрес как
+        // «root_doc/plugins/itilflow/» + это значение, и лишний слеш давал
+        // «/plugins/itilflow//front/process.php» — такой путь не находит маршрута.
+        $PLUGIN_HOOKS[Hooks::CONFIG_PAGE]['itilflow'] = 'front/process.php';
     }
 }
 

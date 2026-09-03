@@ -81,7 +81,7 @@ header.
 
 ```bash
 # unpack into the GLPI plugins directory
-tar -xzf itilflow-1.5.0.tar.gz -C /var/www/glpi/plugins/
+tar -xzf itilflow-1.5.1.tar.gz -C /var/www/glpi/plugins/
 chown -R www-data:www-data /var/www/glpi/plugins/itilflow
 
 # install and enable
