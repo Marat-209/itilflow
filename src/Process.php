@@ -82,6 +82,31 @@ class Process extends CommonDBTM
         return true;
     }
 
+    /**
+     * Значения по умолчанию для формы нового маршрута.
+     *
+     * Без этого GLPI подставляет в новую запись пустые строки, а
+     * dropdownYesNo рисует пустое значение как «Нет». В результате маршрут,
+     * созданный через интерфейс, получался неактивным — и Engine::start()
+     * молча отказывался его запускать, из-за чего бизнес-правило выглядело
+     * неработающим. Значения совпадают со значениями по умолчанию в схеме,
+     * кроме режима контроля: для первого внедрения руководство советует
+     * «Журнал», поэтому форма предлагает его, а не «Запрет».
+     */
+    public function post_getEmpty()
+    {
+        $this->fields['itemtype']         = 'Ticket';
+        $this->fields['enforcement']      = self::ENFORCE_AUDIT;
+        $this->fields['is_active']        = 1;
+        $this->fields['block_resolution'] = 1;
+        $this->fields['public_log']       = 1;
+        $this->fields['helpdesk_tab']     = 1;
+        $this->fields['allow_withdraw']   = 1;
+        $this->fields['is_recursive']     = 0;
+        $this->fields['calendars_id']     = 0;
+        $this->fields['version']          = 1;
+    }
+
     public function prepareInputForAdd($input)
     {
         $input['version'] = 1;

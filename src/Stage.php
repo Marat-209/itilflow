@@ -139,6 +139,33 @@ class Stage extends CommonDBChild
         return true;
     }
 
+    /**
+     * Значения по умолчанию для формы нового этапа.
+     *
+     * Без этого форма подставляет пустые строки: порог согласования уезжал
+     * в ноль вместо ста, а режим исполнения и реакция на отказ приходили
+     * пустыми. Значения совпадают со значениями по умолчанию в схеме.
+     */
+    public function post_getEmpty()
+    {
+        $this->fields['execution_mode']     = self::MODE_INLINE;
+        $this->fields['entity_strategy']    = 'inherit';
+        $this->fields['approval_percent']   = 100;
+        $this->fields['on_reject']          = self::REJECT_BLOCK;
+        $this->fields['completion_comment'] = 'optional';
+        $this->fields['is_optional']        = 0;
+        $this->fields['deadline_minutes']   = 0;
+        $this->fields['duration']           = 0;
+        // Целочисленные ссылки: пустая строка не проходит в строгом режиме MySQL.
+        $this->fields['ranking']                          = 0;
+        $this->fields['groups_id']                        = 0;
+        $this->fields['users_id']                         = 0;
+        $this->fields['entities_id_target']               = 0;
+        $this->fields['itilcategories_id']                = 0;
+        $this->fields['slas_id']                          = 0;
+        $this->fields['plugin_itilflow_stages_id_reject'] = 0;
+    }
+
     public function prepareInputForAdd($input)
     {
         if (!isset($input['ranking']) || (int) $input['ranking'] <= 0) {

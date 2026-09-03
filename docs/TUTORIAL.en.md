@@ -268,6 +268,12 @@ language appears in the system.
 You can combine this with any other criteria: ticket type, location, requester's
 group, organisational entity.
 
+**Check that the route is active.** An inactive route is still assigned by the
+rule, but `Engine::start()` will not start it — silently, with no message. From
+the outside this looks like "the rule does not work". Before version 1.3.2 the
+form created routes switched off, so on older routes check this first: the route
+form, the "route active" field.
+
 **If the rule's route dropdown is empty**, the route lives in a different
 organisational entity and is not marked visible in child entities. The action's
 dropdown is filtered by the rule's entity: a rule in a sub-entity sees routes of
