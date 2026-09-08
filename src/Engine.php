@@ -295,6 +295,7 @@ final class Engine
         }
 
         $ok = 'Не удалось открыть этап.';
+        $status_note = '';
         self::enter();
         try {
             $step->update([
@@ -314,6 +315,9 @@ final class Engine
                 Stage::MODE_APPROVAL  => self::createApproval($instance, $step, $stage, $item),
                 default               => self::createInlineTask($instance, $step, $stage, $item),
             };
+            if ($ok === true) {
+                $status_note = self::applyStageStatus($stage, $item);
+            }
         } finally {
             self::leave();
         }
@@ -336,16 +340,57 @@ final class Engine
             }
         }
         self::announce($instance, sprintf(
-            '<p><strong>%s</strong> — в работе.</p><p>Ответственный: %s.%s</p>'
+            '<p><strong>%s</strong> — в работе.</p><p>Ответственный: %s.%s</p>%s'
             . '<p><em>Пройдено этапов: %d из %d.</em></p>',
             htmlescape(self::stageLabel($step)),
             htmlescape($who),
             trim(strip_tags((string) $stage->fields['content'])) !== ''
                 ? ' ' . htmlescape(trim(strip_tags((string) $stage->fields['content'])))
                 : '',
+            $status_note !== ''
+                ? '<p>' . htmlescape($status_note) . '</p>'
+                : '',
             $done,
             $total
         ));
+    }
+
+    /**
+     * Выставить заявке статус, заданный у этапа.
+     *
+     * Вызывается только изнутри движка, поэтому собственные запреты плагина
+     * (в том числе «Запрещать решение до прохождения маршрута») этот вызов
+     * пропускают: они проверяют Engine::isInside().
+     *
+     * @return string пояснение для ленты заявки, пустая строка — если статус не менялся
+     */
+    private static function applyStageStatus(Stage $stage, CommonITILObject $item): string
+    {
+        $target = (int) ($stage->fields['ticket_status'] ?? 0);
+        if ($target <= 0) {
+            return '';
+        }
+        $itemtype = $item::class;
+        $choices = Stage::getStatusChoices($itemtype);
+        // Тип объекта у маршрута могли сменить после настройки этапа —
+        // тогда сохранённый статус этому типу уже не подходит.
+        if (!array_key_exists($target, $choices)) {
+            return '';
+        }
+        $current = (int) $item->fields['status'];
+        if ($current === $target) {
+            return '';
+        }
+        $before = $itemtype::getStatus($current);
+        if (!$item->update(['id' => $item->getID(), 'status' => $target])) {
+            self::msg(sprintf(
+                'Не удалось сменить статус на «%s» — статус остался прежним.',
+                $choices[$target]
+            ), WARNING);
+            return '';
+        }
+        $item->getFromDB($item->getID());
+        return sprintf('Статус: %s → %s.', $before, $choices[$target]);
     }
 
     /**

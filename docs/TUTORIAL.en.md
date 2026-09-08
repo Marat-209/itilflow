@@ -157,10 +157,18 @@ follow by analogy.
 | Individual owner | IT director |
 | Approval threshold, % | 100 |
 | On rejection | **Abort the route** |
+| Status on this stage | **Approval** |
 | Instructions | what exactly to check |
 
 A 100% threshold requires every approver; 50% means a majority suffices. If a
 person rather than a group is named, the threshold is meaningless.
+
+**Status on this stage** moves the ticket to the chosen status as soon as the
+stage is taken into work: *approval* while it is being signed off, *pending*
+while an answer is awaited. The phase is then visible from the ticket list
+without opening anything. The change is written to the timeline. The default is
+*leave unchanged*; terminal statuses are not offered — closing is configured on
+the route.
 
 There are three reactions to a rejection, and choosing between them is a
 substantive decision:

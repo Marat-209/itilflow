@@ -55,6 +55,7 @@ function plugin_itilflow_install(): bool
             `deadline_minutes` INT NOT NULL DEFAULT 0,
             `approval_percent` TINYINT UNSIGNED NOT NULL DEFAULT 100,
             `approver_source` VARCHAR(20) NOT NULL DEFAULT 'fixed',
+                  `ticket_status` INT NOT NULL DEFAULT 0,
             `on_reject` VARCHAR(20) NOT NULL DEFAULT 'block',
             `plugin_itilflow_stages_id_reject` INT UNSIGNED NOT NULL DEFAULT 0,
             `content` TEXT DEFAULT NULL,
@@ -173,6 +174,11 @@ function plugin_itilflow_install(): bool
     // Список объектов согласования шага, через запятую.
     $migration->addField('glpi_plugin_itilflow_steps', 'approver_items_ids', 'string',
         ['value' => '']);
+
+    // 1.6.0 — статус заявки, который выставляется при открытии этапа.
+    // 0 — не менять: так ведут себя все маршруты, созданные до 1.6.0.
+    $migration->addField('glpi_plugin_itilflow_stages', 'ticket_status', 'integer',
+        ['value' => 0]);
 
     $migration->addRight('plugin_itilflow_process', ALLSTANDARDRIGHT);
     $migration->addRight('plugin_itilflow_bypass', 0);

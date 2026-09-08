@@ -81,7 +81,7 @@ header.
 
 ```bash
 # unpack into the GLPI plugins directory
-tar -xzf itilflow-1.5.1.tar.gz -C /var/www/glpi/plugins/
+tar -xzf itilflow-1.6.0.tar.gz -C /var/www/glpi/plugins/
 chown -R www-data:www-data /var/www/glpi/plugins/itilflow
 
 # install and enable
@@ -110,6 +110,21 @@ owning a task.
 | **Task in the ticket** | a task assigned to a group inside the same ticket | the whole route stays in one department; cheapest mode | the assignee clicks "complete stage" |
 | **Child ticket** | a separate ticket in the target entity, linked as a child | the stage leaves for another department; gives the stage its own SLA and its own visibility scope | automatically, when the child ticket is resolved |
 | **Approval** | a stock GLPI approval request with a step and a percentage threshold | sign-off by a manager, security, a system owner, a budget holder | automatically, on the approver's decision |
+
+### Ticket status along the route
+
+A stage has a **status on this stage** field: when the stage is taken into
+work, the ticket moves to the chosen status. Without it the ticket sits in its
+initial status the whole way, and the ticket list gives no hint of which phase
+the process is in — approval, waiting for an answer, or actual work.
+
+The list of statuses comes from the route's own item type, so tickets, changes
+and problems each get their own. Terminal statuses are deliberately absent:
+closing is the whole route's business, and "block resolution until the route is
+finished" already covers it.
+
+The change is written to the timeline as "Статус: Новая → Ожидание". The default
+is *leave unchanged*, so routes configured before 1.6.0 behave exactly as before.
 
 Approval is not reinvented: GLPI already provides substitute approvers,
 collective approval with a percentage threshold, notifications and reports.

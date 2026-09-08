@@ -64,6 +64,43 @@ class Stage extends CommonDBChild
         ];
     }
 
+    /**
+     * Статусы, которые этап может выставить заявке при открытии.
+     *
+     * Список берётся у самого типа объекта, поэтому для заявки, изменения
+     * и проблемы он свой. «Решена» и «Закрыта» исключены намеренно: этап
+     * не должен закрывать объект в обход остальных этапов — для этого есть
+     * настройка маршрута «Запрещать решение до прохождения маршрута»,
+     * и два механизма противоречили бы друг другу.
+     *
+     * @return array<int,string> ключ 0 — не менять статус
+     */
+    public static function getStatusChoices(string $itemtype): array
+    {
+        $out = [0 => 'Не менять'];
+        if (!is_a($itemtype, \CommonITILObject::class, true)) {
+            return $out;
+        }
+        $terminal = [\CommonITILObject::SOLVED, \CommonITILObject::CLOSED];
+        foreach ($itemtype::getAllStatusArray() as $id => $label) {
+            if (in_array((int) $id, $terminal, true)) {
+                continue;
+            }
+            $out[(int) $id] = (string) $label;
+        }
+        return $out;
+    }
+
+    /** Тип объекта маршрута, которому принадлежит этап. */
+    public function getItemtype(): string
+    {
+        $process = new Process();
+        if ($process->getFromDB((int) ($this->fields['plugin_itilflow_processes_id'] ?? 0))) {
+            return (string) $process->fields['itemtype'];
+        }
+        return \Ticket::class;
+    }
+
     public static function getApproverSourceLabels(): array
     {
         return [
@@ -147,6 +184,9 @@ class Stage extends CommonDBChild
             'rejects'      => self::getRejectLabels(),
             'completions'  => self::getCompletionCommentLabels(),
             'approver_sources' => self::getApproverSourceLabels(),
+            'statuses'     => self::getStatusChoices(
+                (string) ($process->fields['itemtype'] ?? \Ticket::class)
+            ),
             'siblings'     => $siblings,
         ]);
         return true;
@@ -169,6 +209,7 @@ class Stage extends CommonDBChild
         $this->fields['completion_comment'] = 'optional';
         $this->fields['is_optional']        = 0;
         $this->fields['deadline_minutes']   = 0;
+        $this->fields['ticket_status']      = 0;
         $this->fields['duration']           = 0;
         // Целочисленные ссылки: пустая строка не проходит в строгом режиме MySQL.
         $this->fields['ranking']                          = 0;
@@ -219,6 +260,23 @@ class Stage extends CommonDBChild
         if (!array_key_exists($src, self::getApproverSourceLabels())) {
             Session::addMessageAfterRedirect('Неизвестный источник согласующего.', false, ERROR);
             return [];
+        }
+
+        // Статус, выставляемый при открытии этапа. 0 — не менять.
+        if (array_key_exists('ticket_status', $input)) {
+            $status = (int) $input['ticket_status'];
+            $itemtype = (string) ($input['_itemtype'] ?? $this->getItemtype());
+            if (!array_key_exists($status, self::getStatusChoices($itemtype))) {
+                Session::addMessageAfterRedirect(
+                    'Этот статус нельзя выставить на этапе: он либо не подходит '
+                    . 'типу объекта маршрута, либо закрывает объект. Завершение '
+                    . 'настраивается у маршрута, а не у этапа.',
+                    false,
+                    ERROR
+                );
+                return [];
+            }
+            $input['ticket_status'] = $status;
         }
         // Источник согласующего осмыслен только для этапа-согласования.
         if ($mode !== self::MODE_APPROVAL) {
