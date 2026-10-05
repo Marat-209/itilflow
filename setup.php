@@ -21,7 +21,7 @@
 
 use Glpi\Plugin\Hooks;
 
-define('PLUGIN_ITILFLOW_VERSION', '1.6.0');
+define('PLUGIN_ITILFLOW_VERSION', '1.7.0');
 define('PLUGIN_ITILFLOW_MIN_GLPI', '11.0.0');
 define('PLUGIN_ITILFLOW_MAX_GLPI', '11.99.99');
 
@@ -78,6 +78,10 @@ function plugin_init_itilflow(): void
         'Change'  => [$H, 'postItilAdd'],
         'Problem' => [$H, 'postItilAdd'],
     ];
+
+    // Кнопка в ленте заявки. Вкладку профиля можно скрыть — это действие
+    // рисуется на главной форме штатным механизмом GLPI, без новых статусов.
+    $PLUGIN_HOOKS[Hooks::TIMELINE_ANSWER_ACTIONS]['itilflow'] = [$H, 'timelineAnswerActions'];
 
     $PLUGIN_HOOKS[Hooks::PRE_ITEM_PURGE]['itilflow'] = [
         'Ticket'  => [$H, 'prePurgeItil'],

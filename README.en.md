@@ -81,7 +81,7 @@ header.
 
 ```bash
 # unpack into the GLPI plugins directory
-tar -xzf itilflow-1.6.0.tar.gz -C /var/www/glpi/plugins/
+tar -xzf itilflow-1.7.0.tar.gz -C /var/www/glpi/plugins/
 chown -R www-data:www-data /var/www/glpi/plugins/itilflow
 
 # install and enable
@@ -107,9 +107,33 @@ owning a task.
 
 | Mode | What is created | When to use | How it closes |
 |---|---|---|---|
-| **Task in the ticket** | a task assigned to a group inside the same ticket | the whole route stays in one department; cheapest mode | the assignee clicks "complete stage" |
+| **Task in the ticket** | a task assigned to a group inside the same ticket | the whole route stays in one department; cheapest mode | the assignee opens Answer → Complete stage |
 | **Child ticket** | a separate ticket in the target entity, linked as a child | the stage leaves for another department; gives the stage its own SLA and its own visibility scope | automatically, when the child ticket is resolved |
 | **Approval** | a stock GLPI approval request with a step and a percentage threshold | sign-off by a manager, security, a system owner, a budget holder | automatically, on the approver's decision |
+
+### Completing a stage from the ticket form
+
+There is no separate window sitting on the ticket fields. On the main form,
+at the bottom of the timeline, the **Answer** menu is the same place as
+Comment, Task, Solution and Approval. It gains **Complete stage**. Choosing
+the item opens the form: the stage title, the instruction from the stage
+setup, the "what was done" field and the button. A mandatory report cannot be
+submitted empty. An optional stage also offers Skip stage, and the reason is
+mandatory.
+
+The item is shown to the current stage's assignee and to a process
+administrator, and only in the central interface. Self-service does not show
+it. A profile may hide the Stage route tab; the Answer item stays, and the
+form posts to the same handler as the tab.
+
+When a stage is waiting for someone to name the approver, the same menu shows
+**Name the approver** instead. An approval request that already exists, and a
+child ticket, are not given a second button: they close through GLPI's own
+Approve / Refuse and through resolving the child ticket.
+
+Marking the stage task done does not bypass a mandatory report. Closing goes
+through Complete stage, which is where the report is asked. If the report is
+optional, marking the task done still closes the stage.
 
 ### Ticket status along the route
 
@@ -289,7 +313,8 @@ An honest list of what the plugin does not do.
   optional, but there is no automatic "skip if the amount is under N".
 - **No stage strip in the ticket's field panel.** The extension points for that
   area are declared in GLPI 11.0.8 but are not invoked when the ticket form is
-  rendered. The entire route interface lives on a ticket tab.
+  rendered. The current stage is completed from the Answer menu on the main
+  form. The approval sheet, reassignment and abort stay on the tab.
 - **No notifications of its own.** Stock GLPI notifications for tasks, child
   tickets and approvals apply. No email is sent for a missed stage deadline.
 - **Child tickets are supported for the Ticket type.** For changes and problems,

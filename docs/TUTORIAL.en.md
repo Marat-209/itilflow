@@ -264,6 +264,26 @@ a due point: after how many working minutes the stage counts as late. A task has
 no countdown timer and cannot have one — a GLPI task never has its own SLA, which
 is a data model limitation. If you need a countdown, use child-ticket mode.
 
+### How the performer closes the stage
+
+There is no separate window on the ticket fields. On the main form, at the
+bottom of the timeline, open the **Answer** menu. It contains **Complete
+stage**. Choosing it opens the form: the stage title, the text from the
+stage's content field, the "what was done" field and the button.
+
+The item is there for this stage's assignee and for a process administrator,
+in the central interface. Self-service does not show it. If a profile hid the
+Stage route tab, the Answer item remains.
+
+A mandatory report cannot be bypassed by marking the task done: GLPI rejects
+the change and asks to close the stage through Complete stage. If the report
+is optional, marking the task done still closes the stage.
+
+A stage that is waiting for an approver to be named shows **Name the
+approver** in the same menu: a user or a group, and a mandatory reason. An
+approval that already exists closes with the stock Approve / Refuse buttons.
+A child ticket closes when it is resolved; it has no extra button.
+
 ### An optional stage (30)
 
 Set **stage is optional = Yes** and the performer gets a "skip stage" button. A
@@ -366,11 +386,15 @@ What to check along the way:
   with a visible countdown, and the right group assigned. The requester was not
   carried over — for them the stage is internal work. Resolving the child moves
   the route on.
-- **Task stage.** The task was created on the parent ticket, the group was added
-  to the assignees, and removed after the stage closed.
-- **Optional stage.** The skip button is there and will not submit without a
-  reason.
-- **Mandatory report.** The completion field will not submit empty.
+- **Task stage.** The task was created on the parent ticket and the group was
+  added to the assignees. In the central interface the assignee opens
+  **Answer → Complete stage**, fills in what was done and submits. After the
+  stage closes, the group is removed from the assignees. There is no separate
+  window on the ticket fields.
+- **Optional stage.** The same form has Skip stage, and it will not submit
+  without a reason.
+- **Mandatory report.** The completion field will not submit empty. Marking
+  the task done is also rejected while the report is mandatory.
 - **Blocked resolution.** Until the route completes, the ticket cannot be
   resolved and no solution can be added. In audit mode the attempt succeeds but
   lands in the violation log under the stage table.
@@ -409,6 +433,8 @@ procedure diverges from practice.
 | The route does not start when a ticket is created | the business rule did not fire: wrong category, rule inactive, or pre-empted by a rule higher in the order | check the rule, its order and the stop-processing flag |
 | The group is missing from the stage dropdown | the "can be assigned to tickets" flag is not set | set the flag on the group |
 | The performer cannot see the ticket or close the stage | the group is not among the ticket's assignees, or the profile cannot see its groups' tickets | the plugin adds the group itself for the stage; if that did not help, check the "show assigned tickets" right |
+| There is no separate window; the button is only inside Answer | that is how GLPI's timeline menu works: the plugin adds an item, not its own tile on the form | **Answer → Complete stage**. The form opens after the item is chosen |
+| Answer has no Complete stage | you are not the current stage's assignee, the interface is self-service, or the stage is an approval or a child ticket | sign in as the assignee in the central interface. Approvals and child tickets close through their own stock cards |
 | The approver sees no answer buttons | they are not the approver on the current stage, or the stage is already closed | check the ticket's approvals tab; the profile right is irrelevant here |
 | The route halted the moment a stage opened | the owner group does not belong to the target entity and is not visible in it | make the group recursive from a parent entity, or pick one from the target |
 | The ticket will not close although every stage is done | the route is halted after a rejected approval | Stage route tab → Resume or Abort |

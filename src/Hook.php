@@ -117,7 +117,65 @@ final class Hook
             if (Engine::deny($instance, $task->getType(), $task->getID(), 'complete_foreign_stage', $msg)) {
                 $task->input = false;
             }
+            return;
         }
+
+        // Обязательный отчёт живёт в форме «Завершить этап». Отметка задачи
+        // выполненной его не спрашивает, поэтому при обязательном отчёте
+        // такой обход закрываем. Статус задачи не придумываем: она остаётся
+        // в штатном «к выполнению», пока этап не закроют формой.
+        $stage = $step->getStage();
+        if ($stage !== null
+            && $stage->fields['execution_mode'] === Stage::MODE_INLINE
+            && $stage->fields['completion_comment'] === 'required') {
+            Session::addMessageAfterRedirect(
+                'Для этого этапа отчёт обязателен. Завершите его действием «Завершить этап» в ленте заявки и опишите, что сделано.',
+                false,
+                ERROR
+            );
+            $task->input = false;
+        }
+    }
+
+    /**
+     * Пункт в меню действий ленты заявки. Пустой массив — пункта нет:
+     * согласование с уже созданным запросом и дочерняя заявка закрываются
+     * штатными средствами GLPI.
+     *
+     * @param array{item?: CommonITILObject} $params
+     * @return array<string, array<string, mixed>>
+     */
+    public static function timelineAnswerActions(array $params): array
+    {
+        $item = $params['item'] ?? null;
+        if (!$item instanceof CommonITILObject || $item->isNewItem()) {
+            return [];
+        }
+        // Самообслуживание сюда не пускаем: приём формы требует центральный
+        // интерфейс, как и кнопка на вкладке маршрута.
+        if (Session::getCurrentInterface() !== 'central') {
+            return [];
+        }
+        $action = Ui::currentAction($item);
+        if ($action === null) {
+            return [];
+        }
+        $step = new Step();
+        if (!$step->getFromDB((int) $action['steps_id'])) {
+            return [];
+        }
+        $approver = $action['kind'] === 'approver';
+        return [
+            'itilflow_stage' => [
+                'type'         => 'itilflow',
+                'class'        => 'ItilflowStage',
+                'icon'         => $approver ? 'ti ti-user-question' : 'ti ti-route',
+                'label'        => $approver ? 'Указать согласующего' : 'Завершить этап',
+                'short_label'  => $approver ? 'Согласующий' : 'Этап',
+                'template'     => '@itilflow/timeline_stage.html.twig',
+                'item'         => $step,
+            ],
+        ];
     }
 
     /**

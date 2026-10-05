@@ -75,6 +75,63 @@ final class Ui
         return $rows;
     }
 
+    /**
+     * Действие текущего этапа, которое можно выполнить с заявки.
+     *
+     * Одно и то же решение для вкладки и для кнопки в ленте, чтобы они
+     * не разъехались. null — своего действия нет: этап ждёт штатное
+     * согласование GLPI или решение дочерней заявки.
+     *
+     * @return array<string, mixed>|null
+     */
+    public static function currentAction(CommonITILObject $item): ?array
+    {
+        $instance = Instance::getForItem($item);
+        if ($instance === null || $instance->fields['state'] !== Instance::RUNNING) {
+            return null;
+        }
+        $current = $instance->getCurrentStep();
+        $stage = $current?->getStage();
+        if ($current === null || $stage === null) {
+            return null;
+        }
+
+        $me = (int) Session::getLoginUserID();
+        $can_admin = Session::haveRight('plugin_itilflow_process', UPDATE);
+        $title = sprintf(
+            'Этап %d. %s',
+            (int) $current->fields['ranking'],
+            (string) $current->fields['stage_name']
+        );
+
+        if ($stage->fields['execution_mode'] === Stage::MODE_INLINE
+            && ($current->isOwnedBy($me, Engine::myGroups()) || $can_admin)) {
+            return [
+                'kind'        => 'complete',
+                'steps_id'    => $current->getID(),
+                'title'       => $title,
+                'instruction' => (string) $stage->fields['content'],
+                'comment'     => (string) $stage->fields['completion_comment'],
+                'is_optional' => (int) $stage->fields['is_optional'],
+            ];
+        }
+
+        // У этапа, который ждёт согласующего, ответственного ещё нет,
+        // поэтому право — у того, кто ведёт заявку, и только в центральном
+        // интерфейсе: форма уходит в front/step.form.php с checkCentralAccess.
+        if (Session::getCurrentInterface() === 'central'
+            && $current->awaitsApprover()
+            && ($can_admin || self::isAssignee($item, $me))) {
+            return [
+                'kind'     => 'approver',
+                'steps_id' => $current->getID(),
+                'title'    => $title,
+            ];
+        }
+
+        return null;
+    }
+
     /** Полная вкладка маршрута на заявке. */
     public static function showFlowTab(CommonITILObject $item): void
     {
@@ -98,27 +155,9 @@ final class Ui
 
         $process = $instance->getProcess();
         $current = $instance->getCurrentStep();
-
-        // Форма завершения показывается только исполнителю текущего этапа
-        // и только для этапов, которые закрываются вручную.
-        $form = null;
-        if ($current !== null && $instance->fields['state'] === Instance::RUNNING) {
-            $stage = $current->getStage();
-            $mine = $current->isOwnedBy((int) Session::getLoginUserID(), Engine::myGroups());
-            $admin = Session::haveRight('plugin_itilflow_process', UPDATE);
-            if ($stage !== null
-                && $stage->fields['execution_mode'] === Stage::MODE_INLINE
-                && ($mine || $admin)) {
-                $form = [
-                    'steps_id'    => $current->getID(),
-                    'title'       => sprintf('Этап %d. %s',
-                        (int) $current->fields['ranking'], (string) $current->fields['stage_name']),
-                    'instruction' => (string) $stage->fields['content'],
-                    'comment'     => (string) $stage->fields['completion_comment'],
-                    'is_optional' => (int) $stage->fields['is_optional'],
-                ];
-            }
-        }
+        $action = self::currentAction($item);
+        $form = ($action['kind'] ?? null) === 'complete' ? $action : null;
+        $approver = ($action['kind'] ?? null) === 'approver' ? $action : null;
 
         $is_staff = Session::getCurrentInterface() === 'central';
         $me = (int) Session::getLoginUserID();
@@ -137,24 +176,6 @@ final class Ui
                         (int) $current->fields['ranking'], (string) $current->fields['stage_name']),
                 ];
             }
-        }
-
-        // Указание согласующего: этап-согласование, у которого согласующий
-        // определяется при прохождении.
-        //
-        // Проверять принадлежность этапа здесь нельзя: у такого этапа
-        // ответственный ещё не задан, и isOwnedBy() вернул бы false для всех.
-        // Поэтому право даём тем, кто фактически ведёт заявку: администратору
-        // процессов и исполнителям заявки — это и есть диспетчер.
-        $approver = null;
-        if ($is_staff && $current !== null && $instance->fields['state'] === Instance::RUNNING
-            && $current->awaitsApprover()
-            && ($can_admin || self::isAssignee($item, $me))) {
-            $approver = [
-                'steps_id' => $current->getID(),
-                'title'    => sprintf('Этап %d. %s',
-                    (int) $current->fields['ranking'], (string) $current->fields['stage_name']),
-            ];
         }
 
         // Отзыв заявки — право инициатора.

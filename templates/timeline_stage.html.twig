@@ -1,0 +1,84 @@
+{#
+ # Форма текущего этапа в ленте заявки.
+ # Рисуется штатным меню действий GLPI и отправляет данные в тот же
+ # front/step.form.php, что и вкладка маршрута. Новых статусов нет.
+ #}
+{% set action = call('GlpiPlugin\\Itilflow\\Ui::currentAction', [item]) %}
+{% set action_url = path('/plugins/itilflow/front/step.form.php') %}
+
+{% if action is not null %}
+<form method="post" action="{{ action_url }}">
+   <input type="hidden" name="_glpi_csrf_token" value="{{ csrf_token() }}">
+   <input type="hidden" name="steps_id" value="{{ action.steps_id }}">
+
+   <h3 class="mb-2">
+      {% if action.kind == 'approver' %}
+         <i class="ti ti-user-question me-1"></i>Указать согласующего — {{ action.title }}
+      {% else %}
+         <i class="ti ti-route me-1"></i>Завершение этапа — {{ action.title }}
+      {% endif %}
+   </h3>
+
+   {% if action.kind == 'complete' %}
+      {% if action.instruction|striptags|trim != '' %}
+         <div class="alert alert-info py-2">{{ action.instruction|raw }}</div>
+      {% endif %}
+
+      {% if action.comment != 'none' %}
+         <label class="form-label" for="itilflow_timeline_report_{{ action.steps_id }}">
+            Что сделано
+            {% if action.comment == 'required' %}<span class="text-danger">*</span>{% endif %}
+         </label>
+         <textarea class="form-control mb-2" id="itilflow_timeline_report_{{ action.steps_id }}"
+                   name="report" rows="3"
+                   placeholder="Коротко опишите результат — это увидит инициатор заявки"
+                   {% if action.comment == 'required' %}required{% endif %}></textarea>
+      {% endif %}
+
+      <div class="d-flex gap-2 flex-wrap">
+         <button class="btn btn-primary" name="complete" value="1" type="submit">
+            <i class="ti ti-check me-1"></i>Завершить этап
+         </button>
+         {% if action.is_optional %}
+            <button class="btn btn-outline-secondary" name="skip" value="1" type="submit"
+                    formnovalidate
+                    onclick="return confirm('Пропустить этап? Укажите причину в поле выше.');">
+               Пропустить этап
+            </button>
+         {% endif %}
+      </div>
+      {% if action.is_optional %}
+         <div class="form-text">При пропуске причина обязательна.</div>
+      {% endif %}
+   {% else %}
+      <p class="text-secondary">
+         На этом этапе согласующий заранее неизвестен. Укажите, кто должен
+         согласовать, и на каком основании. Каждому уйдёт отдельный штатный
+         запрос GLPI.
+      </p>
+      <div class="mb-2">
+         <label class="form-label">Согласующие — сотрудники</label>
+         {{ call('User::dropdown', [{
+            'name': 'appr_users_id[]', 'value': [], 'right': 'all',
+            'multiple': true, 'display': false, 'width': '100%'
+         }])|raw }}
+      </div>
+      <div class="mb-2">
+         <label class="form-label">…и/или группы</label>
+         {{ call('Group::dropdown', [{
+            'name': 'appr_groups_id[]', 'value': [], 'entity': -1,
+            'condition': {'is_assign': 1}, 'multiple': true,
+            'display': false, 'width': '100%'
+         }])|raw }}
+      </div>
+      <div class="mb-2">
+         <label class="form-label">Основание выбора <span class="text-danger">*</span></label>
+         <input type="text" class="form-control" name="appr_reason" required
+                placeholder="Например: владелец ресурса по реестру доступов">
+      </div>
+      <button class="btn btn-warning" name="set_approver" value="1" type="submit">
+         <i class="ti ti-user-check me-1"></i>Указать согласующего
+      </button>
+   {% endif %}
+</form>
+{% endif %}
