@@ -57,7 +57,8 @@ final class StructuredUi
             }
         }
         $manager = $child_step === null && StructuredAccess::manageError($instance) === null;
-        if ($manager && $attempt->fields['state'] === Attempt::WAITING_INPUT) {
+        if ($child_step === null && $attempt->fields['state'] === Attempt::WAITING_INPUT
+            && StructuredAccess::activateError($instance) === null) {
             $forms[] = self::form('activate_attempt', $instance, $attempt)
                 + ['title' => 'Подтвердить уточнённый предмет и начать попытку', 'needs_subject' => true];
         }

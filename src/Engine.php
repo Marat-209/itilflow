@@ -442,6 +442,11 @@ final class Engine
                 || (int) $step->fields['artifact_items_id'] !== (int) $child->getID()) {
                 return false;
             }
+            // Решённая дочерняя с отклонённой визой — отказ отдела, а не «выполнено».
+            if ((int) ($child->fields['global_validation'] ?? 0) === CommonITILValidation::REFUSED) {
+                self::rejectStepInternal($step, 'В связанной заявке отдел отказал (виза отклонена).');
+                return self::auditAction($instance, $step, 'delegated_refused', false);
+            }
             return self::completeStepInternal($step, 'Связанная заявка решена.')
                 && self::auditAction($instance, $step, 'delegated_complete', false);
         });
@@ -1757,6 +1762,7 @@ final class Engine
         if (DefinitionSnapshot::enabled($instance)) {
             // Обязательная проверенная публичная запись входит в ту же транзакцию.
             self::abortStructured($instance, 'Отозвано исходным инициатором. ' . trim(strip_tags($reason)));
+            self::solveStructured($instance->getItilItem(), 'Заявка отозвана заявителем. Причина: ' . trim(strip_tags($reason)));
             return true;
         }
 

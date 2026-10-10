@@ -81,7 +81,10 @@ trait StructuredFlow
                 && (int) $step->fields['plugin_itilflow_instances_id'] === (int) $instance->getID()
                 && Authorizer::replayStepError($step, substr($action, 5)) === null;
         }
-        if (in_array($action, ['new_attempt', 'activate_attempt', 'reconcile_outcome', 'retry_status_sync'], true)) {
+        if ($action === 'activate_attempt') {
+            return StructuredAccess::activateError($instance) === null;
+        }
+        if (in_array($action, ['new_attempt', 'reconcile_outcome', 'retry_status_sync'], true)) {
             return StructuredAccess::manageError($instance) === null;
         }
         $step = new Step();
@@ -195,7 +198,7 @@ trait StructuredFlow
         return self::structuredCommand($instance, 'activate_attempt', $command_key, $expected_attempt,
             [$subject_summary, $reason], static function () use ($instance, $subject_summary, $reason): array {
                 $attempt = Attempt::current($instance);
-                if (StructuredAccess::manageError($instance) !== null || $attempt === null
+                if (StructuredAccess::activateError($instance) !== null || $attempt === null
                     || $attempt->fields['state'] !== Attempt::WAITING_INPUT || $subject_summary === '' || $reason === '') {
                     return self::structuredResult('rejected', $instance);
                 }
@@ -398,6 +401,7 @@ trait StructuredFlow
             : ' Требуется отдельное публичное пояснение.';
         $fid = self::structuredFollowup($instance, $text);
         self::mustUpdate($record, ['id' => $oid, 'public_followups_id' => $fid]);
+        self::solveStructuredChild($step, $text);
         return $record;
     }
 
@@ -459,6 +463,10 @@ trait StructuredFlow
         if (($step->getStage()->fields['negative_policy'] ?? '') === 'abort') {
             self::mustUpdate($instance, ['id' => $instance->getID(), 'state' => Instance::ABORTED,
                 'date_end' => self::now()]);
+            // Отказ — конец маршрута: заявитель получает прямой отрицательный ответ решением заявки.
+            $why = trim((string) ($record->fields['public_summary'] ?: $record->fields['reason']));
+            self::solveStructured($instance->getItilItem(), sprintf('Отказ на этапе «%s».', (string) $step->fields['stage_name'])
+                . ($why !== '' ? "\nПричина: " . $why : ''));
         }
     }
 
@@ -519,9 +527,12 @@ trait StructuredFlow
         $row = $rows[$source->getID()];
         if (!in_array((int) $row['status'], [\CommonITILValidation::ACCEPTED, \CommonITILValidation::REFUSED], true)
             || (int) ($row['users_id_validate'] ?? 0) <= 0) { return false; }
+        // Виза сама по себе — публичный результат этапа: «согласовано» продвигает маршрут сразу,
+        // причина отказа — прямой ответ заявителю.
+        $comment = trim(strip_tags((string) ($row['comment_validation'] ?? '')));
+        $public = $outcome === Outcome::COMPLETED ? 'Согласовано.' : ($comment !== '' ? $comment : 'Не согласовано.');
         $record = self::recordStructuredOutcome($instance, $step, $outcome, 'native_validation',
-            $source->getType(), $source->getID(), (int) $row['users_id_validate'],
-            trim(strip_tags((string) ($row['comment_validation'] ?? ''))), '',
+            $source->getType(), $source->getID(), (int) $row['users_id_validate'], $comment, $public,
             hash('sha256', 'native:' . $step->getID() . ':' . $digest), $digest);
         self::applyStructuredOutcome($instance, $step, $record);
         return true;
@@ -638,7 +649,39 @@ trait StructuredFlow
         self::mustUpdate($attempt, ['id' => $attempt->getID(), 'state' => Attempt::DONE, 'date_end' => self::now()]);
         self::mustUpdate($instance, ['id' => $instance->getID(), 'state' => Instance::DONE,
             'plugin_itilflow_stages_id_current' => 0, 'date_end' => self::now()]);
-        self::structuredFollowup($instance, 'Этапы маршрута завершены. Итоговый ответ и решение заявки оформляются отдельно.');
+        // Итог последнего отдела — содержательный ответ заявителю штатным решением заявки.
+        $final = '';
+        foreach ($steps as $row) {
+            $outcome = Outcome::forStep((int) $row['id']);
+            if ($outcome !== null && trim((string) $outcome->fields['public_summary']) !== '') {
+                $final = trim((string) $outcome->fields['public_summary']);
+            }
+        }
+        $process = DefinitionSnapshot::process($instance);
+        self::solveStructured($instance->getItilItem(), sprintf('Заявка выполнена: все этапы маршрута «%s» пройдены.',
+            (string) ($process?->fields['name'] ?? '')) . ($final !== '' ? "\nИтог: " . $final : ''));
+    }
+
+    /** Ответ заявителю штатным решением; уже решённый или закрытый объект не трогается. */
+    private static function solveStructured(?\CommonITILObject $item, string $text): void
+    {
+        if ($item === null || !CurrentRead::load($item, (int) $item->getID()) || !empty($item->fields['is_deleted'])
+            || in_array((int) $item->fields['status'], array_merge($item::getSolvedStatusArray(), $item::getClosedStatusArray()), true)) {
+            return;
+        }
+        self::enter();
+        try {
+            self::mustAdd(new \ITILSolution(), ['itemtype' => $item->getType(), 'items_id' => $item->getID(),
+                'content' => '<p>' . nl2br(htmlescape($text)) . '</p>']);
+        } finally { self::leave(); }
+    }
+
+    /** Работа отдела закончена исходом — его дочерняя заявка решается тем же текстом. */
+    private static function solveStructuredChild(Step $step, string $text): void
+    {
+        if ($step->fields['execution_mode'] === Stage::MODE_DELEGATED && ($child = StructuredAccess::child($step)) !== null) {
+            self::solveStructured($child, $text);
+        }
     }
 
     private static function abortStructured(Instance $instance, string $reason): void
@@ -659,6 +702,8 @@ trait StructuredFlow
         foreach ($instance->getAttemptSteps() as $row) {
             if (in_array($row['state'], [Step::PENDING, Step::RUNNING], true)) {
                 $step = new Step(); $step->getFromDB((int) $row['id']);
+                // Открытая работа отдела не остаётся висеть в его очереди.
+                self::solveStructuredChild($step, 'Работа не требуется: маршрут прекращён. ' . trim(strip_tags($reason)));
                 self::mustUpdate($step, ['id' => $step->getID(), 'state' => Step::SUPERSEDED, 'date_end' => self::now()]);
             }
         }

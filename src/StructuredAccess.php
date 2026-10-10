@@ -208,11 +208,21 @@ final class StructuredAccess
         return $rows;
     }
 
-    public static function manageError(Instance $instance): ?string
+    /** Уточнение заявителя подтверждает тот, кто ведёт основную заявку, без смены профиля. */
+    public static function activateError(Instance $instance): ?string
+    {
+        $item = $instance->getItilItem();
+        if (!Authorizer::isAdministrator() && ($item === null || !Authorizer::isAssignee($item))) {
+            return 'Уточнение подтверждает исполнитель основной заявки или администратор процессов.';
+        }
+        return self::manageError($instance, true);
+    }
+
+    public static function manageError(Instance $instance, bool $assignee = false): ?string
     {
         $item = $instance->getItilItem();
         if (Authorizer::contextError($instance) !== null || !DefinitionSnapshot::enabled($instance)
-            || DefinitionSnapshot::load($instance) === null || !Authorizer::isAdministrator()
+            || DefinitionSnapshot::load($instance) === null || (!$assignee && !Authorizer::isAdministrator())
             || $item === null || Authorizer::itemError($item, UPDATE) !== null
             || in_array((int) $item->fields['status'], array_merge($item::getSolvedStatusArray(),
                 $item::getClosedStatusArray()), true)) {

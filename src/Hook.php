@@ -216,6 +216,10 @@ final class Hook
         if (!in_array($new, $closing, true) || in_array((int) $item->fields['status'], $closing, true)) {
             return;
         }
+        if (self::childAwaitsOutcome($item)) {
+            $item->input = false;
+            return;
+        }
         $instance = Instance::getForItem($item);
         if (!self::blocksResolution($instance)) {
             return;
@@ -224,6 +228,23 @@ final class Hook
         if (Engine::deny($instance, $item->getType(), $item->getID(), 'resolve_with_open_stages', $msg)) {
             $item->input = false;
         }
+    }
+
+    /**
+     * Дочерняя работа нового порядка решается исходом отдела, а не вручную:
+     * иначе этап ждал бы исхода вечно. Проверка целостности — в любом режиме контроля.
+     */
+    private static function childAwaitsOutcome(CommonITILObject $item): bool
+    {
+        $step = Step::getByArtifact($item->getType(), (int) $item->getID());
+        $instance = $step?->getInstance();
+        if ($step === null || $instance === null || !DefinitionSnapshot::enabled($instance)
+            || $step->fields['state'] !== Step::RUNNING || Outcome::forStep($step->getID()) !== null) {
+            return false;
+        }
+        Session::addMessageAfterRedirect('Эта заявка — этап маршрута. Отметьте исход на вкладке маршрута: '
+            . '«Выполнено», «Отказ» или «Вернуть на уточнение» — заявка отдела решится сама.', false, ERROR);
+        return true;
     }
 
     /** То же самое для решения: перехватываем до записи решения, а не после. */
@@ -239,6 +260,10 @@ final class Hook
         }
         $item = new $itemtype();
         if (!$item->getFromDB($items_id)) {
+            return;
+        }
+        if (self::childAwaitsOutcome($item)) {
+            $solution->input = false;
             return;
         }
         $instance = Instance::getForItem($item);
