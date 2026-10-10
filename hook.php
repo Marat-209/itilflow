@@ -180,9 +180,34 @@ function plugin_itilflow_install(): bool
     $migration->addField('glpi_plugin_itilflow_stages', 'ticket_status', 'integer',
         ['value' => 0]);
 
+    // 1.8.0: неизвестное не заменяется нулём или текущим requester.
+    $migration->addField('glpi_plugin_itilflow_instances', 'users_id_requester_start',
+        'INT UNSIGNED NULL DEFAULT NULL');
+    $migration->addField('glpi_plugin_itilflow_steps', 'approval_percent_snapshot',
+        'INT UNSIGNED NULL DEFAULT NULL');
+    $migration->addField('glpi_plugin_itilflow_steps', 'approval_expected_count',
+        'INT UNSIGNED NULL DEFAULT NULL');
+    $migration->addField('glpi_plugin_itilflow_steps', 'approval_snapshot_source', 'string',
+        ['value' => '']);
+
+    \GlpiPlugin\Itilflow\StructuredSchema::prepare($migration);
+    \GlpiPlugin\Itilflow\StatusSyncSchema::prepare($migration);
     $migration->addRight('plugin_itilflow_process', ALLSTANDARDRIGHT);
     $migration->addRight('plugin_itilflow_bypass', 0);
     $migration->executeMigration();
+    \GlpiPlugin\Itilflow\StructuredSchema::verify();
+    \GlpiPlugin\Itilflow\StatusSyncSchema::verify();
+    if (!\GlpiPlugin\Itilflow\Upgrade::approvalSnapshots()) {
+        return false;
+    }
+
+    CronTask::register(
+        'GlpiPlugin\\Itilflow\\Cron', 'itilflow_status_sync', 60,
+        ['mode' => CronTask::MODE_EXTERNAL, 'allowmode' => CronTask::MODE_EXTERNAL, 'state' => CronTask::STATE_DISABLE,
+            'comment' => 'Синхронизация статусов этапов. Включить штатный CLI cron после настройки и проверки.']
+    );
+    $status_sync_task = new CronTask();
+    if (!$status_sync_task->getFromDBbyName('GlpiPlugin\\Itilflow\\Cron', 'itilflow_status_sync')) { return false; }
 
     CronTask::register(
         'GlpiPlugin\\Itilflow\\Cron',
