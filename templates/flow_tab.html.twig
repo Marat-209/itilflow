@@ -1,321 +1,158 @@
-{% set action_url = path('/plugins/itilflow/front/step.form.php') %}
+{#
+ # Вкладка маршрута: одна таблица. Итог этапа и действие человека — в строке этапа,
+ # форма действия раскрывается строкой сразу под этапом. Видно только то, что можно сделать.
+ #}
+<style>
+   .itilflow-route .itilflow-current > td:first-child { box-shadow: inset 3px 0 0 var(--tblr-primary, #206bc4); }
+   .itilflow-route .itilflow-summary { max-width: 36rem; }
+   .itilflow-route .itilflow-panel > td { background: var(--tblr-bg-surface-secondary, #f6f8fb); }
+   .itilflow-route .itilflow-history summary { cursor: pointer; color: var(--tblr-secondary, #667382); }
+   @media (max-width: 575.98px) {
+      .itilflow-route-table thead { display: none; }
+      .itilflow-route-table, .itilflow-route-table tbody, .itilflow-route-table tr, .itilflow-route-table td { display: block; width: 100%; }
+      .itilflow-route-table tr.itilflow-row { border: 1px solid var(--tblr-border-color, #dce1e7); border-radius: 8px; margin-bottom: .5rem; padding: .35rem .6rem; }
+      .itilflow-route-table td { border: 0 !important; padding: .15rem 0 !important; text-align: left !important; }
+      .itilflow-route-table td[data-label]:not([data-label=""])::before { content: attr(data-label); display: block; font-size: .68rem; text-transform: uppercase; color: var(--tblr-secondary, #667382); }
+      .itilflow-route-table tr.itilflow-panel.show { display: block; margin: -.4rem 0 .6rem; border: 1px solid var(--tblr-border-color, #dce1e7); border-top: 0; border-radius: 0 0 8px 8px; }
+      .itilflow-route .itilflow-current > td:first-child { box-shadow: none; }
+      .itilflow-route-table tr.itilflow-current { border-color: var(--tblr-primary, #206bc4); }
+      .itilflow-route-table td.itilflow-empty { display: none; }
+   }
+</style>
 
-<div class="d-flex align-items-center justify-content-between mb-3">
-   <div>
-      <h3 class="mb-0"><i class="ti ti-route me-1"></i>{{ process_name }}</h3>
-      {% if is_staff %}
-         <div class="text-muted small">Режим контроля: {{ enforcement }}</div>
-      {% else %}
-         <div class="text-muted small">Ход обработки вашей заявки по регламенту</div>
-      {% endif %}
-   </div>
-   <div class="d-flex align-items-center gap-2">
-      {% if is_staff %}
-         <a class="btn btn-sm btn-outline-secondary" href="{{ sheet_url }}" target="_blank" rel="noopener">
-            <i class="ti ti-file-text me-1"></i>Лист согласования
-         </a>
-      {% endif %}
-      <span class="badge {% if instance.fields['state'] == 'running' %}bg-blue-lt{% elseif instance.fields['state'] == 'done' %}bg-green-lt{% else %}bg-red-lt{% endif %} fs-5">{{ state_label }}</span>
-   </div>
-</div>
-
-{% if instance.fields['state'] == 'halted' %}
-   <div class="alert alert-danger d-flex align-items-center justify-content-between">
-      <span>{% if is_staff %}{% if instance.fields['outcome_contract']|default('legacy') == 'structured_v1' %}Маршрут остановлен. Отказ, уточнение и техническая пауза обрабатываются разными действиями выше.{% else %}Маршрут остановлен. Исправьте настройку этапа и возобновите.{% endif %}{% else %}Обработка приостановлена, заявка передана ответственному за процесс.{% endif %}</span>
-      {% if can_resume %}
-      <form method="post" action="{{ action_url }}">
-         <input type="hidden" name="_glpi_csrf_token" value="{{ csrf_token() }}">
-         {% if command is not null %}
-         <input type="hidden" name="command_key" value="{{ command.key }}">
-         <input type="hidden" name="expected_attempt_id" value="{{ command.attempt_id }}">
+<div class="itilflow-route">
+   <div class="d-flex flex-wrap align-items-start justify-content-between gap-2 mb-2">
+      <div>
+         <h3 class="mb-0"><i class="ti ti-route me-1"></i>{{ process_name }}</h3>
+         {% if only and parent_link %}<div class="small text-muted">Этап маршрута по заявке {{ parent_link|raw }}</div>{% endif %}
+         {% if not only and state[2] %}<div class="small text-muted">{{ state[2] }}</div>{% endif %}
+         {% if enforcement %}<div class="small text-muted">Режим контроля: {{ enforcement }}</div>{% endif %}
+      </div>
+      <div class="d-flex align-items-center gap-2">
+         {% if sheet_url %}
+            <a class="btn btn-sm btn-outline-secondary" href="{{ sheet_url }}" target="_blank" rel="noopener"><i class="ti ti-file-text me-1"></i>Лист согласования</a>
          {% endif %}
-         <input type="hidden" name="instances_id" value="{{ instance.fields['id'] }}">
-         <button class="btn btn-sm btn-warning" name="resume" value="1">Возобновить</button>
-      </form>
-      {% endif %}
+         {% if not only %}<span class="badge {{ state[1] }} fs-5">{{ state[0] }}</span>{% endif %}
+         {% if header_menu|length or can_resume %}
+            <div class="dropdown itilflow-menu">
+               <button type="button" class="btn btn-sm btn-ghost-secondary" data-bs-toggle="dropdown" aria-label="Действия администратора"><i class="ti ti-dots"></i></button>
+               <div class="dropdown-menu dropdown-menu-end">
+                  {% for m in header_menu %}
+                     <a href="#" class="dropdown-item" data-action="{{ m.action }}" data-bs-toggle="collapse" data-bs-target="#itilflow-h-{{ m.action }}">{{ m.label }}</a>
+                  {% endfor %}
+                  {% if can_resume %}
+                     <form method="post" action="{{ step_url }}" class="px-3 py-1">
+                        <input type="hidden" name="_glpi_csrf_token" value="{{ csrf_token() }}">
+                        {% if command is not null %}<input type="hidden" name="command_key" value="{{ command.key }}"><input type="hidden" name="expected_attempt_id" value="{{ command.attempt_id }}">{% endif %}
+                        <input type="hidden" name="instances_id" value="{{ instance.fields['id'] }}">
+                        <button class="btn btn-sm btn-warning w-100" name="resume" value="1" data-action="resume">Возобновить маршрут</button>
+                     </form>
+                  {% endif %}
+               </div>
+            </div>
+         {% endif %}
+      </div>
    </div>
-{% endif %}
 
-{% include '@itilflow/status_sync.html.twig' %}
+   {% for m in header_menu %}
+      <div class="collapse mb-2" id="itilflow-h-{{ m.action }}">
+         <form method="post" action="{{ step_url }}" class="border rounded p-2">
+            <input type="hidden" name="_glpi_csrf_token" value="{{ csrf_token() }}">
+            {% if command is not null %}<input type="hidden" name="command_key" value="{{ command.key }}"><input type="hidden" name="expected_attempt_id" value="{{ command.attempt_id }}">{% endif %}
+            <input type="hidden" name="instances_id" value="{{ instance.fields['id'] }}">
+            <label class="form-label">Причина — её увидит заявитель <span class="text-danger">*</span></label>
+            <textarea class="form-control mb-2" name="abort_reason" rows="2" required></textarea>
+            <button class="btn btn-sm btn-danger" name="abort" value="1" onclick="return confirm('Прервать маршрут? Открытые этапы будут закрыты.');">Прервать маршрут</button>
+         </form>
+      </div>
+   {% endfor %}
 
-<div class="table-responsive">
-   <table class="table table-hover align-middle">
+   <table class="table table-vcenter card-table itilflow-route-table">
       <thead>
          <tr>
-            <th style="width:56px">№</th>
+            <th style="width:48px">№</th>
             <th>Этап</th>
-            {% if is_staff %}<th>Режим</th>{% endif %}
             <th>Ответственные</th>
-            <th>Состояние</th>
+            <th>Итог</th>
             <th>Срок</th>
-            {% if is_staff %}<th>Объект</th>{% endif %}
-            <th>Длительность</th>
-            {% if is_staff %}<th style="width:220px"></th>{% endif %}
+            <th class="w-1"></th>
          </tr>
       </thead>
       <tbody>
-      {% for s in steps %}
-         <tr {% if s['id'] == current_id %}class="table-active"{% endif %}>
-            <td class="text-center fw-bold">
-               {{ s['ranking'] }}{% if s['pass_number'] > 1 %}<span class="text-muted small">.{{ s['pass_number'] }}</span>{% endif %}
+      {% for r in rows %}
+         <tr class="itilflow-row{% if r.current %} itilflow-current table-active{% endif %}" data-rank="{{ r.rank }}" data-step="{{ r.step_id }}">
+            <td data-label="" class="fw-bold">{{ r.rank }}</td>
+            <td data-label="Этап">
+               <div>{{ r.name }}{% if r.try > 0 %} <span class="itilflow-try text-muted small">· попытка {{ r.try }}</span>{% endif %}</div>
+               <span class="badge {{ r.mode_class }}">{{ r.mode_label }}</span>
+               {% if r.artifact %}<span class="small ms-1">{{ r.artifact|raw }}</span>{% endif %}
             </td>
-            <td>{{ s['stage_name'] }}</td>
-            {% if is_staff %}<td class="text-muted">{{ s['mode_label'] }}</td>{% endif %}
-            <td>{{ s['owner_name'] }}</td>
-            <td>
-               {% if s['state'] == 'done' %}<span class="badge bg-green-lt">{{ s['state_label'] }}</span>
-               {% elseif s['state'] == 'running' %}<span class="badge bg-blue-lt">{{ s['state_label'] }}</span>
-               {% elseif s['state'] == 'rejected' %}<span class="badge bg-red-lt">{{ s['state_label'] }}</span>
-               {% elseif s['state'] == 'skipped' %}<span class="badge bg-yellow-lt">{{ s['state_label'] }}</span>
-               {% else %}<span class="badge bg-secondary-lt">{{ s['state_label'] }}</span>
+            <td data-label="Ответственные">{{ r.owner }}</td>
+            <td data-label="Итог">
+               <span class="badge itilflow-outcome {{ r.result.class }}" data-outcome="{{ r.result.kind }}">{{ r.result.label }}</span>
+               {% if r.result.summary %}<div class="itilflow-summary">{{ r.result.summary }}</div>{% endif %}
+               {% if r.result.internal %}<div class="small text-muted">{{ r.result.internal }}</div>{% endif %}
+               {% if r.result.author %}<div class="itilflow-author small text-muted">{{ r.result.author }}{% if r.result.date %}, {{ r.result.date }}{% endif %}</div>{% endif %}
+               {% if r.history|length %}
+                  <details class="itilflow-history small mt-1">
+                     <summary>История этапа ({{ r.history|length }})</summary>
+                     {% for h in r.history %}
+                        <div class="mt-1">Попытка {{ h.try }}: <span class="badge {{ h.class }}">{{ h.label }}</span>
+                           {% if h.summary %}{{ h.summary }}{% endif %}{% if h.author %} <span class="text-muted">— {{ h.author }}{% if h.date %}, {{ h.date }}{% endif %}</span>{% endif %}</div>
+                     {% endfor %}
+                  </details>
                {% endif %}
             </td>
-            <td class="{{ s['overdue'] ? 'text-danger fw-bold' : 'text-muted' }}">
-               {% if s['due'] %}{{ s['due'] }}{% if s['overdue'] %} <span class="badge bg-red-lt">просрочен</span>{% endif %}{% else %}—{% endif %}
+            <td data-label="Срок" class="{{ r.overdue ? 'text-danger fw-bold' : 'text-muted' }}{% if not r.due and not r.took %} itilflow-empty{% endif %}">
+               {% if r.due %}{{ r.due }}{% if r.overdue %} <span class="badge bg-red-lt">просрочен</span>{% endif %}{% elseif r.took %}заняло {{ r.took }}{% else %}—{% endif %}
             </td>
-            {% if is_staff %}<td>{{ s['artifact_link']|raw }}</td>{% endif %}
-            <td class="text-muted">{{ s['duration_h'] }}</td>
-            {% if is_staff %}
-            <td>
-               {% if s['id'] == current_id and instance.fields['state'] == 'running' %}
-                  {% if s['execution_mode'] == 'approval' %}
-                     {% if s['awaits_approver'] %}
-                        <span class="text-warning small">
-                           <i class="ti ti-user-question me-1"></i>ожидает указания согласующего
-                        </span>
-                     {% else %}
-                        <span class="text-muted small">решается во вкладке «Согласования»</span>
-                     {% endif %}
-                  {% elseif s['execution_mode'] == 'delegated' %}
-                     <span class="text-muted small">закроется решением дочерней заявки</span>
-                  {% elseif s['can_complete'] %}
-                     <span class="badge bg-blue-lt">ваш этап — форма в ленте заявки</span>
-                  {% else %}
-                     <span class="text-muted small">этап другой группы</span>
-                  {% endif %}
-                  {% if s['can_override'] %}
-                     <form method="post" action="{{ action_url }}" class="mt-2">
-                        <input type="hidden" name="_glpi_csrf_token" value="{{ csrf_token() }}">
-         {% if command is not null %}
-         <input type="hidden" name="command_key" value="{{ command.key }}">
-         <input type="hidden" name="expected_attempt_id" value="{{ command.attempt_id }}">
-         {% endif %}
-                        <input type="hidden" name="steps_id" value="{{ s['id'] }}">
-                        <label class="form-label small">Причина принудительного завершения</label>
-                        <textarea class="form-control form-control-sm" name="report" required></textarea>
-                        <button class="btn btn-sm btn-outline-danger mt-1" name="override" value="1">
-                           Завершить по полномочию
-                        </button>
-                        <div class="form-text">Отдельное действие с записью в журнал. Голоса согласующих не меняются.</div>
-                     </form>
-                  {% endif %}
+            <td data-label="" class="text-end text-nowrap">
+               {% for a in r.actions %}
+                  <button type="button" class="btn btn-sm btn-primary itilflow-act mb-1" data-action="{{ a.action }}"
+                          data-bs-toggle="collapse" data-bs-target="#itilflow-p-{{ r.step_id }}-{{ a.action }}">{{ a.label }}</button>
+               {% endfor %}
+               {% if r.menu|length %}
+                  <div class="dropdown d-inline-block itilflow-menu">
+                     <button type="button" class="btn btn-sm btn-ghost-secondary" data-bs-toggle="dropdown" aria-label="Ещё"><i class="ti ti-dots"></i></button>
+                     <div class="dropdown-menu dropdown-menu-end">
+                        {% for m in r.menu %}
+                           <a href="#" class="dropdown-item" data-action="{{ m.action }}" data-bs-toggle="collapse" data-bs-target="#itilflow-p-{{ r.step_id }}-{{ m.action }}">{{ m.label }}</a>
+                        {% endfor %}
+                     </div>
+                  </div>
                {% endif %}
             </td>
-            {% endif %}
          </tr>
+         {% for a in r.actions|merge(r.menu) %}
+            <tr class="itilflow-panel collapse{% if only and loop.first and r.actions|length %} show{% endif %}" id="itilflow-p-{{ r.step_id }}-{{ a.action }}" data-action="{{ a.action }}">
+               <td colspan="6">{% include '@itilflow/flow_action.html.twig' with {'a': a, 'r': r} %}</td>
+            </tr>
+         {% endfor %}
       {% endfor %}
       </tbody>
    </table>
-</div>
 
-{% if form is not null %}
-   <div class="card mt-3">
-      <div class="card-header">
-         <h4 class="card-title mb-0">Завершение этапа — {{ form['title'] }}</h4>
-      </div>
-      <div class="card-body">
-         {% if form['instruction']|striptags|trim != '' %}
-            <div class="alert alert-info py-2">{{ form['instruction']|raw }}</div>
-         {% endif %}
-         <form method="post" action="{{ action_url }}">
+   {% if withdraw %}
+      <details class="mt-3">
+         <summary class="btn btn-sm btn-outline-danger">Отозвать заявку</summary>
+         <form method="post" action="{{ step_url }}" class="mt-2 d-flex gap-2 align-items-center flex-wrap">
             <input type="hidden" name="_glpi_csrf_token" value="{{ csrf_token() }}">
-         {% if command is not null %}
-         <input type="hidden" name="command_key" value="{{ command.key }}">
-         <input type="hidden" name="expected_attempt_id" value="{{ command.attempt_id }}">
-         {% endif %}
-            <input type="hidden" name="steps_id" value="{{ form['steps_id'] }}">
-
-            {% if form['comment'] != 'none' %}
-               <label class="form-label" for="itilflow_report">
-                  Что сделано
-                  {% if form['comment'] == 'required' %}<span class="text-danger">*</span>{% endif %}
-               </label>
-               <textarea class="form-control mb-2" id="itilflow_report" name="report" rows="3"
-                         placeholder="Коротко опишите результат — это увидит инициатор заявки"
-                         {% if form['comment'] == 'required' %}required{% endif %}></textarea>
-            {% endif %}
-
-            <div class="d-flex gap-2">
-               <button class="btn btn-primary" name="complete" value="1">
-                  <i class="ti ti-check me-1"></i>Завершить этап
-               </button>
-               {% if form['is_optional'] %}
-                  <button class="btn btn-outline-secondary" name="skip" value="1"
-                          formnovalidate
-                          onclick="return confirm('Пропустить этап? Укажите причину в поле выше.');">
-                     Пропустить этап
-                  </button>
-               {% endif %}
-            </div>
-            {% if form['is_optional'] %}
-               <div class="form-text">При пропуске причина обязательна.</div>
-            {% endif %}
+            {% if command is not null %}<input type="hidden" name="command_key" value="{{ command.key }}"><input type="hidden" name="expected_attempt_id" value="{{ command.attempt_id }}">{% endif %}
+            <input type="hidden" name="instances_id" value="{{ instance.fields['id'] }}">
+            <input type="text" class="form-control" style="max-width:340px" name="withdraw_reason" required placeholder="Почему заявка больше не нужна">
+            <button class="btn btn-danger" name="withdraw" value="1" onclick="return confirm('Отозвать заявку? Работа по ней прекратится.');">Отозвать</button>
          </form>
-      </div>
-   </div>
-{% endif %}
+      </details>
+   {% endif %}
 
-{% if approver is not null %}
-   <div class="card mt-3 border-warning">
-      <div class="card-header py-2">
-         <h4 class="card-title mb-0 fs-5">
-            <i class="ti ti-user-question me-1"></i>Указать согласующего — {{ approver['title'] }}
-         </h4>
-      </div>
-      <div class="card-body">
-         <p class="text-secondary mb-3">
-            На этом этапе согласующий заранее неизвестен и определяется по обстоятельствам
-            обращения. Укажите, кто должен согласовать, и на каком основании вы его выбрали.
-            Согласующих может быть несколько — например руководитель заявителя
-            и владелец ресурса: каждому уйдёт отдельный запрос, а этап будет пройден
-            по порогу согласования. Запросы создаются после сохранения.
-         </p>
-         <form method="post" action="{{ action_url }}">
-            <input type="hidden" name="_glpi_csrf_token" value="{{ csrf_token() }}">
-         {% if command is not null %}
-         <input type="hidden" name="command_key" value="{{ command.key }}">
-         <input type="hidden" name="expected_attempt_id" value="{{ command.attempt_id }}">
-         {% endif %}
-            <input type="hidden" name="steps_id" value="{{ approver['steps_id'] }}">
-            <div class="row g-2 align-items-end">
-               <div class="col-md-4">
-                  <label class="form-label">Согласующие — сотрудники</label>
-                  {{ call('User::dropdown', [{
-                     'name': 'appr_users_id[]', 'value': [], 'right': 'all',
-                     'multiple': true, 'display': false, 'width': '100%'
-                  }])|raw }}
-                  <div class="form-text">Можно выбрать нескольких: каждый согласует отдельно.</div>
-               </div>
-               <div class="col-md-4">
-                  <label class="form-label">…и/или группы</label>
-                  {{ call('Group::dropdown', [{
-                     'name': 'appr_groups_id[]', 'value': [], 'entity': -1,
-                     'condition': {'is_assign': 1}, 'multiple': true,
-                     'display': false, 'width': '100%'
-                  }])|raw }}
-               </div>
-               <div class="col-md-4">
-                  <label class="form-label">Основание выбора <span class="text-danger">*</span></label>
-                  <input type="text" class="form-control" name="appr_reason" required
-                         placeholder="Например: владелец ресурса по реестру доступов">
-               </div>
-            </div>
-            <button class="btn btn-warning mt-3" name="set_approver" value="1">
-               <i class="ti ti-user-check me-1"></i>Указать согласующего
-            </button>
-            <div class="form-text">
-               Основание попадёт в лист согласования и в ленту заявки: будет видно,
-               кто выбрал согласующего и почему.
-            </div>
-         </form>
-      </div>
-   </div>
-{% endif %}
-
-{% if reassign is not null %}
-   <div class="card mt-3">
-      <div class="card-header py-2">
-         <h4 class="card-title mb-0 fs-5">Передать этап другому исполнителю — {{ reassign['title'] }}</h4>
-      </div>
-      <div class="card-body">
-         <form method="post" action="{{ action_url }}">
-            <input type="hidden" name="_glpi_csrf_token" value="{{ csrf_token() }}">
-         {% if command is not null %}
-         <input type="hidden" name="command_key" value="{{ command.key }}">
-         <input type="hidden" name="expected_attempt_id" value="{{ command.attempt_id }}">
-         {% endif %}
-            <input type="hidden" name="steps_id" value="{{ reassign['steps_id'] }}">
-            <div class="row g-2 align-items-end">
-               <div class="col-md-4">
-                  <label class="form-label">Новая группа</label>
-                  {{ call('Group::dropdown', [{
-                     'name': 'to_groups_id', 'value': 0, 'entity': -1,
-                     'condition': {'is_assign': 1}, 'display': false, 'width': '100%'
-                  }])|raw }}
-               </div>
-               <div class="col-md-4">
-                  <label class="form-label">…или конкретный сотрудник</label>
-                  {{ call('User::dropdown', [{
-                     'name': 'to_users_id', 'value': 0, 'right': 'all',
-                     'display': false, 'width': '100%'
-                  }])|raw }}
-               </div>
-               <div class="col-md-4">
-                  <label class="form-label">Причина <span class="text-danger">*</span></label>
-                  <input type="text" class="form-control" name="reassign_reason" required
-                         placeholder="Например: склад закрыт на инвентаризацию">
-               </div>
-            </div>
-            <button class="btn btn-outline-primary mt-3" name="reassign" value="1">
-               <i class="ti ti-arrows-exchange me-1"></i>Передать этап
-            </button>
-            <div class="form-text">
-               В листе согласования останется отметка: кто был назначен и кому передали.
-            </div>
-         </form>
-      </div>
-   </div>
-{% endif %}
-
-{% if withdraw is not null %}
-   <form method="post" action="{{ action_url }}" class="mt-3 d-flex gap-2 align-items-center flex-wrap">
-      <input type="hidden" name="_glpi_csrf_token" value="{{ csrf_token() }}">
-         {% if command is not null %}
-         <input type="hidden" name="command_key" value="{{ command.key }}">
-         <input type="hidden" name="expected_attempt_id" value="{{ command.attempt_id }}">
-         {% endif %}
-      <input type="hidden" name="instances_id" value="{{ withdraw['instances_id'] }}">
-      <input type="text" class="form-control" style="max-width:340px" name="withdraw_reason"
-             required placeholder="Причина отзыва заявки">
-      <button class="btn btn-outline-danger" name="withdraw" value="1"
-              onclick="return confirm('Отозвать заявку? Обработка по регламенту прекратится.');">
-         <i class="ti ti-arrow-back-up me-1"></i>Отозвать заявку
-      </button>
-   </form>
-{% endif %}
-
-{% if can_abort %}
-   <form method="post" action="{{ action_url }}" class="mt-3">
-      <input type="hidden" name="_glpi_csrf_token" value="{{ csrf_token() }}">
-         {% if command is not null %}
-         <input type="hidden" name="command_key" value="{{ command.key }}">
-         <input type="hidden" name="expected_attempt_id" value="{{ command.attempt_id }}">
-         {% endif %}
-      <input type="hidden" name="instances_id" value="{{ instance.fields['id'] }}">
-      <label class="form-label">Причина прекращения маршрута</label>
-      <textarea class="form-control mb-2" name="abort_reason" required></textarea>
-      <button class="btn btn-sm btn-outline-danger" name="abort" value="1"
-              onclick="return confirm('Прервать маршрут? Незавершённые этапы будут помечены пропущенными.');">
-         Прервать маршрут
-      </button>
-   </form>
-{% endif %}
-
-{% if violations|length > 0 %}
-   <h4 class="mt-4"><i class="ti ti-alert-triangle me-1"></i>Попытки действий вне очереди</h4>
-   <div class="table-responsive">
-      <table class="table table-sm">
-         <thead><tr><th>Когда</th><th>Кто</th><th>Что произошло</th><th>Результат</th></tr></thead>
-         <tbody>
+   {% if violations|length %}
+      <details class="mt-3 small">
+         <summary>Действия вне порядка этапов ({{ violations|length }})</summary>
+         <ul class="mt-1 mb-0">
          {% for v in violations %}
-            <tr>
-               <td class="text-muted">{{ v['date'] }}</td>
-               <td>{{ v['user_name'] }}</td>
-               <td>{{ v['message'] }}</td>
-               <td>{% if v['was_blocked'] %}<span class="badge bg-red-lt">заблокировано</span>{% else %}<span class="badge bg-yellow-lt">разрешено, записано</span>{% endif %}</td>
-            </tr>
+            <li>{{ v['date'] }} — {{ v['user_name'] }}: {{ v['message'] }} — {% if v['was_blocked'] %}заблокировано{% else %}разрешено и записано{% endif %}</li>
          {% endfor %}
-         </tbody>
-      </table>
-   </div>
-{% endif %}
+         </ul>
+      </details>
+   {% endif %}
+</div>

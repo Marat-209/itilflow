@@ -21,6 +21,21 @@ $text = static function (string $key, int $limit = 8000): string {
 };
 $action = $text('action', 40);
 $key = $text('command_key', 64);
+// Кнопки строки этапа: одно поле результата; внутренний комментарий необязателен —
+// без него основанием служит тот же текст.
+$do = $text('itilflow_do', 20);
+if ($do !== '') {
+    $action = match ($do) {
+        'done', 'refuse' => 'department_outcome', 'return' => 'request_clarification',
+        'activate' => 'activate_attempt', 'new_attempt' => 'new_attempt', default => '',
+    };
+    if (in_array($do, ['done', 'refuse'], true)) {
+        $_POST['outcome'] = $do === 'done' ? Outcome::COMPLETED : Outcome::REFUSED;
+    }
+    if ($text('reason') === '') {
+        $_POST['reason'] = in_array($do, ['activate', 'new_attempt'], true) ? $text('subject_summary', 16000) : $text('public_summary');
+    }
+}
 $attempt = $id('expected_attempt_id');
 $instance = new Instance();
 $step = new Step();

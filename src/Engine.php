@@ -758,10 +758,9 @@ final class Engine
             };
             if ($ok === true) {
                 if (DefinitionSnapshot::enabled($instance)) {
-                    $sync = StatusSync::request($step, (int) $stage->fields['ticket_status'], (int) Session::getLoginUserID());
-                    if ($sync['state'] !== StatusSync::NONE && !$sync['verified']) {
-                        self::msg('Статус заявки ожидает штатной фоновой задачи. Включите itilflow_status_sync после настройки и проверки.', WARNING);
-                    }
+                    // Статус ставит задача itilflow_status_sync; людям об этом не сообщаем —
+                    // если задача выключена, предупреждение видит администратор в списке маршрутов.
+                    StatusSync::request($step, (int) $stage->fields['ticket_status'], (int) Session::getLoginUserID());
                 } else {
                     $status_note = self::applyStageStatus($stage, $item);
                 }

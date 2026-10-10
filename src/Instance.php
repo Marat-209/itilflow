@@ -149,14 +149,13 @@ class Instance extends CommonDBTM
                 return '';
             }
         }
-        $done = 0;
-        $total = 0;
+        // Счёт по этапам маршрута: у этапа с несколькими попытками учитывается последняя.
+        $latest = [];
         foreach ($inst->getSteps() as $s) {
-            $total++;
-            if (in_array($s['state'], [Step::DONE, Step::SKIPPED], true)) {
-                $done++;
-            }
+            $latest[(int) $s['plugin_itilflow_stages_id']] = $s;
         }
+        $total = count($latest);
+        $done = count(array_filter($latest, fn($s) => in_array($s['state'], [Step::DONE, Step::SKIPPED], true)));
         return self::createTabEntry('Маршрут этапов', $total > 0 ? "{$done}/{$total}" : 0);
     }
 
