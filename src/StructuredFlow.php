@@ -58,13 +58,13 @@ trait StructuredFlow
 
     /** Старые кнопки используют тот же ledger; вызов без токенов закрыт только в новом режиме. */
     private static function manualStructuredCommand(Instance $instance, ?Step $step, string $action,
-        string $key, int $expected_attempt, array $payload, callable $apply): bool
+        string $key, int $expected_attempt, array $payload, callable $apply, ?string &$denial = null): bool
     {
         $result = self::structuredCommand($instance, $action, $key, $expected_attempt, $payload,
             static function () use ($instance, $step, $apply): array {
                 return self::structuredResult($apply() ? 'applied' : 'rejected', $instance, $step);
             });
-        if ($result['status'] === 'rejected') {
+        if ($result['status'] === 'rejected' && $denial === null) {
             self::msg('Команда отклонена. Обновите карточку и проверьте текущую попытку и полномочия.', ERROR);
         }
         return in_array($result['status'], ['applied', 'already_applied'], true);

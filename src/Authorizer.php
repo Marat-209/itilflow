@@ -157,7 +157,9 @@ final class Authorizer
         $owned = $step->isOwnedBy((int) Session::getLoginUserID(), Engine::myGroups());
         if (in_array($action, ['complete', 'skip'], true)) {
             if ($mode !== Stage::MODE_INLINE) {
-                return 'Этот этап завершается штатным результатом связанного действия.';
+                return $mode === Stage::MODE_APPROVAL
+                    ? 'Согласование завершает только ответ согласующего в ленте заявки: «Согласовать» или «Отказать».'
+                    : 'Работа отдела завершается исходом в его заявке: «Выполнено» или «Отказано».';
             }
             return $owned ? null : 'Текущий исполнитель этапа не подтверждён.';
         }

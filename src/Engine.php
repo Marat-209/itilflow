@@ -200,7 +200,7 @@ final class Engine
         };
         $ok = DefinitionSnapshot::enabled($instance)
             ? self::manualStructuredCommand($instance, $step, 'step_' . $action, $command_key,
-                $expected_attempt, [$step->getID(), $reason, $payload], $apply)
+                $expected_attempt, [$step->getID(), $reason, $payload], $apply, $denial)
             : self::locked($instance, $apply);
         if ($denial !== null) {
             self::auditAction($instance, $step, $action, true);
@@ -229,7 +229,7 @@ final class Engine
         };
         $ok = DefinitionSnapshot::enabled($instance)
             ? self::manualStructuredCommand($instance, null, 'instance_' . $action, $command_key,
-                $expected_attempt, [$reason], $apply)
+                $expected_attempt, [$reason], $apply, $denial)
             : self::locked($instance, $apply);
         if ($denial !== null) {
             self::auditAction($instance, null, $action, true);
