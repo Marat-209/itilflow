@@ -426,12 +426,26 @@ trait StructuredFlow
         } finally { self::leave(); }
     }
 
+    /** Снятый с маршрута запрос визы не остаётся ждать ответа у согласующего. */
+    private static function dropWaitingValidations(Step $step): void
+    {
+        if ($step->fields['execution_mode'] !== Stage::MODE_APPROVAL) { return; }
+        foreach (StructuredAccess::roster($step) ?? [] as $id => $row) {
+            $v = new ($row['_type'])();
+            if ((int) $row['status'] === \CommonITILValidation::WAITING && $v->getFromDB((int) $id)) {
+                self::enter();
+                try { $v->delete(['id' => (int) $id], true); } finally { self::leave(); }
+            }
+        }
+    }
+
     private static function closeStructuredAttempt(Instance $instance, Step $source, string $state): void
     {
         $attempt = Attempt::current($instance);
         if ($attempt === null || $attempt->fields['state'] !== Attempt::RUNNING) {
             throw new \RuntimeException('Текущая попытка не подтверждена.');
         }
+        self::dropWaitingValidations($source);
         self::mustUpdate($source, ['id' => $source->getID(), 'state' => Step::REJECTED,
             'date_end' => self::now(), 'comment' => null]);
         foreach ($instance->getAttemptSteps() as $row) {
@@ -702,8 +716,9 @@ trait StructuredFlow
         foreach ($instance->getAttemptSteps() as $row) {
             if (in_array($row['state'], [Step::PENDING, Step::RUNNING], true)) {
                 $step = new Step(); $step->getFromDB((int) $row['id']);
-                // Открытая работа отдела не остаётся висеть в его очереди.
+                // Открытая работа отдела и запрос визы не остаются висеть в чужой очереди.
                 self::solveStructuredChild($step, 'Работа не требуется: маршрут прекращён. ' . trim(strip_tags($reason)));
+                self::dropWaitingValidations($step);
                 self::mustUpdate($step, ['id' => $step->getID(), 'state' => Step::SUPERSEDED, 'date_end' => self::now()]);
             }
         }
