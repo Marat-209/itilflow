@@ -55,10 +55,15 @@ function plugin_init_itilflow(): void
         'Ticket'           => [$H, 'preItilUpdate'],
         'Change'           => [$H, 'preItilUpdate'],
         'Problem'          => [$H, 'preItilUpdate'],
+        'TicketValidation' => [$H, 'preValidationUpdate'],
+        'ChangeValidation' => [$H, 'preValidationUpdate'],
     ];
 
     $PLUGIN_HOOKS[Hooks::PRE_ITEM_ADD]['itilflow'] = [
         'ITILSolution' => [$H, 'preSolutionAdd'],
+        'Ticket' => [\GlpiPlugin\Itilflow\RuleStart::class, 'beforeAdd'],
+        'Change' => [\GlpiPlugin\Itilflow\RuleStart::class, 'beforeAdd'],
+        'Problem' => [\GlpiPlugin\Itilflow\RuleStart::class, 'beforeAdd'],
     ];
 
     // --- продвижение маршрута
@@ -91,6 +96,8 @@ function plugin_init_itilflow(): void
 
     // --- перенос заявки между сущностями
     $PLUGIN_HOOKS[Hooks::ITEM_TRANSFER]['itilflow'] = [$H, 'itemTransfer'];
+
+    $PLUGIN_HOOKS[Hooks::RULE_MATCHED]['itilflow'] = [\GlpiPlugin\Itilflow\RuleStart::class, 'matched'];
 
     // --- расширение штатных бизнес-правил
     $PLUGIN_HOOKS[Hooks::USE_RULES]['itilflow'] = ['RuleTicket', 'RuleChange', 'RuleProblem'];

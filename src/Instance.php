@@ -18,6 +18,18 @@ class Instance extends CommonDBTM
     public const ABORTED = 'aborted';
     public const HALTED  = 'halted';
 
+    // Строки исполнения изменяются только командами Engine, не generic CRUD.
+    // Native add/update внутри движка не вызывают эти permission callbacks.
+    public function canCreateItem(): bool { return false; }
+    public function canUpdateItem(): bool { return false; }
+    public function canDeleteItem(): bool { return false; }
+    public function canPurgeItem(): bool { return false; }
+
+    public function canViewItem(): bool
+    {
+        return Authorizer::instanceError($this, 'read') === null;
+    }
+
     public static function getTypeName($nb = 0)
     {
         return 'Маршрут этапов';

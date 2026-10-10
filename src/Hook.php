@@ -92,31 +92,12 @@ final class Hook
             return;
         }
 
-        if ($step->fields['state'] !== Step::RUNNING) {
-            $blocking = self::firstOpenStageName($instance, (int) $step->fields['ranking']);
-            $msg = $step->fields['state'] === Step::DONE
-                ? sprintf('Этап «%s» уже завершён.', (string) $step->fields['stage_name'])
-                : sprintf(
-                    'Этап «%s» ещё не наступил: не завершён этап «%s». Этапы идут строго по порядку.',
-                    (string) $step->fields['stage_name'],
-                    $blocking
-                );
-            if (Engine::deny($instance, $task->getType(), $task->getID(), 'complete_out_of_order', $msg)) {
-                $task->input = false;
-            }
-            return;
-        }
-
-        if (!$step->isOwnedBy((int) Session::getLoginUserID(), Engine::myGroups())) {
-            $g = new Group();
-            $owner = (int) $step->fields['groups_id'] > 0 && $g->getFromDB((int) $step->fields['groups_id'])
-                ? $g->fields['name']
-                : getUserName((int) $step->fields['users_id']);
-            $msg = sprintf('Этап «%s» закреплён за «%s». Завершить его может только ответственный.',
-                (string) $step->fields['stage_name'], $owner);
-            if (Engine::deny($instance, $task->getType(), $task->getID(), 'complete_foreign_stage', $msg)) {
-                $task->input = false;
-            }
+        $error = Authorizer::stepError($step, 'complete');
+        if ($error !== null) {
+            Violation::record($instance, $task->getType(), $task->getID(),
+                'action_task_complete', true, $error);
+            Session::addMessageAfterRedirect($error, false, ERROR);
+            $task->input = false;
             return;
         }
 
@@ -288,7 +269,7 @@ final class Hook
         if ($step === null || $step->fields['state'] !== Step::RUNNING) {
             return;
         }
-        Engine::completeStep($step, 'Задача этапа отмечена выполненной.');
+        Engine::taskCompleted($task);
     }
 
     /** Решение дочерней заявки закрывает соответствующий этап родителя. */
@@ -308,7 +289,7 @@ final class Hook
         if ($step === null || $step->fields['state'] !== Step::RUNNING) {
             return;
         }
-        Engine::completeStep($step, sprintf('Дочерняя заявка №%d решена.', $item->getID()));
+        Engine::delegatedCompleted($item);
     }
 
     public static function postValidationUpdate(CommonITILValidation $val): void
@@ -330,7 +311,37 @@ final class Hook
         // Решение принимает движок: он смотрит все запросы шага и порог этапа.
         // Один ответ не обязательно закрывает этап — при нескольких согласующих
         // ждём, пока порог будет достигнут или станет недостижим.
-        Engine::evaluateApproval($step, $comment);
+        Engine::validationUpdated($val);
+    }
+
+    /** Native ответ не превращается в полномочие для другого адресата или старой попытки. */
+    public static function preValidationUpdate(CommonITILValidation $val): void
+    {
+        if (!is_array($val->input) || !array_key_exists('status', $val->input)) {
+            return;
+        }
+        $bindings = Step::validationBindings($val->getType(), $val->getID());
+        if (count($bindings) === 0) {
+            return; // штатное согласование, не связанное с маршрутом
+        }
+        if (count($bindings) !== 1) {
+            Violation::record(null, $val->getType(), $val->getID(),
+                'action_approval_answer', true, 'Неоднозначная связь согласования.');
+            $val->input = false;
+            return;
+        }
+        $step = $bindings[0];
+        $stored = new ($val->getType())();
+        $stored->getFromDB($val->getID());
+        if (Authorizer::validationError($stored, $step) !== null
+            || $step->validationRoster() === null
+            || (int) ($step->fields['approval_percent_snapshot'] ?? 0) < 1
+            || (int) ($step->fields['approval_percent_snapshot'] ?? 0) > 100
+            || !in_array((int) $val->input['status'], [CommonITILValidation::ACCEPTED, CommonITILValidation::REFUSED], true)) {
+            Violation::record($step->getInstance(), $val->getType(), $val->getID(),
+                'action_approval_answer', true, 'Ответ на согласование отклонён.');
+            $val->input = false;
+        }
     }
 
     /** Запуск маршрута действием штатного бизнес-правила. */
@@ -343,7 +354,7 @@ final class Hook
         if ($pid <= 0) {
             return;
         }
-        Engine::start($item, $pid);
+        Engine::startFromRule($item);
     }
 
     public static function prePurgeItil(CommonITILObject $item): void
@@ -379,10 +390,7 @@ final class Hook
         if ($cur !== null) {
             $stage = $cur->getStage();
             if ($stage !== null && !$stage->groupFitsEntity($entities_id)) {
-                Engine::halt(
-                    $instance,
-                    'после переноса в другую сущность ответственный текущего этапа стал недоступен'
-                );
+                Engine::transferred($item);
             }
         }
     }

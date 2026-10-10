@@ -17,6 +17,19 @@ class Step extends CommonDBChild
     public const SKIPPED  = 'skipped';
     public const REJECTED = 'rejected';
 
+    // Строки исполнения изменяются только командами Engine, не generic CRUD.
+    // Native add/update внутри движка не вызывают эти permission callbacks.
+    public function canCreateItem(): bool { return false; }
+    public function canUpdateItem(): bool { return false; }
+    public function canDeleteItem(): bool { return false; }
+    public function canPurgeItem(): bool { return false; }
+
+    public function canViewItem(): bool
+    {
+        $instance = $this->getInstance();
+        return $instance !== null && Authorizer::instanceError($instance, 'read') === null;
+    }
+
     public static function getTypeName($nb = 0)
     {
         return $nb > 1 ? 'Шаги маршрута' : 'Шаг маршрута';
@@ -39,9 +52,9 @@ class Step extends CommonDBChild
         $found = (new self())->find(
             ['artifact_itemtype' => $itemtype, 'artifact_items_id' => $items_id],
             ['id DESC'],
-            1
+            2
         );
-        if (!count($found)) {
+        if (count($found) !== 1) {
             return null;
         }
         $s = new self();
@@ -71,10 +84,11 @@ class Step extends CommonDBChild
             $one = (int) ($this->fields['artifact_items_id'] ?? 0);
             return $one > 0 ? [$one] : [];
         }
-        return array_values(array_filter(array_map(
-            static fn($x) => (int) trim((string) $x),
-            explode(',', $raw)
-        )));
+        if (!preg_match('/^[1-9][0-9]*(?:,[1-9][0-9]*)*$/D', $raw)) {
+            return [];
+        }
+        $ids = array_map('intval', explode(',', $raw));
+        return count(array_unique($ids)) === count($ids) && min($ids) > 0 ? $ids : [];
     }
 
     /**
@@ -83,29 +97,33 @@ class Step extends CommonDBChild
      * Ищем по списку: на одном этапе может быть несколько отдельных
      * согласований, и artifact_items_id указывает лишь на первое из них.
      */
-    public static function getByValidation(string $itemtype, int $items_id): ?self
+    public static function validationBindings(string $itemtype, int $items_id): array
     {
         global $DB;
+        if (!in_array($itemtype, ['TicketValidation', 'ChangeValidation'], true) || $items_id <= 0) {
+            return [];
+        }
+        $matches = [];
         foreach ($DB->request([
-            'SELECT' => ['id'],
-            'FROM'   => self::getTable(),
-            'WHERE'  => [
-                'execution_mode' => Stage::MODE_APPROVAL,
-                'state'          => self::RUNNING,
-                new \QueryExpression(
-                    'FIND_IN_SET(' . (int) $items_id . ', '
-                    . $DB->quoteName('approver_items_ids') . ') > 0'
-                ),
-            ],
-            'ORDER'  => 'id DESC',
+            'SELECT' => ['id'], 'FROM' => self::getTable(),
+            'WHERE' => ['execution_mode' => Stage::MODE_APPROVAL,
+                'artifact_itemtype' => $itemtype,
+                'OR' => ['artifact_items_id' => $items_id, new \QueryExpression(
+                    'FIND_IN_SET(' . $items_id . ', ' . $DB->quoteName('approver_items_ids') . ') > 0')]],
         ]) as $row) {
-            $s = new self();
-            if ($s->getFromDB((int) $row['id'])) {
-                return $s;
+            $step = new self();
+            if ($step->getFromDB((int) $row['id'])) {
+                $matches[] = $step;
             }
         }
-        // Совместимость со шагами до 1.5.0.
-        return self::getByArtifact($itemtype, $items_id);
+        return $matches;
+    }
+
+    public static function getByValidation(string $itemtype, int $items_id): ?self
+    {
+        $matches = self::validationBindings($itemtype, $items_id);
+        return count($matches) === 1 && $matches[0]->fields['state'] === self::RUNNING
+            && in_array($items_id, $matches[0]->validationIds(), true) ? $matches[0] : null;
     }
 
     /**
@@ -123,7 +141,14 @@ class Step extends CommonDBChild
         if ($this->fields['state'] !== self::RUNNING) {
             return false;
         }
-        if ((int) $this->fields['artifact_items_id'] > 0) {
+        // Назначение допустимо лишь до появления какой-либо связи.
+        // Неполный прежний состав нельзя молча заменить новым.
+        $percent = (int) ($this->fields['approval_percent_snapshot'] ?? 0);
+        if ((int) $this->fields['artifact_items_id'] !== 0
+            || (string) ($this->fields['artifact_itemtype'] ?? '') !== ''
+            || (string) ($this->fields['approver_items_ids'] ?? '') !== ''
+            || ($this->fields['approval_expected_count'] ?? null) !== null
+            || $percent < 1 || $percent > 100) {
             return false;
         }
         $stage = $this->getStage();
@@ -140,7 +165,49 @@ class Step extends CommonDBChild
         if ((int) $this->fields['groups_id'] > 0 && in_array((int) $this->fields['groups_id'], $groups_ids, true)) {
             return true;
         }
-        // Ответственный не задан вовсе — шаг открыт всем участникам заявки.
-        return (int) $this->fields['users_id'] === 0 && (int) $this->fields['groups_id'] === 0;
+        // Отсутствие владельца не является полномочием. Назначение проверяется отдельно.
+        return false;
+    }
+
+    /** Полный состав по сохранённой связи; отсутствие записи не уменьшает знаменатель. */
+    public function validationRoster(bool $require_snapshot = true): ?array
+    {
+        global $DB;
+        $instance = $this->getInstance();
+        $item = $instance?->getItilItem();
+        $class = $item?->getValidationClassInstance();
+        $ids = $this->validationIds();
+        if ($this->fields['execution_mode'] !== Stage::MODE_APPROVAL || $item === null
+            || $class === null || $this->fields['artifact_itemtype'] !== get_class($class)
+            || count($ids) === 0 || (int) $this->fields['artifact_items_id'] !== $ids[0]
+            || ($require_snapshot && (int) ($this->fields['approval_expected_count'] ?? 0) !== count($ids))) {
+            return null;
+        }
+        $type = get_class($class);
+        $rows = [];
+        foreach ($DB->request(['FROM' => $type::getTable(), 'WHERE' => ['id' => $ids]]) as $row) {
+            if ((int) ($row[$item::getForeignKeyField()] ?? 0) !== (int) $item->getID()
+                || (int) ($row['entities_id'] ?? -1) !== (int) $item->fields['entities_id']
+                || !in_array((int) $row['status'], [\CommonITILValidation::WAITING,
+                    \CommonITILValidation::ACCEPTED, \CommonITILValidation::REFUSED], true)) {
+                return null;
+            }
+            $rows[(int) $row['id']] = $row;
+        }
+        if (count($rows) !== count($ids)) {
+            return null;
+        }
+        // Один запрос согласования не может принадлежать двум попыткам/объектам.
+        foreach ((new self())->find(['artifact_itemtype' => $type]) as $sid => $other) {
+            if ((int) $sid === (int) $this->getID()) {
+                continue;
+            }
+            $other_ids = array_map('intval', explode(',', (string) ($other['approver_items_ids'] ?? '')));
+            $other_ids[] = (int) ($other['artifact_items_id'] ?? 0);
+            if (array_intersect($ids, $other_ids)) {
+                return null;
+            }
+        }
+        return $rows;
     }
 }

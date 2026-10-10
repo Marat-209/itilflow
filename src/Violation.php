@@ -32,9 +32,9 @@ class Violation extends CommonDBTM
         string $action,
         bool $was_blocked,
         string $message
-    ): void {
+    ): bool {
         $v = new self();
-        $v->add([
+        return (int) $v->add([
             'plugin_itilflow_instances_id' => $instance ? $instance->getID() : 0,
             'entities_id'                  => $instance ? (int) $instance->fields['entities_id'] : 0,
             'users_id'                     => (int) (Session::getLoginUserID() ?: 0),
@@ -44,7 +44,7 @@ class Violation extends CommonDBTM
             'was_blocked'                  => $was_blocked ? 1 : 0,
             'message'                      => $message,
             'date'                         => $_SESSION['glpi_currenttime'] ?? date('Y-m-d H:i:s'),
-        ]);
+        ]) > 0;
     }
 
     public function rawSearchOptions()

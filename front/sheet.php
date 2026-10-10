@@ -11,7 +11,7 @@ if (!$instance->getFromDB((int) ($_GET['id'] ?? 0))) {
     throw new \Glpi\Exception\Http\BadRequestHttpException('Неизвестный маршрут');
 }
 $item = $instance->getItilItem();
-if ($item === null || !$item->can($item->getID(), READ)) {
+if ($item === null || \GlpiPlugin\Itilflow\Authorizer::instanceError($instance, 'read') !== null) {
     throw new \Glpi\Exception\Http\AccessDeniedHttpException();
 }
 

@@ -12,6 +12,9 @@ final class Ui
     /** Данные шагов, обогащённые для отображения. */
     public static function decorate(Instance $instance): array
     {
+        if (Authorizer::instanceError($instance, 'read') !== null) {
+            return [];
+        }
         $rows = [];
         $me = (int) Session::getLoginUserID();
         $mygroups = Engine::myGroups();
@@ -33,7 +36,7 @@ final class Ui
             $aid = (int) $row['artifact_items_id'];
             if ($type !== '' && $aid > 0 && class_exists($type)) {
                 $a = new $type();
-                if ($a->getFromDB($aid)) {
+                if ($a->getFromDB($aid) && $a->can($aid, READ)) {
                     if ($a instanceof CommonITILObject) {
                         $link = $a->getLink();
                     } elseif ($a instanceof \CommonITILTask) {
@@ -62,6 +65,8 @@ final class Ui
                 'state_label'  => Step::getStateLabels()[$row['state']] ?? $row['state'],
                 'mode_label'   => Stage::getModeLabels()[$row['execution_mode']] ?? $row['execution_mode'],
                 'is_mine'      => $step->isOwnedBy($me, $mygroups),
+                'can_complete' => Authorizer::stepError($step, 'complete') === null,
+                'can_override' => Authorizer::stepError($step, 'override') === null,
                 // Пока согласующий не указан, подсказка про вкладку
                 // «Согласования» неверна: там ещё нечего решать.
                 'awaits_approver' => $step->awaitsApprover(),
@@ -104,8 +109,8 @@ final class Ui
             (string) $current->fields['stage_name']
         );
 
-        if ($stage->fields['execution_mode'] === Stage::MODE_INLINE
-            && ($current->isOwnedBy($me, Engine::myGroups()) || $can_admin)) {
+        if (Session::getCurrentInterface() === 'central'
+            && Authorizer::stepError($current, 'complete') === null) {
             return [
                 'kind'        => 'complete',
                 'steps_id'    => $current->getID(),
@@ -120,8 +125,7 @@ final class Ui
         // поэтому право — у того, кто ведёт заявку, и только в центральном
         // интерфейсе: форма уходит в front/step.form.php с checkCentralAccess.
         if (Session::getCurrentInterface() === 'central'
-            && $current->awaitsApprover()
-            && ($can_admin || self::isAssignee($item, $me))) {
+            && Authorizer::stepError($current, 'set_approver') === null) {
             return [
                 'kind'     => 'approver',
                 'steps_id' => $current->getID(),
@@ -135,6 +139,9 @@ final class Ui
     /** Полная вкладка маршрута на заявке. */
     public static function showFlowTab(CommonITILObject $item): void
     {
+        if (Authorizer::itemError($item, READ) !== null) {
+            return;
+        }
         $instance = Instance::getForItem($item);
 
         if ($instance === null) {
@@ -143,12 +150,14 @@ final class Ui
                 'is_active' => 1,
                 'itemtype'  => $item->getType(),
             ] + getEntitiesRestrictCriteria(Process::getTable(), '', $item->fields['entities_id'], true)) as $id => $p) {
-                $available[$id] = $p['name'];
+                if (Authorizer::startError($item, (int) $id) === null) {
+                    $available[$id] = $p['name'];
+                }
             }
             TemplateRenderer::getInstance()->display('@itilflow/flow_start.html.twig', [
                 'item'      => $item,
                 'processes' => $available,
-                'can_start' => Session::haveRight('plugin_itilflow_process', UPDATE),
+                'can_start' => count($available) > 0,
             ]);
             return;
         }
@@ -168,8 +177,7 @@ final class Ui
         $reassign = null;
         if ($is_staff && $current !== null && $instance->fields['state'] === Instance::RUNNING) {
             $cstage = $current->getStage();
-            if ($cstage !== null && $cstage->fields['execution_mode'] !== Stage::MODE_APPROVAL
-                && ($current->isOwnedBy($me, Engine::myGroups()) || $can_admin)) {
+            if ($cstage !== null && Authorizer::stepError($current, 'reassign') === null) {
                 $reassign = [
                     'steps_id' => $current->getID(),
                     'title'    => sprintf('Этап %d. %s',
@@ -180,9 +188,7 @@ final class Ui
 
         // Отзыв заявки — право инициатора.
         $withdraw = null;
-        if ($process_obj !== null && $process_obj->fields['allow_withdraw']
-            && in_array($instance->fields['state'], [Instance::RUNNING, Instance::HALTED], true)
-            && ($item->isUser(\CommonITILActor::REQUESTER, $me) || $can_admin)) {
+        if (Authorizer::instanceError($instance, 'withdraw') === null) {
             $withdraw = ['instances_id' => $instance->getID()];
         }
 
@@ -198,11 +204,14 @@ final class Ui
             'steps'         => self::decorate($instance),
             'current_id'    => $current ? $current->getID() : 0,
             'can_admin'     => $can_admin,
+            'can_resume'    => $is_staff && Authorizer::instanceError($instance, 'resume') === null,
+            'can_abort'     => $is_staff && Authorizer::instanceError($instance, 'abort') === null,
             'reassign'      => $reassign,
             'approver'      => $approver,
             'withdraw'      => $withdraw,
             'sheet_url'     => \Plugin::getWebDir('itilflow') . '/front/sheet.php?id=' . $instance->getID(),
-            'violations'    => $is_staff ? self::violations($instance) : [],
+            'violations'    => $is_staff && Session::haveRight('plugin_itilflow_process', READ)
+                ? self::violations($instance) : [],
         ]);
     }
 

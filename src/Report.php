@@ -9,18 +9,34 @@ namespace GlpiPlugin\Itilflow;
  */
 final class Report
 {
+    /** Отчёт включает только объекты, доступные текущей сессии. */
+    private static function visibleInstances(int $processes_id): array
+    {
+        $process = new Process();
+        if (!\Session::haveRight('plugin_itilflow_process', READ)
+            || !$process->getFromDB($processes_id) || !$process->can($processes_id, READ)
+            || !\Session::haveAccessToEntity((int) $process->fields['entities_id'])) {
+            return [];
+        }
+        $rows = [];
+        foreach ((new Instance())->find(['plugin_itilflow_processes_id' => $processes_id]) as $id => $row) {
+            $instance = new Instance();
+            if ($instance->getFromDB((int) $id) && Authorizer::instanceError($instance, 'read') === null) {
+                $rows[(int) $id] = $row;
+            }
+        }
+        return $rows;
+    }
+
     /** @return array<int, array> строки отчёта по этапам маршрута */
     public static function byStage(int $processes_id): array
     {
-        $steps = (new Step())->find([], ['ranking ASC']);
-        $instances = [];
-        foreach ((new Instance())->find(['plugin_itilflow_processes_id' => $processes_id]) as $id => $r) {
-            $instances[(int) $id] = $r;
-        }
+        $instances = self::visibleInstances($processes_id);
         if (!count($instances)) {
             return [];
         }
 
+        $steps = (new Step())->find(['plugin_itilflow_instances_id' => array_keys($instances)], ['ranking ASC']);
         $acc = [];
         foreach ($steps as $row) {
             $iid = (int) $row['plugin_itilflow_instances_id'];
@@ -88,10 +104,7 @@ final class Report
     /** Сводка по маршруту целиком. */
     public static function summary(int $processes_id): array
     {
-        $rows = [];
-        foreach ((new Instance())->find(['plugin_itilflow_processes_id' => $processes_id]) as $r) {
-            $rows[] = $r;
-        }
+        $rows = self::visibleInstances($processes_id);
         $by_state = [];
         $lead = [];
         foreach ($rows as $r) {

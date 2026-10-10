@@ -22,7 +22,7 @@
 {% if instance.fields['state'] == 'halted' %}
    <div class="alert alert-danger d-flex align-items-center justify-content-between">
       <span>{% if is_staff %}Маршрут остановлен. Исправьте настройку этапа и возобновите.{% else %}Обработка приостановлена, заявка передана ответственному за процесс.{% endif %}</span>
-      {% if can_admin %}
+      {% if can_resume %}
       <form method="post" action="{{ action_url }}">
          <input type="hidden" name="_glpi_csrf_token" value="{{ csrf_token() }}">
          <input type="hidden" name="instances_id" value="{{ instance.fields['id'] }}">
@@ -80,32 +80,24 @@
                      {% else %}
                         <span class="text-muted small">решается во вкладке «Согласования»</span>
                      {% endif %}
-                     {% if can_admin %}
-                        <form method="post" action="{{ action_url }}" class="d-inline">
-                           <input type="hidden" name="_glpi_csrf_token" value="{{ csrf_token() }}">
-                           <input type="hidden" name="steps_id" value="{{ s['id'] }}">
-                           <button class="btn btn-sm btn-outline-secondary ms-1" name="complete" value="1"
-                                   onclick="return confirm('Закрыть этап согласования принудительно, без решения согласующего?');">
-                              Закрыть принудительно
-                           </button>
-                        </form>
-                     {% endif %}
                   {% elseif s['execution_mode'] == 'delegated' %}
                      <span class="text-muted small">закроется решением дочерней заявки</span>
-                     {% if can_admin %}
-                        <form method="post" action="{{ action_url }}" class="d-inline">
-                           <input type="hidden" name="_glpi_csrf_token" value="{{ csrf_token() }}">
-                           <input type="hidden" name="steps_id" value="{{ s['id'] }}">
-                           <button class="btn btn-sm btn-outline-secondary ms-1" name="complete" value="1"
-                                   onclick="return confirm('Закрыть этап принудительно, не дожидаясь дочерней заявки?');">
-                              Закрыть принудительно
-                           </button>
-                        </form>
-                     {% endif %}
-                  {% elseif s['is_mine'] or can_admin %}
+                  {% elseif s['can_complete'] %}
                      <span class="badge bg-blue-lt">ваш этап — форма в ленте заявки</span>
                   {% else %}
                      <span class="text-muted small">этап другой группы</span>
+                  {% endif %}
+                  {% if s['can_override'] %}
+                     <form method="post" action="{{ action_url }}" class="mt-2">
+                        <input type="hidden" name="_glpi_csrf_token" value="{{ csrf_token() }}">
+                        <input type="hidden" name="steps_id" value="{{ s['id'] }}">
+                        <label class="form-label small">Причина принудительного завершения</label>
+                        <textarea class="form-control form-control-sm" name="report" required></textarea>
+                        <button class="btn btn-sm btn-outline-danger mt-1" name="override" value="1">
+                           Завершить по полномочию
+                        </button>
+                        <div class="form-text">Отдельное действие с записью в журнал. Голоса согласующих не меняются.</div>
+                     </form>
                   {% endif %}
                {% endif %}
             </td>
@@ -266,10 +258,12 @@
    </form>
 {% endif %}
 
-{% if can_admin and instance.fields['state'] == 'running' %}
+{% if can_abort %}
    <form method="post" action="{{ action_url }}" class="mt-3">
       <input type="hidden" name="_glpi_csrf_token" value="{{ csrf_token() }}">
       <input type="hidden" name="instances_id" value="{{ instance.fields['id'] }}">
+      <label class="form-label">Причина прекращения маршрута</label>
+      <textarea class="form-control mb-2" name="abort_reason" required></textarea>
       <button class="btn btn-sm btn-outline-danger" name="abort" value="1"
               onclick="return confirm('Прервать маршрут? Незавершённые этапы будут помечены пропущенными.');">
          Прервать маршрут

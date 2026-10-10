@@ -17,21 +17,37 @@ use ValidationStep;
 final class Engine
 {
     /** Защита от рекурсии: объекты, которые создаёт сам движок, не должны его же и триггерить. */
-    private static bool $inside = false;
+    private static int $inside = 0;
 
     public static function isInside(): bool
     {
-        return self::$inside;
+        return self::$inside > 0;
     }
 
     private static function enter(): void
     {
-        self::$inside = true;
+        self::$inside++;
     }
 
     private static function leave(): void
     {
-        self::$inside = false;
+        self::$inside = max(0, self::$inside - 1);
+    }
+
+    private static function mustUpdate(\CommonDBTM $object, array $input): void
+    {
+        if (!$object->update($input) || !$object->getFromDB((int) $input['id'])) {
+            throw new \RuntimeException('Не удалось сохранить изменение маршрута.');
+        }
+    }
+
+    private static function mustAdd(\CommonDBTM $object, array $input): int
+    {
+        $id = (int) $object->add($input);
+        if ($id <= 0) {
+            throw new \RuntimeException('Не удалось создать часть маршрута.');
+        }
+        return $id;
     }
 
     private static function now(): string
@@ -59,7 +75,7 @@ final class Engine
             return;
         }
         $was_inside = self::$inside;
-        self::$inside = true;
+        self::$inside++;
         try {
             (new \ITILFollowup())->add([
                 'itemtype'               => $item->getType(),
@@ -80,10 +96,343 @@ final class Engine
         return sprintf('Этап %d. %s', (int) $step->fields['ranking'], (string) $step->fields['stage_name']);
     }
 
+    /** Серверная операция сериализуется по экземпляру; повтор читает новое состояние. */
+    private static function locked(Instance $instance, callable $operation): bool
+    {
+        global $DB;
+        $begun = false;
+        try {
+            $DB->beginTransaction();
+            $begun = true;
+            $result = $DB->doQuery('SELECT id FROM ' . $DB->quoteName(Instance::getTable())
+                . ' WHERE id = ' . (int) $instance->getID() . ' FOR UPDATE');
+            if ((int) $DB->numrows($result) !== 1 || !$instance->getFromDB($instance->getID())) {
+                $DB->rollBack();
+                return false;
+            }
+            $ok = $operation();
+            if (!$ok) {
+                $DB->rollBack();
+                return false;
+            }
+            $DB->commit();
+            return true;
+        } catch (\Throwable $e) {
+            if ($begun) {
+                try {
+                    $DB->rollBack();
+                } catch (\Throwable $rollback_error) {
+                    // Исход неизвестен; не обещаем откат и не повторяем действие.
+                }
+            }
+            self::msg('Не удалось подтвердить результат действия. Обновите карточку перед новой попыткой.', ERROR);
+            return false;
+        }
+    }
+
+    private static function auditAction(Instance $instance, ?Step $step, string $action, bool $blocked, string $reason = ''): bool
+    {
+        return Violation::record($instance, (string) $instance->fields['itemtype'],
+            (int) $instance->fields['items_id'], 'action_' . $action, $blocked,
+            json_encode([
+                'action' => $action,
+                'step' => $step ? (int) $step->getID() : null,
+                'attempt' => $step ? (int) $step->fields['pass_number'] : null,
+                'outcome' => $blocked ? 'denied' : 'applied',
+                'authority' => $action === 'override'
+                    ? (Authorizer::mayBypass() ? 'bypass' : 'process_update') : 'native_actor',
+                'reason' => trim(strip_tags($reason)),
+            ], JSON_UNESCAPED_UNICODE | JSON_THROW_ON_ERROR));
+    }
+
+    private static function manualStep(Step $step, string $action, string $reason, callable $operation): bool
+    {
+        $instance = $step->getInstance();
+        if ($instance === null) {
+            return false;
+        }
+        $denial = null;
+        $ok = self::locked($instance, static function () use ($instance, $step, $action, $reason, $operation, &$denial): bool {
+            $denial = Authorizer::stepError($step, $action);
+            if ($denial === null && in_array($action, ['complete', 'skip'], true)) {
+                $denial = self::validateReport($step, $reason, $action === 'skip');
+            }
+            if ($denial === null && in_array($action, ['override', 'set_approver', 'reassign'], true)
+                && trim(strip_tags($reason)) === '') {
+                $denial = 'Укажите причину действия.';
+            }
+            if ($denial !== null) {
+                return false;
+            }
+            if (!$operation()) {
+                return false;
+            }
+            if (!self::auditAction($instance, $step, $action, false, $reason)) {
+                throw new \RuntimeException('Не удалось записать результат действия.');
+            }
+            return true;
+        });
+        if ($denial !== null) {
+            self::auditAction($instance, $step, $action, true);
+            self::msg($denial, ERROR);
+        }
+        return $ok;
+    }
+
+    private static function manualInstance(Instance $instance, string $action, string $reason, callable $operation): bool
+    {
+        $denial = null;
+        $ok = self::locked($instance, static function () use ($instance, $action, $reason, $operation, &$denial): bool {
+            $denial = Authorizer::instanceError($instance, $action);
+            if ($denial === null && in_array($action, ['withdraw', 'abort'], true)
+                && trim(strip_tags($reason)) === '') {
+                $denial = 'Укажите причину действия.';
+            }
+            if ($denial !== null || !$operation()) {
+                return false;
+            }
+            if (!self::auditAction($instance, null, $action, false, $reason)) {
+                throw new \RuntimeException('Не удалось записать результат действия.');
+            }
+            return true;
+        });
+        if ($denial !== null) {
+            self::auditAction($instance, null, $action, true);
+            self::msg($denial, ERROR);
+        }
+        return $ok;
+    }
+
+    public static function completeStep(Step $step, string $comment = '', bool $skipped = false): bool
+    {
+        return self::manualStep($step, $skipped ? 'skip' : 'complete', $comment,
+            static fn(): bool => self::completeStepInternal($step, $comment, $skipped));
+    }
+
+    /** Привилегированное решение явно отделено от голоса согласующего. */
+    public static function overrideStep(Step $step, string $reason): bool
+    {
+        return self::manualStep($step, 'override', $reason,
+            static fn(): bool => self::completeStepInternal($step, 'Принудительное завершение: ' . $reason));
+    }
+
+    public static function designateApprover(Step $step, array $groups_ids, array $users_ids, string $reason): bool
+    {
+        return self::manualStep($step, 'set_approver', $reason,
+            static fn(): bool => self::designateApproverInternal($step, $groups_ids, $users_ids, $reason));
+    }
+
+    public static function reassign(Step $step, int $groups_id, int $users_id, string $reason): bool
+    {
+        return self::manualStep($step, 'reassign', $reason,
+            static fn(): bool => self::reassignInternal($step, $groups_id, $users_id, $reason));
+    }
+
+    public static function withdraw(Instance $instance, string $reason): bool
+    {
+        return self::manualInstance($instance, 'withdraw', $reason,
+            static fn(): bool => self::withdrawInternal($instance, $reason));
+    }
+
+    public static function abort(Instance $instance, string $reason = ''): bool
+    {
+        return self::manualInstance($instance, 'abort', $reason, static function () use ($instance, $reason): bool {
+            self::abortInternal($instance, $reason);
+            return $instance->fields['state'] === Instance::ABORTED;
+        });
+    }
+
+    public static function resume(Instance $instance): bool
+    {
+        return self::manualInstance($instance, 'resume', '', static function () use ($instance): bool {
+            self::resumeInternal($instance);
+            return true;
+        });
+    }
+
+    public static function halt(Instance $instance, string $reason): bool
+    {
+        return self::manualInstance($instance, 'halt', $reason, static function () use ($instance, $reason): bool {
+            self::haltInternal($instance, $reason);
+            return true;
+        });
+    }
+
+    public static function reopenFrom(Instance $instance, int $stages_id): bool
+    {
+        return self::manualInstance($instance, 'reopen', '', static function () use ($instance, $stages_id): bool {
+            self::reopenFromInternal($instance, $stages_id);
+            return true;
+        });
+    }
+
+    public static function start(CommonITILObject $item, int $processes_id): ?Instance
+    {
+        if (($error = Authorizer::startError($item, $processes_id)) !== null) {
+            Violation::record(null, $item->getType(), $item->getID(), 'action_start', true, 'Запуск отклонён.');
+            self::msg($error, ERROR);
+            return null;
+        }
+        return self::startTransaction($item, $processes_id);
+    }
+
+    /** PID берётся только из одноразового свидетельства штатной цепочки правил. */
+    public static function startFromRule(CommonITILObject $item): ?Instance
+    {
+        $processes_id = RuleStart::consume($item);
+        $process = new Process();
+        if ($processes_id === null || !$process->getFromDB($processes_id)
+            || !Authorizer::processFitsItem($process, $item)) {
+            Violation::record(null, $item->getType(), $item->getID(), 'action_rule_start', true,
+                'Запуск не подтверждён штатным правилом для этого объекта.');
+            return null;
+        }
+        return self::startTransaction($item, $processes_id);
+    }
+
+    private static function startTransaction(CommonITILObject $item, int $processes_id): ?Instance
+    {
+        global $DB;
+        $begun = false;
+        try {
+            $DB->beginTransaction();
+            $begun = true;
+            // Уникальная связь instance(itemtype,items_id) сохраняется; конкурентный start не повторяется.
+            $instance = self::startInternal($item, $processes_id);
+            if ($instance === null) {
+                $DB->rollBack();
+                return null;
+            }
+            if (!self::auditAction($instance, null, 'start', false)) {
+                throw new \RuntimeException('Не удалось записать запуск маршрута.');
+            }
+            $DB->commit();
+            return $instance;
+        } catch (\Throwable $e) {
+            if ($begun) {
+                try {
+                    $DB->rollBack();
+                } catch (\Throwable $rollback_error) {
+                    // Подтверждения отката нет. Новый start автоматически не выполняется.
+                }
+            }
+            self::msg('Результат запуска не подтверждён. Обновите карточку перед новой попыткой.', ERROR);
+            return null;
+        }
+    }
+
+    /** Остановка после подтверждённого переноса, без пользовательского system-флага. */
+    public static function transferred(CommonITILObject $item): void
+    {
+        $instance = Instance::getForItem($item);
+        $step = $instance?->getCurrentStep();
+        $stage = $step?->getStage();
+        if ($instance === null || $step === null || $stage === null) {
+            return;
+        }
+        self::locked($instance, static function () use ($instance, $step, $stage, $item): bool {
+            if (!$item->getFromDB($item->getID()) || Authorizer::contextError($instance, $step) !== null
+                || $stage->groupFitsEntity((int) $item->fields['entities_id'])) {
+                return false;
+            }
+            self::haltInternal($instance, 'после переноса ответственный этапа недоступен');
+            return self::auditAction($instance, $step, 'transfer_halt', false);
+        });
+    }
+
+    /** Событие относится к сохранённой задаче текущей попытки. */
+    public static function taskCompleted(\CommonITILTask $event): void
+    {
+        $task = new ($event->getType())();
+        if (!$task->getFromDB($event->getID()) || (int) $task->fields['state'] !== Planning::DONE) {
+            return;
+        }
+        $step = Step::getByArtifact($task->getType(), $task->getID());
+        $instance = $step?->getInstance();
+        if ($step === null || $instance === null) {
+            return;
+        }
+        self::locked($instance, static function () use ($step, $instance, $task): bool {
+            if (Authorizer::stepError($step, 'complete') !== null
+                || !$task->can($task->getID(), UPDATE)
+                || self::validateReport($step, '', false) !== null) {
+                return false;
+            }
+            $item = $instance->getItilItem();
+            if ($item === null || (int) ($task->fields[$item::getForeignKeyField()] ?? 0) !== (int) $item->getID()) {
+                return false;
+            }
+            return self::completeStepInternal($step, 'Задача этапа отмечена выполненной.')
+                && self::auditAction($instance, $step, 'task_complete', false);
+        });
+    }
+
+    /** Совместимость прежних маршрутов: штатный результат сохранённой child. */
+    public static function delegatedCompleted(CommonITILObject $event): void
+    {
+        $child = new ($event->getType())();
+        if (!$child->getFromDB($event->getID()) || Authorizer::itemError($child, READ) !== null
+            || !in_array((int) $child->fields['status'], array_merge($child::getSolvedStatusArray(), $child::getClosedStatusArray()), true)) {
+            return;
+        }
+        $step = Step::getByArtifact($child->getType(), $child->getID());
+        $instance = $step?->getInstance();
+        if ($step === null || $instance === null) {
+            return;
+        }
+        self::locked($instance, static function () use ($step, $instance, $child): bool {
+            if (Authorizer::contextError($instance, $step) !== null
+                || $step->fields['execution_mode'] !== Stage::MODE_DELEGATED
+                || $step->fields['artifact_itemtype'] !== $child->getType()
+                || (int) $step->fields['artifact_items_id'] !== (int) $child->getID()) {
+                return false;
+            }
+            return self::completeStepInternal($step, 'Связанная заявка решена.')
+                && self::auditAction($instance, $step, 'delegated_complete', false);
+        });
+    }
+
+    public static function validationUpdated(CommonITILValidation $event): void
+    {
+        $validation = new ($event->getType())();
+        if (!$validation->getFromDB($event->getID())) {
+            return;
+        }
+        $step = Step::getByValidation($validation->getType(), $validation->getID());
+        $instance = $step?->getInstance();
+        if ($step === null || $instance === null) {
+            return;
+        }
+        self::locked($instance, static function () use ($step, $instance, $validation): bool {
+            if (Authorizer::validationError($validation, $step) !== null) {
+                return false;
+            }
+            return self::evaluateApproval($step, strip_tags((string) ($validation->fields['comment_validation'] ?? '')))
+                && self::auditAction($instance, $step, 'approval_result', false);
+        });
+    }
+
     // ================================================================= запуск
 
     /** Запустить маршрут на заявке. Возвращает экземпляр или null. */
-    public static function start(CommonITILObject $item, int $processes_id): ?Instance
+    /** Не регистратор: только единственный исходный заявитель в начале маршрута. */
+    private static function initialRequester(CommonITILObject $item): ?int
+    {
+        // ITEM_ADD вызывается после native post_addItem; обновляем кэш actors.
+        if (!$item->getFromDB($item->getID())) {
+            return null;
+        }
+        $requesters = [];
+        foreach ($item->getUsers(\CommonITILActor::REQUESTER) as $actor) {
+            $uid = (int) ($actor['users_id'] ?? 0);
+            if ($uid > 0) {
+                $requesters[$uid] = true;
+            }
+        }
+        return count($requesters) === 1 ? (int) array_key_first($requesters) : null;
+    }
+
+    private static function startInternal(CommonITILObject $item, int $processes_id): ?Instance
     {
         if (Instance::getForItem($item) !== null) {
             return null; // маршрут уже идёт
@@ -118,6 +467,7 @@ final class Engine
                 'process_version'              => (int) $process->fields['version'],
                 'state'                        => Instance::RUNNING,
                 'date_start'                   => self::now(),
+                'users_id_requester_start'     => self::initialRequester($item),
             ]);
             if (!$iid) {
                 return null;
@@ -126,12 +476,16 @@ final class Engine
 
             // Снимок определения: правка маршрута не переписывает историю.
             foreach ($stages as $s) {
-                (new Step())->add([
+                self::mustAdd(new Step(), [
                     'plugin_itilflow_instances_id' => $iid,
                     'plugin_itilflow_stages_id'    => (int) $s['id'],
                     'stage_name'                   => (string) $s['name'],
                     'ranking'                      => (int) $s['ranking'],
                     'execution_mode'               => (string) $s['execution_mode'],
+                    'approval_percent_snapshot'    => $s['execution_mode'] === Stage::MODE_APPROVAL
+                        && (int) $s['approval_percent'] >= 1 && (int) $s['approval_percent'] <= 100
+                        ? (int) $s['approval_percent'] : null,
+                    'approval_snapshot_source'     => 'definition',
                     'state'                        => Step::PENDING,
                     'pass_number'                  => 1,
                     'users_id'                     => (int) $s['users_id'],
@@ -149,7 +503,7 @@ final class Engine
     // ============================================================== движение
 
     /** Открыть следующий ожидающий шаг; если их нет — завершить маршрут. */
-    public static function advance(Instance $instance): void
+    private static function advance(Instance $instance): void
     {
         if ($instance->fields['state'] !== Instance::RUNNING) {
             return;
@@ -180,7 +534,7 @@ final class Engine
     {
         self::enter();
         try {
-            $instance->update([
+            self::mustUpdate($instance, [
                 'id'                                => $instance->getID(),
                 'state'                             => Instance::DONE,
                 'plugin_itilflow_stages_id_current' => 0,
@@ -194,11 +548,11 @@ final class Engine
             . 'Заявка передана на закрытие.</p>');
     }
 
-    public static function halt(Instance $instance, string $reason): void
+    private static function haltInternal(Instance $instance, string $reason): void
     {
         self::enter();
         try {
-            $instance->update([
+            self::mustUpdate($instance, [
                 'id'    => $instance->getID(),
                 'state' => Instance::HALTED,
             ]);
@@ -221,14 +575,14 @@ final class Engine
         ));
     }
 
-    public static function resume(Instance $instance): void
+    private static function resumeInternal(Instance $instance): void
     {
         if ($instance->fields['state'] !== Instance::HALTED) {
             return;
         }
         self::enter();
         try {
-            $instance->update(['id' => $instance->getID(), 'state' => Instance::RUNNING]);
+            self::mustUpdate($instance, ['id' => $instance->getID(), 'state' => Instance::RUNNING]);
         } finally {
             self::leave();
         }
@@ -248,7 +602,7 @@ final class Engine
                 }
             }
             if (!$has_pending && $rejected !== null) {
-                self::reopenFrom($instance, (int) $rejected['plugin_itilflow_stages_id']);
+                self::reopenFromInternal($instance, (int) $rejected['plugin_itilflow_stages_id']);
                 return;
             }
         }
@@ -256,16 +610,16 @@ final class Engine
         self::advance($instance);
     }
 
-    public static function abort(Instance $instance, string $reason = ''): void
+    private static function abortInternal(Instance $instance, string $reason = ''): void
     {
         self::enter();
         try {
             foreach ($instance->getSteps() as $row) {
                 if (in_array($row['state'], [Step::PENDING, Step::RUNNING], true)) {
-                    (new Step())->update(['id' => (int) $row['id'], 'state' => Step::SKIPPED]);
+                    self::mustUpdate((new Step()), ['id' => (int) $row['id'], 'state' => Step::SKIPPED]);
                 }
             }
-            $instance->update([
+            self::mustUpdate($instance, [
                 'id'                                => $instance->getID(),
                 'state'                             => Instance::ABORTED,
                 'plugin_itilflow_stages_id_current' => 0,
@@ -290,7 +644,7 @@ final class Engine
         $stage = $step->getStage();
         $item = $instance->getItilItem();
         if ($stage === null || $item === null) {
-            self::halt($instance, 'Не найден этап или заявка.');
+            self::haltInternal($instance, 'Не найден этап или заявка.');
             return;
         }
 
@@ -298,19 +652,19 @@ final class Engine
         $status_note = '';
         self::enter();
         try {
-            $step->update([
+            self::mustUpdate($step, [
                 'id'         => $step->getID(),
                 'state'      => Step::RUNNING,
                 'date_start' => self::now(),
                 'date_due'   => self::computeDue($instance, $stage),
                 'is_escalated' => 0,
             ]);
-            $instance->update([
+            self::mustUpdate($instance, [
                 'id'                                => $instance->getID(),
                 'plugin_itilflow_stages_id_current' => $stage->getID(),
             ]);
 
-            $ok = match ($stage->fields['execution_mode']) {
+            $ok = match ($step->fields['execution_mode']) {
                 Stage::MODE_DELEGATED => self::createDelegated($instance, $step, $stage, $item),
                 Stage::MODE_APPROVAL  => self::createApproval($instance, $step, $stage, $item),
                 default               => self::createInlineTask($instance, $step, $stage, $item),
@@ -325,7 +679,7 @@ final class Engine
         $instance->getFromDB($instance->getID());
 
         if ($ok !== true) {
-            self::halt($instance, (string) $ok);
+            self::haltInternal($instance, (string) $ok);
             return;
         }
 
@@ -470,7 +824,7 @@ final class Engine
             return 'Не удалось создать задачу этапа.';
         }
         $attached = self::attachGroup($item, (int) $stage->fields['groups_id']);
-        $step->update([
+        self::mustUpdate($step, [
             'id'                => $step->getID(),
             'artifact_itemtype' => $taskclass,
             'artifact_items_id' => (int) $tid,
@@ -584,7 +938,7 @@ final class Engine
             ]);
         }
 
-        $step->update([
+        self::mustUpdate($step, [
             'id'                => $step->getID(),
             'artifact_itemtype' => $class,
             'artifact_items_id' => (int) $cid,
@@ -632,23 +986,6 @@ final class Engine
             return 'У этапа согласования не указан согласующий.';
         }
 
-        $input = [
-            $fk                  => $item->getID(),
-            'entities_id'        => (int) $item->fields['entities_id'],
-            'itemtype_target'    => $target_type,
-            'items_id_target'    => $target_id,
-            'comment_submission' => sprintf(
-                'Согласование этапа %d «%s».%s',
-                (int) $step->fields['ranking'],
-                $stage->fields['name'],
-                trim((string) $stage->fields['content']) !== '' ? ' ' . strip_tags((string) $stage->fields['content']) : ''
-            ),
-        ];
-        $vs = self::ensureValidationStep((int) $stage->fields['approval_percent']);
-        if ($vs > 0) {
-            $input['_validationsteps_id'] = $vs;
-        }
-
         $res = self::openValidation($step, $stage, $item, $target_type, $target_id);
         if (is_string($res)) {
             return $res;
@@ -669,6 +1006,13 @@ final class Engine
         string $target_type,
         int $target_id
     ): int|string {
+        $percent = (int) ($step->fields['approval_percent_snapshot'] ?? 0);
+        if ($percent < 1 || $percent > 100
+            || ($target_type === \User::class && !Authorizer::userFitsItem($target_id, $item))
+            || ($target_type === Group::class && !self::groupFitsItem($target_id, $item))
+            || !in_array($target_type, [\User::class, Group::class], true)) {
+            return 'Не подтверждены порог или адресат согласования.';
+        }
         $val = $item::getValidationClassInstance();
         if ($val === null) {
             return 'Для типа ' . $item->getType() . ' согласование не поддерживается.';
@@ -688,7 +1032,7 @@ final class Engine
                     ? ' ' . strip_tags((string) $stage->fields['content']) : ''
             ),
         ];
-        $vs = self::ensureValidationStep((int) $stage->fields['approval_percent']);
+        $vs = self::ensureValidationStep($percent);
         if ($vs > 0) {
             $input['_validationsteps_id'] = $vs;
         }
@@ -703,16 +1047,23 @@ final class Engine
     /** Привязать к шагу созданные объекты согласования. */
     private static function bindValidations(Step $step, string $itemtype, array $ids): void
     {
-        $ids = array_values(array_filter(array_map('intval', $ids)));
+        $ids = array_values(array_filter(array_map('intval', $ids), static fn(int $id): bool => $id > 0));
         if (!count($ids)) {
             return;
         }
-        $step->update([
+        $csv = implode(',', $ids);
+        if (strlen($csv) > 255 || count(array_unique($ids)) !== count($ids)) {
+            throw new \RuntimeException('Не удалось сохранить полный состав согласования.');
+        }
+        if (!$step->update([
             'id'                 => $step->getID(),
+            'approval_expected_count' => count($ids),
             'artifact_itemtype'  => $itemtype,
             'artifact_items_id'  => $ids[0],
-            'approver_items_ids' => implode(',', $ids),
-        ]);
+            'approver_items_ids' => $csv,
+        ]) || !$step->getFromDB($step->getID()) || $step->validationRoster() === null) {
+            throw new \RuntimeException('Не удалось закрепить состав согласования.');
+        }
     }
 
     /**
@@ -722,25 +1073,36 @@ final class Engine
      * руководитель заявителя и владелец ресурса. Этап пройден, когда доля
      * согласовавших дошла до порога; отклонён, когда порога уже не достичь.
      */
-    public static function evaluateApproval(Step $step, string $comment = ''): void
+    private static function evaluateApproval(Step $step, string $comment = ''): bool
     {
         global $DB;
+        $instance = $step->getInstance();
+        if ($instance === null || Authorizer::contextError($instance, $step) !== null
+            || $step->fields['execution_mode'] !== Stage::MODE_APPROVAL) {
+            return false;
+        }
+        $item = $instance->getItilItem();
+        $expected_class = $item?->getValidationClassInstance();
         $ids = $step->validationIds();
         if (!count($ids)) {
-            return;
+            return false;
         }
         $type = (string) $step->fields['artifact_itemtype'];
-        if ($type === '' || !class_exists($type)) {
-            return;
+        if ($item === null || $expected_class === null || $type !== get_class($expected_class)) {
+            return false;
+        }
+        $roster = $step->validationRoster();
+        if ($roster === null) {
+            return false;
         }
         $total = 0;
         $accepted = 0;
         $refused = 0;
-        foreach ($DB->request([
-            'SELECT' => ['status'],
-            'FROM'   => $type::getTable(),
-            'WHERE'  => ['id' => $ids],
-        ]) as $row) {
+        foreach ($roster as $row) {
+            if ((int) $row[$item::getForeignKeyField()] !== (int) $item->getID()
+                || (int) $row['entities_id'] !== (int) $item->fields['entities_id']) {
+                return false;
+            }
             $total++;
             if ((int) $row['status'] === CommonITILValidation::ACCEPTED) {
                 $accepted++;
@@ -748,29 +1110,29 @@ final class Engine
                 $refused++;
             }
         }
-        if ($total === 0) {
-            return;
+        if ($total !== count($ids)) {
+            return false;
         }
-        $stage = $step->getStage();
-        $need = $stage !== null ? (int) $stage->fields['approval_percent'] : 100;
-        $need = max(0, min(100, $need));
+        $need = (int) ($step->fields['approval_percent_snapshot'] ?? 0);
+        if ($need < 1 || $need > 100) {
+            return false;
+        }
 
         $accepted_pct = (int) floor(100 * $accepted / $total);
         // Максимум, которого ещё можно достичь, если все неответившие согласуют.
         $possible_pct = (int) floor(100 * ($total - $refused) / $total);
 
         if ($accepted_pct >= $need) {
-            self::completeStep($step, sprintf(
+            return self::completeStepInternal($step, sprintf(
                 'Согласовано (%d из %d, порог %d%%). %s', $accepted, $total, $need, $comment
             ));
-            return;
         }
         if ($possible_pct < $need) {
-            self::rejectStep($step, sprintf(
+            self::rejectStepInternal($step, sprintf(
                 'Не согласовано: отказов %d из %d, порог %d%% недостижим. %s',
                 $refused, $total, $need, $comment
             ));
-            return;
+            return true;
         }
         // Порог ещё достижим — ждём остальных.
         $left = $total - $accepted - $refused;
@@ -783,6 +1145,7 @@ final class Engine
             $need,
             $left
         ));
+        return true;
     }
 
     /**
@@ -803,7 +1166,7 @@ final class Engine
      * @param int[] $users_ids
      * @param int[] $groups_ids
      */
-    public static function designateApprover(
+    private static function designateApproverInternal(
         Step $step,
         array $groups_ids,
         array $users_ids,
@@ -820,8 +1183,13 @@ final class Engine
             return false;
         }
 
-        $groups_ids = array_values(array_unique(array_filter(array_map('intval', $groups_ids))));
-        $users_ids  = array_values(array_unique(array_filter(array_map('intval', $users_ids))));
+        foreach (array_merge($groups_ids, $users_ids) as $id) {
+            if (!is_int($id) || $id <= 0) {
+                return false;
+            }
+        }
+        $groups_ids = array_values(array_unique($groups_ids));
+        $users_ids = array_values(array_unique($users_ids));
         if (!count($groups_ids) && !count($users_ids)) {
             self::msg('Укажите хотя бы одного согласующего: сотрудника или группу.', ERROR);
             return false;
@@ -832,6 +1200,17 @@ final class Engine
                 ERROR
             );
             return false;
+        }
+
+        foreach ($users_ids as $uid) {
+            if (!Authorizer::userFitsItem($uid, $item)) {
+                return false;
+            }
+        }
+        foreach ($groups_ids as $gid) {
+            if (!self::groupFitsItem($gid, $item)) {
+                return false;
+            }
         }
 
         $targets = [];
@@ -850,7 +1229,7 @@ final class Engine
                 $res = self::openValidation($step, $stage, $item, $ttype, $tid);
                 if (is_string($res)) {
                     self::msg($res, ERROR);
-                    continue;
+                    throw new \RuntimeException('Не удалось создать полный состав согласования.');
                 }
                 $created[] = (int) $res;
             }
@@ -862,7 +1241,7 @@ final class Engine
             // Ответственным у шага пишем группу, если она одна и сотрудников нет,
             // иначе первого сотрудника: колонки под список ответственных нет,
             // а полный состав виден по запросам согласования и в листе.
-            $step->update([
+            self::mustUpdate($step, [
                 'id'              => $step->getID(),
                 'groups_id'       => (count($groups_ids) === 1 && !count($users_ids))
                     ? $groups_ids[0] : 0,
@@ -885,7 +1264,7 @@ final class Engine
         $who = implode(', ', $names);
         $by = Session::getLoginUserID()
             ? getUserName((int) Session::getLoginUserID()) : 'система';
-        $need = (int) $stage->fields['approval_percent'];
+        $need = (int) $step->fields['approval_percent_snapshot'];
 
         self::msg(sprintf(
             count($created) > 1
@@ -912,19 +1291,24 @@ final class Engine
     /** Ступень согласования с нужным порогом; создаётся один раз и переиспользуется. */
     private static function ensureValidationStep(int $percent): int
     {
-        $percent = max(0, min(100, $percent));
+        if ($percent < 1 || $percent > 100) {
+            throw new \RuntimeException('Недопустимый порог согласования.');
+        }
         $name = sprintf('Этап маршрута — порог %d%%', $percent);
         $vs = new ValidationStep();
-        $found = $vs->find(['name' => $name], [], 1);
+        $found = $vs->find(['name' => $name, 'minimal_required_validation_percent' => $percent], [], 2);
+        if (count($found) > 1) {
+            throw new \RuntimeException('Неоднозначная ступень согласования.');
+        }
         if (count($found)) {
             return (int) array_key_first($found);
         }
-        $id = $vs->add([
+        $id = self::mustAdd($vs, [
             'name' => $name,
             'minimal_required_validation_percent' => $percent,
             'is_default' => 0,
         ]);
-        return (int) ($id ?: 0);
+        return $id;
     }
 
     // ========================================================= закрытие шага
@@ -957,10 +1341,10 @@ final class Engine
     }
 
     /** Закрыть текущий шаг и перейти к следующему. */
-    public static function completeStep(Step $step, string $comment = '', bool $skipped = false): bool
+    private static function completeStepInternal(Step $step, string $comment = '', bool $skipped = false): bool
     {
         $instance = $step->getInstance();
-        if ($instance === null || $step->fields['state'] !== Step::RUNNING) {
+        if ($instance === null || Authorizer::contextError($instance, $step) !== null) {
             return false;
         }
         $start = strtotime((string) ($step->fields['date_start'] ?? self::now()));
@@ -968,7 +1352,7 @@ final class Engine
 
         self::enter();
         try {
-            $step->update([
+            self::mustUpdate($step, [
                 'id'              => $step->getID(),
                 'state'           => $skipped ? Step::SKIPPED : Step::DONE,
                 'date_end'        => self::now(),
@@ -1015,13 +1399,13 @@ final class Engine
         if (is_a($type, \CommonITILTask::class, true)) {
             $t = new $type();
             if ($t->getFromDB($id) && (int) $t->fields['state'] !== Planning::DONE) {
-                $t->update(['id' => $id, 'state' => Planning::DONE]);
+                self::mustUpdate($t, ['id' => $id, 'state' => Planning::DONE]);
             }
         }
     }
 
     /** Согласование отклонено. */
-    public static function rejectStep(Step $step, string $comment = ''): void
+    private static function rejectStepInternal(Step $step, string $comment = ''): void
     {
         $instance = $step->getInstance();
         $stage = $step->getStage();
@@ -1031,7 +1415,7 @@ final class Engine
 
         self::enter();
         try {
-            $step->update([
+            self::mustUpdate($step, [
                 'id'       => $step->getID(),
                 'state'    => Step::REJECTED,
                 'date_end' => self::now(),
@@ -1051,23 +1435,23 @@ final class Engine
 
         switch ($stage->fields['on_reject']) {
             case Stage::REJECT_ABORT:
-                self::abort($instance, 'этап «' . $stage->fields['name'] . '» отклонён');
+                self::abortInternal($instance, 'этап «' . $stage->fields['name'] . '» отклонён');
                 break;
 
             case Stage::REJECT_BACK:
                 $back = (int) $stage->fields['plugin_itilflow_stages_id_reject'];
-                self::reopenFrom($instance, $back);
+                self::reopenFromInternal($instance, $back);
                 break;
 
             case Stage::REJECT_BLOCK:
             default:
-                self::halt($instance, 'этап «' . $stage->fields['name'] . '» отклонён согласующим');
+                self::haltInternal($instance, 'этап «' . $stage->fields['name'] . '» отклонён согласующим');
                 break;
         }
     }
 
     /** Вернуть маршрут на указанный этап: создаём новый проход. */
-    public static function reopenFrom(Instance $instance, int $stages_id): void
+    private static function reopenFromInternal(Instance $instance, int $stages_id): void
     {
         $target = null;
         foreach ($instance->getSteps() as $row) {
@@ -1076,7 +1460,7 @@ final class Engine
             }
         }
         if ($target === null) {
-            self::halt($instance, 'этап для возврата не найден');
+            self::haltInternal($instance, 'этап для возврата не найден');
             return;
         }
 
@@ -1085,7 +1469,7 @@ final class Engine
             $pass = max($pass, (int) $row['pass_number']);
         }
         if ($pass >= 10) {
-            self::halt($instance, 'превышено число возвратов на доработку');
+            self::haltInternal($instance, 'превышено число возвратов на доработку');
             return;
         }
 
@@ -1103,12 +1487,16 @@ final class Engine
                 }
             }
             foreach ($stages as $s) {
-                (new Step())->add([
+                self::mustAdd(new Step(), [
                     'plugin_itilflow_instances_id' => $instance->getID(),
                     'plugin_itilflow_stages_id'    => (int) $s['id'],
                     'stage_name'                   => (string) $s['name'],
                     'ranking'                      => (int) $s['ranking'],
                     'execution_mode'               => (string) $s['execution_mode'],
+                    'approval_percent_snapshot'    => $s['execution_mode'] === Stage::MODE_APPROVAL
+                        && (int) $s['approval_percent'] >= 1 && (int) $s['approval_percent'] <= 100
+                        ? (int) $s['approval_percent'] : null,
+                    'approval_snapshot_source'     => 'definition',
                     'state'                        => Step::PENDING,
                     'pass_number'                  => $pass + 1,
                     'users_id'                     => (int) $s['users_id'],
@@ -1118,7 +1506,7 @@ final class Engine
             // Остальные шаги текущего прохода помечаем пропущенными.
             foreach ($instance->getSteps() as $row) {
                 if ((int) $row['pass_number'] <= $pass && $row['state'] === Step::PENDING) {
-                    (new Step())->update(['id' => (int) $row['id'], 'state' => Step::SKIPPED]);
+                    self::mustUpdate((new Step()), ['id' => (int) $row['id'], 'state' => Step::SKIPPED]);
                 }
             }
         } finally {
@@ -1136,7 +1524,7 @@ final class Engine
      * Передать текущий этап другому ответственному. В листе согласования
      * остаётся отметка: кто был назначен по регламенту и кто фактически принял.
      */
-    public static function reassign(Step $step, int $groups_id, int $users_id, string $reason): bool
+    private static function reassignInternal(Step $step, int $groups_id, int $users_id, string $reason): bool
     {
         $instance = $step->getInstance();
         $stage = $step->getStage();
@@ -1156,6 +1544,9 @@ final class Engine
             self::msg('Укажите причину переназначения.', ERROR);
             return false;
         }
+        if ($users_id > 0 && !Authorizer::userFitsItem($users_id, $item)) {
+            return false;
+        }
         if ($groups_id > 0 && !self::groupFitsItem($groups_id, $item)) {
             self::msg('Выбранная группа не видит эту заявку: она из другой организационной единицы.', ERROR);
             return false;
@@ -1166,7 +1557,7 @@ final class Engine
 
         self::enter();
         try {
-            $step->update([
+            self::mustUpdate($step, [
                 'id'              => $step->getID(),
                 'groups_id'       => $groups_id,
                 'users_id'        => $users_id,
@@ -1181,7 +1572,7 @@ final class Engine
             if ($aid > 0 && $type !== '' && is_a($type, \CommonITILTask::class, true)) {
                 $t = new $type();
                 if ($t->getFromDB($aid)) {
-                    $t->update(['id' => $aid, 'groups_id_tech' => $groups_id, 'users_id_tech' => $users_id]);
+                    self::mustUpdate($t, ['id' => $aid, 'groups_id_tech' => $groups_id, 'users_id_tech' => $users_id]);
                 }
             }
 
@@ -1236,13 +1627,13 @@ final class Engine
             return true;
         }
         return (bool) $g->fields['is_recursive']
-            && in_array($ge, getAncestorsOf('glpi_entities', $ie), true);
+            && in_array($ge, array_map('intval', getAncestorsOf('glpi_entities', $ie)), true);
     }
 
     // ================================================================== отзыв
 
     /** Инициатор отзывает заявку: маршрут прекращается, заявку можно закрыть. */
-    public static function withdraw(Instance $instance, string $reason): bool
+    private static function withdrawInternal(Instance $instance, string $reason): bool
     {
         $process = $instance->getProcess();
         if ($process === null || !$process->fields['allow_withdraw']) {
@@ -1258,7 +1649,7 @@ final class Engine
         }
 
         $who = Session::getLoginUserID() ? getUserName((int) Session::getLoginUserID()) : 'инициатор';
-        self::abort($instance, '');
+        self::abortInternal($instance, '');
         self::announce($instance, sprintf(
             '<p><strong>Заявка отозвана инициатором.</strong></p><p>Отозвал: %s.</p><p>Причина: %s</p>',
             htmlescape($who),
@@ -1275,12 +1666,35 @@ final class Engine
     {
         $instance = $step->getInstance();
         $item = $instance?->getItilItem();
-        if ($instance === null || $item === null) {
+        if ($instance === null || $item === null || Authorizer::contextError($instance, $step) !== null
+            || !empty($step->fields['is_escalated']) || !self::isOverdue($step->fields)) {
             return false;
         }
+        $cron = false;
+        foreach (debug_backtrace(DEBUG_BACKTRACE_IGNORE_ARGS) as $frame) {
+            if (($frame['class'] ?? '') === Cron::class
+                && ($frame['function'] ?? '') === 'cronItilflow_deadlines') {
+                $cron = true;
+                break;
+            }
+        }
+        if (!$cron && (!Authorizer::isAdministrator() || Authorizer::itemError($item, UPDATE) !== null)) {
+            return false;
+        }
+        return self::locked($instance, static function () use ($instance, $step, $item): bool {
+            if (Authorizer::contextError($instance, $step) !== null
+                || !empty($step->fields['is_escalated']) || !self::isOverdue($step->fields)) {
+                return false;
+            }
+            return self::escalateInternal($instance, $step, $item);
+        });
+    }
+
+    private static function escalateInternal(Instance $instance, Step $step, CommonITILObject $item): bool
+    {
         self::enter();
         try {
-            $step->update(['id' => $step->getID(), 'is_escalated' => 1]);
+            self::mustUpdate($step, ['id' => $step->getID(), 'is_escalated' => 1]);
             (new \ITILFollowup())->add([
                 'itemtype'   => $item->getType(),
                 'items_id'   => $item->getID(),
@@ -1325,7 +1739,7 @@ final class Engine
     /** Право обойти контроль (для диспетчера / администратора процесса). */
     public static function userMayBypass(): bool
     {
-        return Session::haveRight('plugin_itilflow_bypass', READ);
+        return (bool) Session::haveRight('plugin_itilflow_bypass', READ);
     }
 
     /**

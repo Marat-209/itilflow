@@ -8,10 +8,17 @@ Session::checkRight('plugin_itilflow_process', READ);
 
 $processes = [];
 foreach ((new Process())->find([], ['name ASC']) as $id => $p) {
-    $processes[(int) $id] = $p['name'];
+    $process = new Process();
+    if ($process->getFromDB((int) $id) && $process->can((int) $id, READ)
+        && Session::haveAccessToEntity((int) $p['entities_id'])) {
+        $processes[(int) $id] = $p['name'];
+    }
 }
 
 $pid = (int) ($_GET['processes_id'] ?? 0);
+if (!isset($processes[$pid])) {
+    $pid = 0;
+}
 if ($pid <= 0 && count($processes)) {
     $pid = (int) array_key_first($processes);
 }
