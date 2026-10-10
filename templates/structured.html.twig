@@ -1,0 +1,33 @@
+<section class="mb-3">
+  <h4>Явные исходы отделов · попытка {{ attempt_number }}</h4>
+  {% if attempt_state == 'waiting_input' %}<div class="alert alert-warning">Ожидается уточнение предмета. Новые задачи и согласования появятся после подтверждения.</div>{% endif %}
+  {% if pending_transfer %}<div class="alert alert-info">Есть сохранённые ответы согласующих. Пока нет окончательного исхода, этап не считается завершённым; ответ может быть промежуточным или требовать сверки переноса.</div>{% endif %}
+  {% for row in history %}
+    <div class="border rounded p-2 mb-2"><strong>{{ row.stage }} · попытка {{ row.pass }}: {{ row.label }}</strong>
+      {% if row.superseded %}<span class="badge bg-secondary-lt">История прежней попытки</span>{% endif %}
+      {% if row.summary %}<p class="mb-0">{{ row.summary }}</p>{% endif %}
+      <div class="small text-muted">Автор результата: {{ row.actor }}</div>
+      {% if row.pending %}<p class="text-warning mb-0">Публичное пояснение ещё не оформлено.</p>{% endif %}
+    </div>
+  {% endfor %}
+  <div class="small text-muted mb-2">Показаны исходы маршрута и его попыток. Общий статус согласования GLPI и прежние визы остаются отдельной историей; они не переписываются новой попыткой.</div>
+  {% for form in forms %}
+  <form method="post" action="{{ path('/plugins/itilflow/front/outcome.form.php') }}" class="border rounded p-3 mb-2">
+    <h5>{{ form.title }}</h5>
+    <input type="hidden" name="_glpi_csrf_token" value="{{ csrf_token() }}">
+    <input type="hidden" name="action" value="{{ form.action }}">
+    <input type="hidden" name="command_key" value="{{ form.command_key }}">
+    <input type="hidden" name="instances_id" value="{{ form.instances_id }}">
+    <input type="hidden" name="steps_id" value="{{ form.steps_id }}">
+    <input type="hidden" name="expected_attempt_id" value="{{ form.expected_attempt_id }}">
+    {% if form.outcomes_id is defined %}<input type="hidden" name="outcomes_id" value="{{ form.outcomes_id }}">{% endif %}
+    {% if form.validation_itemtype is defined %}<input type="hidden" name="validation_itemtype" value="{{ form.validation_itemtype }}"><input type="hidden" name="validations_id" value="{{ form.validations_id }}">{% endif %}
+    {% if form.action == 'department_outcome' %}<label class="form-label">Исход</label><select name="outcome" class="form-select mb-2"><option value="completed">Выполнено</option><option value="refused">Отказано</option></select>{% endif %}
+    {% if form.targets is defined %}<label class="form-label">Точка возврата</label><select name="target_stage_id" class="form-select mb-2" required>{% for id, label in form.targets %}<option value="{{ id }}">{{ label }}</option>{% endfor %}</select>{% endif %}
+    {% if form.needs_subject %}<label class="form-label">Подтверждённый предмет новой попытки</label><textarea class="form-control mb-2" name="subject_summary" required maxlength="16000"></textarea>{% endif %}
+    {% if form.action not in ['explain_outcome', 'publish_positive_result', 'reconcile_outcome'] %}<label class="form-label">Основание действия (внутреннее)</label><textarea name="reason" class="form-control mb-2" required maxlength="8000"></textarea>{% endif %}
+    {% if form.action in ['department_outcome', 'request_clarification', 'explain_outcome', 'publish_positive_result'] %}<label class="form-label">Публичное пояснение для заявителя</label><textarea name="public_summary" class="form-control mb-2" required maxlength="8000"></textarea><div class="form-text">Укажите безопасный итог своими словами. Внутренние комментарии и вложения автоматически не копируются.</div>{% endif %}
+    <button type="submit" class="btn btn-primary">{{ form.title }}</button>
+  </form>
+  {% endfor %}
+</section>

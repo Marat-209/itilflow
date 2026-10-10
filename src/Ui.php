@@ -54,6 +54,7 @@ final class Ui
 
             $stage = $step->getStage();
 
+            $duration = DefinitionSnapshot::enabled($instance) ? Step::elapsedSeconds($row) : (int) $row['duration'];
             $rows[] = $row + [
                 'is_optional'  => $stage !== null ? (int) $stage->fields['is_optional'] : 0,
                 'due'          => $row['date_due']
@@ -72,9 +73,8 @@ final class Ui
                 'awaits_approver' => $step->awaitsApprover(),
                 'validations'  => count($step->validationIds()),
                 'artifact_link' => $link,
-                'duration_h'   => (int) $row['duration'] > 0
-                    ? \Html::timestampToString((int) $row['duration'], false)
-                    : '',
+                'duration_h' => $duration !== null && ($duration > 0 || DefinitionSnapshot::enabled($instance))
+                    ? \Html::timestampToString($duration, false) : '—',
             ];
         }
         return $rows;
@@ -112,6 +112,7 @@ final class Ui
         if (Session::getCurrentInterface() === 'central'
             && Authorizer::stepError($current, 'complete') === null) {
             return [
+                'command' => self::commandFields($instance),
                 'kind'        => 'complete',
                 'steps_id'    => $current->getID(),
                 'title'       => $title,
@@ -127,6 +128,7 @@ final class Ui
         if (Session::getCurrentInterface() === 'central'
             && Authorizer::stepError($current, 'set_approver') === null) {
             return [
+                'command' => self::commandFields($instance),
                 'kind'     => 'approver',
                 'steps_id' => $current->getID(),
                 'title'    => $title,
@@ -136,6 +138,13 @@ final class Ui
         return null;
     }
 
+    private static function commandFields(Instance $instance): ?array
+    {
+        return DefinitionSnapshot::enabled($instance)
+            ? ['key' => bin2hex(random_bytes(32)), 'attempt_id' => (int) $instance->fields['current_attempt_id']]
+            : null;
+    }
+
     /** Полная вкладка маршрута на заявке. */
     public static function showFlowTab(CommonITILObject $item): void
     {
@@ -143,6 +152,14 @@ final class Ui
             return;
         }
         $instance = Instance::getForItem($item);
+        $child_step = StructuredUi::childStep($item);
+        if ($child_step !== null) {
+            StructuredUi::show($item, null, $child_step);
+            if ($instance === null) { return; }
+        }
+        if ($instance !== null && DefinitionSnapshot::enabled($instance)) {
+            StructuredUi::show($item, $instance, null);
+        }
 
         if ($instance === null) {
             $available = [];
@@ -193,6 +210,7 @@ final class Ui
         }
 
         TemplateRenderer::getInstance()->display('@itilflow/flow_tab.html.twig', [
+            'command' => self::commandFields($instance),
             'form'          => $form,
             'is_staff'      => $is_staff,
             'item'          => $item,
@@ -204,7 +222,8 @@ final class Ui
             'steps'         => self::decorate($instance),
             'current_id'    => $current ? $current->getID() : 0,
             'can_admin'     => $can_admin,
-            'can_resume'    => $is_staff && Authorizer::instanceError($instance, 'resume') === null,
+            'can_resume'    => $is_staff && Authorizer::instanceError($instance, 'resume') === null
+                && (!DefinitionSnapshot::enabled($instance) || Attempt::current($instance)?->fields['state'] === Attempt::RUNNING),
             'can_abort'     => $is_staff && Authorizer::instanceError($instance, 'abort') === null,
             'reassign'      => $reassign,
             'approver'      => $approver,

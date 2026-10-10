@@ -11,6 +11,8 @@ use Session;
 /** Экземпляр маршрута, привязанный к конкретной заявке. */
 class Instance extends CommonDBTM
 {
+    use RuntimeRead;
+
     public static $rightname = 'ticket';
 
     public const RUNNING = 'running';
@@ -98,8 +100,18 @@ class Instance extends CommonDBTM
         return $s;
     }
 
+    public function getAttemptSteps(): array
+    {
+        if (!DefinitionSnapshot::enabled($this)) { return $this->getSteps(); }
+        $attempt = Attempt::current($this);
+        return $attempt === null ? [] : array_values((new Step())->find([
+            'plugin_itilflow_instances_id' => $this->getID(), 'attempt_id' => $attempt->getID(),
+        ], ['ranking ASC', 'id ASC']));
+    }
+
     public function getProcess(): ?Process
     {
+        if (DefinitionSnapshot::enabled($this)) { return DefinitionSnapshot::process($this); }
         $p = new Process();
         return $p->getFromDB((int) $this->fields['plugin_itilflow_processes_id']) ? $p : null;
     }
@@ -111,7 +123,7 @@ class Instance extends CommonDBTM
             return null;
         }
         $o = new $c();
-        return $o->getFromDB((int) $this->fields['items_id']) ? $o : null;
+        return CurrentRead::load($o, (int) $this->fields['items_id']) ? $o : null;
     }
 
     // ------------------------------------------------------------ вкладка
@@ -123,6 +135,7 @@ class Instance extends CommonDBTM
         }
         $inst = self::getForItem($item);
         if ($inst === null) {
+            if (StructuredUi::childStep($item) !== null) { return self::createTabEntry('Исход отдела'); }
             return Session::haveRight('plugin_itilflow_process', UPDATE)
                 ? self::createTabEntry('Маршрут этапов')
                 : '';

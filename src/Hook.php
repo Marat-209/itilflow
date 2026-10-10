@@ -302,7 +302,8 @@ final class Hook
         }
         // Шаг ищем по списку своих запросов: на этапе может быть несколько
         // отдельных согласующих, и artifact_items_id указывает лишь на первый.
-        $step = Step::getByValidation($val->getType(), $val->getID());
+        $step = OutcomeValidation::stepFor($val->getType(), $val->getID())
+            ?? Step::getByValidation($val->getType(), $val->getID());
         if ($step === null || $step->fields['state'] !== Step::RUNNING) {
             return;
         }
@@ -318,6 +319,20 @@ final class Hook
     public static function preValidationUpdate(CommonITILValidation $val): void
     {
         if (!is_array($val->input) || !array_key_exists('status', $val->input)) {
+            return;
+        }
+        $own = OutcomeValidation::stepFor($val->getType(), $val->getID());
+        $direct = Step::getByValidation($val->getType(), $val->getID());
+        $bound = $own ?? $direct;
+        $instance = $bound?->getInstance();
+        if ($instance !== null && DefinitionSnapshot::enabled($instance)) {
+            $stored = new ($val->getType())();
+            if (($own !== null && count(Step::validationBindings($val->getType(), $val->getID())) !== 0)
+                || !$stored->getFromDB($val->getID()) || StructuredAccess::validationError($stored, $bound) !== null
+                || Outcome::forStep($bound->getID()) !== null
+                || !in_array((int) $val->input['status'], [CommonITILValidation::ACCEPTED, CommonITILValidation::REFUSED], true)) {
+                $val->input = false;
+            }
             return;
         }
         $bindings = Step::validationBindings($val->getType(), $val->getID());

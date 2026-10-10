@@ -32,10 +32,25 @@ final class Sheet
                 $result = 'Не согласовано';
             } elseif ($row['state'] === Step::RUNNING) {
                 $result = Engine::isOverdue($row) ? 'В работе, срок истёк' : 'В работе';
+            } elseif ($row['state'] === Step::SUPERSEDED) {
+                $result = 'Прекращён без выполнения';
             } else {
                 $result = 'Ожидает очереди';
             }
 
+            $public_comment = (string) ($row['comment'] ?? '');
+            if (DefinitionSnapshot::enabled($instance)) {
+                $outcome = Outcome::forStep((int) $row['id']);
+                if ($outcome !== null) {
+                    $result = Outcome::labels()[$outcome->fields['outcome']] ?? 'Исход не подтверждён';
+                    $public_comment = (string) ($outcome->fields['public_summary'] ?? '');
+                    if (!empty($outcome->fields['explanation_pending'])) { $result .= ' — публичный итог ожидается'; }
+                    $closed_by = (int) $outcome->fields['users_id'] > 0 ? getUserName((int) $outcome->fields['users_id']) : '';
+                }
+                if (!empty($row['superseded_by_attempt_id'])) { $result .= ' (история прежней попытки)'; }
+            }
+
+            $duration = DefinitionSnapshot::enabled($instance) ? Step::elapsedSeconds($row) : (int) $row['duration'];
             $out[] = [
                 'no'          => sprintf('%d%s', (int) $row['ranking'],
                     (int) $row['pass_number'] > 1 ? '.' . $row['pass_number'] : ''),
@@ -50,10 +65,10 @@ final class Sheet
                 'date_end'    => $row['date_end'] ? Html::convDateTime((string) $row['date_end']) : '',
                 'date_due'    => $row['date_due'] ? Html::convDateTime((string) $row['date_due']) : '',
                 'overdue'     => self::wasOverdue($row),
-                'duration'    => (int) $row['duration'] > 0
-                    ? Html::timestampToString((int) $row['duration'], false) : '',
+                'duration' => $duration !== null && ($duration > 0 || DefinitionSnapshot::enabled($instance))
+                    ? Html::timestampToString($duration, false) : '—',
                 'result'      => $result,
-                'comment'     => (string) ($row['comment'] ?? ''),
+                'comment'     => $public_comment,
                 'state'       => (string) $row['state'],
                 // Согласующего указали при прохождении: в документе для аудита
                 // должно быть видно, кто выбрал и на каком основании.
@@ -68,6 +83,7 @@ final class Sheet
     /** Просрочен сейчас или был просрочен на момент закрытия. */
     public static function wasOverdue(array $row): bool
     {
+        if ($row['state'] === Step::SUPERSEDED) { return false; }
         if (empty($row['date_due'])) {
             return false;
         }
@@ -124,7 +140,8 @@ final class Sheet
                 ? Html::convDateTime((string) $instance->fields['date_start']) : '',
             'date_end'    => $instance->fields['date_end']
                 ? Html::convDateTime((string) $instance->fields['date_end']) : '',
-            'progress'    => sprintf('%d из %d', $done, $total),
+            'progress'    => sprintf('%d из %d', $done, $total)
+                . (DefinitionSnapshot::enabled($instance) ? ' (все исторические прохождения)' : ''),
             'printed'     => Html::convDateTime(date('Y-m-d H:i:s')),
         ];
     }

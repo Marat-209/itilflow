@@ -9,6 +9,10 @@
 {% if action is not null %}
 <form method="post" action="{{ action_url }}">
    <input type="hidden" name="_glpi_csrf_token" value="{{ csrf_token() }}">
+         {% if action.command is not null %}
+         <input type="hidden" name="command_key" value="{{ action.command.key }}">
+         <input type="hidden" name="expected_attempt_id" value="{{ action.command.attempt_id }}">
+         {% endif %}
    <input type="hidden" name="steps_id" value="{{ action.steps_id }}">
 
    <h3 class="mb-2">

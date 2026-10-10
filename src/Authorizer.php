@@ -23,8 +23,9 @@ final class Authorizer
     public static function itemError(CommonITILObject $item, int $right): ?string
     {
         if ((int) Session::getLoginUserID() <= 0
-            || !$item->getFromDB($item->getID())
+            || !CurrentRead::load($item, (int) $item->getID())
             || !empty($item->fields['is_deleted'])
+            || !CurrentRead::actorsAgree($item)
             || !Session::haveAccessToEntity((int) $item->fields['entities_id'])
             || !$item->can($item->getID(), $right)) {
             return 'Недостаточно прав для действия с этой заявкой.';
@@ -42,6 +43,12 @@ final class Authorizer
         if ($item === null || !empty($item->fields['is_deleted'])
             || (int) $instance->fields['entities_id'] !== (int) $item->fields['entities_id']) {
             return 'Маршрут недоступен.';
+        }
+        if (DefinitionSnapshot::enabled($instance)
+            && (!StructuredAccess::currentRow($instance, ['state', 'current_attempt_id', 'plugin_itilflow_stages_id_current',
+                'definition_sha256', 'itemtype', 'items_id', 'entities_id'])
+                || !StructuredAccess::currentRow($item, ['status', 'entities_id', 'is_deleted']))) {
+            return 'Объект изменился; требуется свежая сверка состояния.';
         }
         if ($step === null) {
             return null;
@@ -62,6 +69,21 @@ final class Authorizer
         if ($stage === null || (int) $stage->fields['plugin_itilflow_processes_id']
             !== (int) $instance->fields['plugin_itilflow_processes_id']) {
             return 'Определение этапа недоступно.';
+        }
+        if (DefinitionSnapshot::enabled($instance)) {
+            $attempt = Attempt::current($instance);
+            if (DefinitionSnapshot::load($instance) === null || $attempt === null
+                || $attempt->fields['state'] !== Attempt::RUNNING
+                || (int) $step->fields['attempt_id'] !== (int) $attempt->getID()
+                || (int) $step->fields['pass_number'] !== (int) $attempt->fields['number']
+                || !empty($step->fields['superseded_by_attempt_id'])) {
+                return 'Попытка этапа не подтверждена.';
+            }
+            if (!StructuredAccess::currentRow($attempt, ['state', 'number', 'plugin_itilflow_instances_id'])
+                || !StructuredAccess::currentRow($step, ['state', 'attempt_id', 'superseded_by_attempt_id',
+                    'artifact_itemtype', 'artifact_items_id', 'approval_expected_count'])) {
+                return 'Попытка изменилась; требуется свежая сверка состояния.';
+            }
         }
         // Несколько текущих шагов — неоднозначное состояние, а не выбор первого.
         $running = (new Step())->find([
@@ -114,6 +136,22 @@ final class Authorizer
         if (($error = self::itemError($item, UPDATE)) !== null) {
             return $error;
         }
+        return self::stepRoleError($step, $item, $action, false);
+    }
+
+    /** Повтор квитанции не повторяет эффект; полномочия проверяются заново без требования RUNNING. */
+    public static function replayStepError(Step $step, string $action): ?string
+    {
+        if (!$step->getFromDB($step->getID()) || ($instance = $step->getInstance()) === null
+            || self::contextError($instance) !== null || ($item = $instance->getItilItem()) === null
+            || self::itemError($item, UPDATE) !== null || $step->getStage() === null) {
+            return 'Текущее полномочие не подтверждено.';
+        }
+        return self::stepRoleError($step, $item, $action, true);
+    }
+
+    private static function stepRoleError(Step $step, CommonITILObject $item, string $action, bool $replay): ?string
+    {
         $mode = (string) $step->fields['execution_mode'];
         $admin = self::isAdministrator();
         $owned = $step->isOwnedBy((int) Session::getLoginUserID(), Engine::myGroups());
@@ -130,7 +168,7 @@ final class Authorizer
             return $allowed ? null : 'Нет права на принудительное завершение этого этапа.';
         }
         if ($action === 'set_approver') {
-            return $step->awaitsApprover() && ($admin || self::isAssignee($item))
+            return ($replay || $step->awaitsApprover()) && ($admin || self::isAssignee($item))
                 ? null : 'Согласующего указывает исполнитель заявки или администратор процессов.';
         }
         if ($action === 'reassign') {
@@ -178,6 +216,23 @@ final class Authorizer
             ? null : 'Действие недоступно в этом состоянии маршрута.';
     }
 
+    public static function replayInstanceError(Instance $instance, string $action): ?string
+    {
+        if (self::contextError($instance) !== null || ($item = $instance->getItilItem()) === null
+            || self::itemError($item, $action === 'withdraw' ? READ : UPDATE) !== null) {
+            return 'Текущее полномочие не подтверждено.';
+        }
+        if ($action === 'withdraw') {
+            $process = $instance->getProcess();
+            return (int) ($instance->fields['users_id_requester_start'] ?? 0) > 0
+                && (int) $instance->fields['users_id_requester_start'] === (int) Session::getLoginUserID()
+                && $process !== null && !empty($process->fields['allow_withdraw'])
+                ? null : 'Исходный инициатор не подтверждён.';
+        }
+        return in_array($action, ['abort', 'resume', 'halt'], true) && self::isAdministrator()
+            ? null : 'Недостаточно прав на управление маршрутом.';
+    }
+
     public static function processFitsItem(Process $process, CommonITILObject $item): bool
     {
         if (!$process->fields['is_active'] || $process->fields['itemtype'] !== $item->getType()
@@ -218,12 +273,12 @@ final class Authorizer
             return $error ?? 'Заявка недоступна.';
         }
         if ($step->fields['execution_mode'] !== Stage::MODE_APPROVAL
-            || !$validation->getFromDB($validation->getID())
+            || !CurrentRead::load($validation, (int) $validation->getID())
             || $step->fields['artifact_itemtype'] !== $validation->getType()
             || (int) ($validation->fields[$item::getForeignKeyField()] ?? 0) !== (int) $item->getID()
             || (int) ($validation->fields['entities_id'] ?? -1) !== (int) $item->fields['entities_id']
             || !in_array((int) $validation->getID(), $step->validationIds(), true)
-            || !$validation->canAnswer()
+            || !ValidationAuthority::canAnswer($validation)
             || !$validation->can($validation->getID(), UPDATE)) {
             return 'Нет полномочия ответить на это согласование.';
         }
@@ -235,13 +290,13 @@ final class Authorizer
     {
         global $DB;
         $user = new \User();
-        if ($users_id <= 0 || !$user->getFromDB($users_id)
+        if ($users_id <= 0 || !CurrentRead::load($user, $users_id)
             || empty($user->fields['is_active']) || !empty($user->fields['is_deleted'])) {
             return false;
         }
         $entity = (int) $item->fields['entities_id'];
         $ancestors = array_map('intval', getAncestorsOf('glpi_entities', $entity));
-        foreach ($DB->request(['FROM' => 'glpi_profiles_users', 'WHERE' => ['users_id' => $users_id]]) as $grant) {
+        foreach (CurrentRead::find(new \Profile_User(), ['users_id' => $users_id]) as $grant) {
             $ge = (int) $grant['entities_id'];
             if ($ge === $entity || (!empty($grant['is_recursive']) && in_array($ge, $ancestors, true))) {
                 return true;

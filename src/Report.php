@@ -53,21 +53,31 @@ final class Report
                     'done'      => 0,
                     'skipped'   => 0,
                     'rejected'  => 0,
+                    'clarification' => 0,
+                    'refused' => 0,
+                    'superseded' => 0,
                     'running'   => 0,
                     'overdue'   => 0,
                     'reassigned' => 0,
+                    'duration_unknown' => 0,
                     'durations' => [],
                 ];
             }
             $a =& $acc[$key];
             $a['passes']++;
+            if ($row['state'] === Step::SUPERSEDED) { $a['superseded']++; }
+            if (($instances[$iid]['outcome_contract'] ?? 'legacy') === DefinitionSnapshot::MODE) {
+                $outcome = Outcome::forStep((int) $row['id']);
+                if ($outcome !== null && $outcome->fields['outcome'] === Outcome::REFUSED) { $a['refused']++; }
+                if ($outcome !== null && $outcome->fields['outcome'] === Outcome::CLARIFICATION) { $a['clarification']++; }
+            }
             if ($row['state'] === Step::DONE) {
                 $a['done']++;
-                // Ноль — тоже результат: этап, закрытый за секунды, не должен
-                // выпадать из статистики, иначе средняя посчитается по хвосту.
-                if (!empty($row['date_end'])) {
-                    $a['durations'][] = (int) $row['duration'];
-                }
+                $duration = ($instances[$iid]['outcome_contract'] ?? 'legacy') === DefinitionSnapshot::MODE
+                    ? Step::elapsedSeconds($row)
+                    : (!empty($row['date_end']) ? (int) $row['duration'] : null);
+                if ($duration !== null) { $a['durations'][] = $duration; }
+                else { $a['duration_unknown']++; }
             } elseif ($row['state'] === Step::SKIPPED) {
                 $a['skipped']++;
             } elseif ($row['state'] === Step::REJECTED) {
@@ -90,6 +100,7 @@ final class Report
             sort($d);
             $n = count($d);
             $a['stages_id'] = $key;
+            $a['duration_samples'] = $n;
             $a['avg'] = $n ? (int) round(array_sum($d) / $n) : 0;
             $a['median'] = $n ? (int) ($n % 2 ? $d[intdiv($n, 2)]
                 : round(($d[$n / 2 - 1] + $d[$n / 2]) / 2)) : 0;

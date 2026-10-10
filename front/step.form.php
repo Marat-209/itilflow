@@ -25,12 +25,15 @@ $id = static function (string $key): int {
 $text = static fn(string $key): string => is_string($_POST[$key] ?? null)
     ? trim(strip_tags($_POST[$key])) : '';
 
+$command_key = is_string($_POST['command_key'] ?? null) ? $_POST['command_key'] : '';
+$expected_attempt = $id('expected_attempt_id');
+
 // Единственное действие этого endpoint, доступное из самообслуживания.
 // Проверки инициатора, объекта и состояния находятся также в Engine::withdraw.
 if ($action === 'withdraw') {
     $instance = new Instance();
     if ($instance->getFromDB($id('instances_id'))) {
-        Engine::withdraw($instance, $text('withdraw_reason'));
+        Engine::withdraw($instance, $text('withdraw_reason'), $command_key, $expected_attempt);
     }
     Html::back();
     return;
@@ -52,9 +55,9 @@ if (in_array($action, ['abort', 'resume'], true)) {
     $instance = new Instance();
     if ($instance->getFromDB($id('instances_id'))) {
         if ($action === 'abort') {
-            Engine::abort($instance, $text('abort_reason'));
+            Engine::abort($instance, $text('abort_reason'), $command_key, $expected_attempt);
         } else {
-            Engine::resume($instance);
+            Engine::resume($instance, $command_key, $expected_attempt);
         }
     }
     Html::back();
@@ -69,10 +72,10 @@ if (!$step->getFromDB($id('steps_id'))) {
 switch ($action) {
     case 'complete':
     case 'skip':
-        Engine::completeStep($step, $text('report'), $action === 'skip');
+        Engine::completeStep($step, $text('report'), $action === 'skip', $command_key, $expected_attempt);
         break;
     case 'override':
-        Engine::overrideStep($step, $text('report'));
+        Engine::overrideStep($step, $text('report'), $command_key, $expected_attempt);
         break;
     case 'set_approver':
         $ids = static function (string $key): ?array {
@@ -93,11 +96,11 @@ switch ($action) {
         $groups = $ids('appr_groups_id');
         $users = $ids('appr_users_id');
         if ($groups !== null && $users !== null) {
-            Engine::designateApprover($step, $groups, $users, $text('appr_reason'));
+            Engine::designateApprover($step, $groups, $users, $text('appr_reason'), $command_key, $expected_attempt);
         }
         break;
     case 'reassign':
-        Engine::reassign($step, $id('to_groups_id'), $id('to_users_id'), $text('reassign_reason'));
+        Engine::reassign($step, $id('to_groups_id'), $id('to_users_id'), $text('reassign_reason'), $command_key, $expected_attempt);
         break;
 }
 Html::back();

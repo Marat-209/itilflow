@@ -10,6 +10,9 @@ use Session;
 /** Этап маршрута. */
 class Stage extends CommonDBChild
 {
+    use RuntimeRead;
+
+    use DefinitionMutation;
     public static $rightname = 'plugin_itilflow_process';
     public static $itemtype = Process::class;
     public static $items_id = 'plugin_itilflow_processes_id';
@@ -188,6 +191,8 @@ class Stage extends CommonDBChild
                 (string) ($process->fields['itemtype'] ?? \Ticket::class)
             ),
             'siblings'     => $siblings,
+            'return_choices' => array_column($process->getStages(), 'name', 'id'),
+            'return_selected' => DefinitionSnapshot::targets($this->fields['return_targets'] ?? '[]') ?? [],
         ]);
         return true;
     }
@@ -210,6 +215,9 @@ class Stage extends CommonDBChild
         $this->fields['is_optional']        = 0;
         $this->fields['deadline_minutes']   = 0;
         $this->fields['ticket_status']      = 0;
+        $this->fields['department_result_source'] = '';
+        $this->fields['negative_policy'] = '';
+        $this->fields['return_targets'] = '[]';
         $this->fields['duration']           = 0;
         // Целочисленные ссылки: пустая строка не проходит в строгом режиме MySQL.
         $this->fields['ranking']                          = 0;
@@ -242,6 +250,38 @@ class Stage extends CommonDBChild
 
     private function validateInput(array $input): array
     {
+        if (isset($input['_structured_return_targets_present']) && !isset($input['_structured_return_targets'])) { $input['_structured_return_targets'] = []; }
+        unset($input['_structured_return_targets_present']);
+        if (array_key_exists('_structured_return_targets', $input)) {
+            $values = $input['_structured_return_targets'];
+            if (!is_array($values)) { return []; }
+            $targets = [];
+            foreach ($values as $value) {
+                if ((!is_string($value) && !is_int($value)) || !preg_match('/^[1-9][0-9]*$/D', (string) $value)
+                    || (string) (int) $value !== (string) $value) { return []; }
+                $targets[] = (int) $value;
+            }
+            $input['return_targets'] = DefinitionSnapshot::encode(array_values(array_unique($targets)));
+            unset($input['_structured_return_targets']);
+        }
+        $process = new Process();
+        $pid = (int) ($input['plugin_itilflow_processes_id'] ?? $this->fields['plugin_itilflow_processes_id'] ?? 0);
+        if ($process->getFromDB($pid) && ($process->fields['outcome_contract'] ?? 'legacy') === DefinitionSnapshot::MODE) {
+            $merged = array_replace($this->fields, $input);
+            $targets = DefinitionSnapshot::targets($merged['return_targets'] ?? '[]');
+            if ($targets === null || !in_array($merged['negative_policy'] ?? '', ['block', 'abort'], true)
+                || (($merged['execution_mode'] ?? self::MODE_INLINE) === self::MODE_DELEGATED
+                    && !in_array($merged['department_result_source'] ?? '', ['assignee_action', 'native_validation'], true))) {
+                Session::addMessageAfterRedirect('Укажите источник исхода, политику отказа и допустимые точки возврата.', false, ERROR);
+                return [];
+            }
+            foreach ($targets as $target) {
+                $stage = new self();
+                if (!$stage->getFromDB($target) || (int) $stage->fields['plugin_itilflow_processes_id'] !== $pid
+                    || (int) $stage->fields['ranking'] > (int) ($merged['ranking'] ?? 0)) { return []; }
+            }
+            $input['return_targets'] = DefinitionSnapshot::encode($targets);
+        }
         if (isset($input['name']) && trim((string) $input['name']) === '') {
             Session::addMessageAfterRedirect('Укажите название этапа.', false, ERROR);
             return [];
@@ -313,10 +353,12 @@ class Stage extends CommonDBChild
         $ranking = (int) ($input['ranking'] ?? $this->fields['ranking'] ?? 0);
         if ($processes_id > 0 && $ranking > 0) {
             $crit = ['plugin_itilflow_processes_id' => $processes_id, 'ranking' => $ranking];
-            if (!$this->isNewItem()) {
-                $crit[] = ['NOT' => ['id' => $this->getID()]];
+            // Внутри scope find выполняет current read; свой ID исключается без сложного SQL-критерия.
+            $conflict = false;
+            foreach ((new self())->find($crit) as $other) {
+                if ((int) $other['id'] !== (int) $this->getID()) { $conflict = true; break; }
             }
-            if (count((new self())->find($crit, [], 1))) {
+            if ($conflict) {
                 $max = 0;
                 foreach ((new self())->find(['plugin_itilflow_processes_id' => $processes_id]) as $r) {
                     $max = max($max, (int) $r['ranking']);

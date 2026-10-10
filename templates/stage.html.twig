@@ -96,6 +96,16 @@
                   'helper': 'Заполняется только при действии Вернуться на указанный этап. Обычно это тот этап, ошибку которого и нашёл согласующий. Число возвратов ограничено десятью — защита от бесконечного круга.'
                }) }}
 
+               <div class="col-12 text-muted small">Следующие поля действуют только после явного включения нового порядка исходов в маршруте. Можно подготовить их заранее.</div>
+                  {{ fields.smallTitle('Исход отдела и новая попытка', 'ti ti-git-branch') }}
+                  {{ fields.dropdownArrayField('department_result_source', item.fields['department_result_source'], {'': 'Выберите для дочерней заявки', 'assignee_action': 'Явный ответ назначенного исполнителя', 'native_validation': 'Адресное штатное согласование в дочерней заявке'}, 'Источник исхода') }}
+                  {{ fields.dropdownArrayField('negative_policy', item.fields['negative_policy'], {'': 'Выберите политику', 'block': 'Остановить после отказа', 'abort': 'Прервать после отказа'}, 'Отрицательный исход') }}
+                  <div class="col-12"><label class="form-label">Допустимые точки возврата</label>
+                     <input type="hidden" name="_structured_return_targets_present" value="1">
+                     <select class="form-select" multiple name="_structured_return_targets[]">
+                     {% for id, label in return_choices %}<option value="{{ id }}" {% if id in return_selected %}selected{% endif %}>{{ label }}</option>{% endfor %}
+                     </select><div class="form-text">Только этот или предыдущие этапы; сервер проверяет порядок. Новый этап можно выбрать после его первого сохранения.</div>
+                  </div>
                {{ fields.smallTitle('Прочее', 'ti ti-dots') }}
 
                {{ fields.dropdownYesNo('is_optional', item.fields['is_optional'], 'Этап необязательный', {

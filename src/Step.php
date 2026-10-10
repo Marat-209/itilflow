@@ -7,6 +7,8 @@ use CommonDBChild;
 /** Шаг — прохождение конкретного этапа конкретной заявкой. */
 class Step extends CommonDBChild
 {
+    use RuntimeRead;
+
     public static $rightname = 'ticket';
     public static $itemtype = Instance::class;
     public static $items_id = 'plugin_itilflow_instances_id';
@@ -16,6 +18,21 @@ class Step extends CommonDBChild
     public const DONE     = 'done';
     public const SKIPPED  = 'skipped';
     public const REJECTED = 'rejected';
+    /** Время между сохранёнными датами GLPI; это не SLA и не вычет ожидания. */
+    public static function elapsedSeconds(array $row): ?int
+    {
+        $dates = [];
+        foreach (['date_start', 'date_end'] as $key) {
+            $raw = $row[$key] ?? null;
+            if (!is_string($raw) || !preg_match('/^[0-9]{4}-[0-9]{2}-[0-9]{2} [0-9]{2}:[0-9]{2}:[0-9]{2}$/D', $raw)) { return null; }
+            $date = \DateTimeImmutable::createFromFormat('!Y-m-d H:i:s', $raw, new \DateTimeZone('UTC'));
+            if ($date === false || $date->format('Y-m-d H:i:s') !== $raw || substr($raw, 0, 4) === '0000') { return null; }
+            $dates[] = $date->getTimestamp();
+        }
+        return $dates[1] >= $dates[0] ? $dates[1] - $dates[0] : null;
+    }
+
+    public const SUPERSEDED = 'superseded';
 
     // Строки исполнения изменяются только командами Engine, не generic CRUD.
     // Native add/update внутри движка не вызывают эти permission callbacks.
@@ -43,6 +60,7 @@ class Step extends CommonDBChild
             self::DONE     => 'Завершён',
             self::SKIPPED  => 'Пропущен',
             self::REJECTED => 'Отклонён',
+            self::SUPERSEDED => 'Прекращён без завершения',
         ];
     }
 
@@ -70,6 +88,10 @@ class Step extends CommonDBChild
 
     public function getStage(): ?Stage
     {
+        $instance = $this->getInstance();
+        if ($instance !== null && DefinitionSnapshot::enabled($instance)) {
+            return DefinitionSnapshot::stage($instance, (int) $this->fields['plugin_itilflow_stages_id']);
+        }
         $s = new Stage();
         return $s->getFromDB((int) $this->fields['plugin_itilflow_stages_id']) ? $s : null;
     }
@@ -104,13 +126,12 @@ class Step extends CommonDBChild
             return [];
         }
         $matches = [];
-        foreach ($DB->request([
-            'SELECT' => ['id'], 'FROM' => self::getTable(),
-            'WHERE' => ['execution_mode' => Stage::MODE_APPROVAL,
-                'artifact_itemtype' => $itemtype,
-                'OR' => ['artifact_items_id' => $items_id, new \QueryExpression(
-                    'FIND_IN_SET(' . $items_id . ', ' . $DB->quoteName('approver_items_ids') . ') > 0')]],
-        ]) as $row) {
+        foreach ((new self())->find(['execution_mode' => Stage::MODE_APPROVAL,
+            'artifact_itemtype' => $itemtype]) as $row) {
+            if ((int) $row['artifact_items_id'] !== $items_id
+                && !in_array((string) $items_id, explode(',', (string) ($row['approver_items_ids'] ?? '')), true)) {
+                continue;
+            }
             $step = new self();
             if ($step->getFromDB((int) $row['id'])) {
                 $matches[] = $step;
@@ -185,7 +206,7 @@ class Step extends CommonDBChild
         }
         $type = get_class($class);
         $rows = [];
-        foreach ($DB->request(['FROM' => $type::getTable(), 'WHERE' => ['id' => $ids]]) as $row) {
+        foreach (CurrentRead::find(new $type(), ['id' => $ids]) as $row) {
             if ((int) ($row[$item::getForeignKeyField()] ?? 0) !== (int) $item->getID()
                 || (int) ($row['entities_id'] ?? -1) !== (int) $item->fields['entities_id']
                 || !in_array((int) $row['status'], [\CommonITILValidation::WAITING,

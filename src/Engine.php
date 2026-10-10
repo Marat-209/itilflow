@@ -16,6 +16,7 @@ use ValidationStep;
  */
 final class Engine
 {
+    use StructuredFlow;
     /** Защита от рекурсии: объекты, которые создаёт сам движок, не должны его же и триггерить. */
     private static int $inside = 0;
 
@@ -100,27 +101,42 @@ final class Engine
     private static function locked(Instance $instance, callable $operation): bool
     {
         global $DB;
-        $begun = false;
+        $scope = null;
         try {
-            $DB->beginTransaction();
-            $begun = true;
-            $result = $DB->doQuery('SELECT id FROM ' . $DB->quoteName(Instance::getTable())
+            $scope = new TransactionScope();
+            $result = $DB->doQuery('SELECT * FROM ' . $DB->quoteName(Instance::getTable())
                 . ' WHERE id = ' . (int) $instance->getID() . ' FOR UPDATE');
-            if ((int) $DB->numrows($result) !== 1 || !$instance->getFromDB($instance->getID())) {
-                $DB->rollBack();
+            if ((int) $DB->numrows($result) !== 1) {
+                $scope->rollback();
                 return false;
+            }
+            $instance->fields = $DB->fetchAssoc($result);
+            if (DefinitionSnapshot::enabled($instance)) {
+                $type = $instance->fields['itemtype'];
+                if (!in_array($type, ['Ticket', 'Change', 'Problem'], true)) {
+                    $scope->rollback(); return false;
+                }
+                // Связанные модели читают SELECT * FOR UPDATE через RuntimeRead/CurrentRead,
+                // в том числе при уже существующем внешнем RR read-view.
+                $parent_lock = $DB->doQuery('SELECT * FROM ' . $DB->quoteName($type::getTable())
+                    . ' WHERE id=' . (int) $instance->fields['items_id'] . ' FOR UPDATE');
+                if ((int) $DB->numrows($parent_lock) !== 1) { $scope->rollback(); return false; }
+                $DB->doQuery('SELECT * FROM ' . $DB->quoteName(Attempt::getTable())
+                    . ' WHERE id=' . (int) $instance->fields['current_attempt_id'] . ' FOR UPDATE');
+                $DB->doQuery('SELECT * FROM ' . $DB->quoteName(Step::getTable())
+                    . ' WHERE plugin_itilflow_instances_id=' . (int) $instance->getID() . ' ORDER BY id FOR UPDATE');
             }
             $ok = $operation();
             if (!$ok) {
-                $DB->rollBack();
+                $scope->rollback();
                 return false;
             }
-            $DB->commit();
+            $scope->commit();
             return true;
         } catch (\Throwable $e) {
-            if ($begun) {
+            if ($scope !== null) {
                 try {
-                    $DB->rollBack();
+                    $scope->rollback();
                 } catch (\Throwable $rollback_error) {
                     // Исход неизвестен; не обещаем откат и не повторяем действие.
                 }
@@ -145,14 +161,15 @@ final class Engine
             ], JSON_UNESCAPED_UNICODE | JSON_THROW_ON_ERROR));
     }
 
-    private static function manualStep(Step $step, string $action, string $reason, callable $operation): bool
+    private static function manualStep(Step $step, string $action, string $reason, callable $operation,
+        string $command_key = '', int $expected_attempt = 0, array $payload = []): bool
     {
         $instance = $step->getInstance();
         if ($instance === null) {
             return false;
         }
         $denial = null;
-        $ok = self::locked($instance, static function () use ($instance, $step, $action, $reason, $operation, &$denial): bool {
+        $apply = static function () use ($instance, $step, $action, $reason, $operation, &$denial): bool {
             $denial = Authorizer::stepError($step, $action);
             if ($denial === null && in_array($action, ['complete', 'skip'], true)) {
                 $denial = self::validateReport($step, $reason, $action === 'skip');
@@ -171,7 +188,11 @@ final class Engine
                 throw new \RuntimeException('Не удалось записать результат действия.');
             }
             return true;
-        });
+        };
+        $ok = DefinitionSnapshot::enabled($instance)
+            ? self::manualStructuredCommand($instance, $step, 'step_' . $action, $command_key,
+                $expected_attempt, [$step->getID(), $reason, $payload], $apply)
+            : self::locked($instance, $apply);
         if ($denial !== null) {
             self::auditAction($instance, $step, $action, true);
             self::msg($denial, ERROR);
@@ -179,10 +200,11 @@ final class Engine
         return $ok;
     }
 
-    private static function manualInstance(Instance $instance, string $action, string $reason, callable $operation): bool
+    private static function manualInstance(Instance $instance, string $action, string $reason, callable $operation,
+        string $command_key = '', int $expected_attempt = 0): bool
     {
         $denial = null;
-        $ok = self::locked($instance, static function () use ($instance, $action, $reason, $operation, &$denial): bool {
+        $apply = static function () use ($instance, $action, $reason, $operation, &$denial): bool {
             $denial = Authorizer::instanceError($instance, $action);
             if ($denial === null && in_array($action, ['withdraw', 'abort'], true)
                 && trim(strip_tags($reason)) === '') {
@@ -195,7 +217,11 @@ final class Engine
                 throw new \RuntimeException('Не удалось записать результат действия.');
             }
             return true;
-        });
+        };
+        $ok = DefinitionSnapshot::enabled($instance)
+            ? self::manualStructuredCommand($instance, null, 'instance_' . $action, $command_key,
+                $expected_attempt, [$reason], $apply)
+            : self::locked($instance, $apply);
         if ($denial !== null) {
             self::auditAction($instance, null, $action, true);
             self::msg($denial, ERROR);
@@ -203,63 +229,64 @@ final class Engine
         return $ok;
     }
 
-    public static function completeStep(Step $step, string $comment = '', bool $skipped = false): bool
+    public static function completeStep(Step $step, string $comment = '', bool $skipped = false, string $command_key = '', int $expected_attempt = 0): bool
     {
         return self::manualStep($step, $skipped ? 'skip' : 'complete', $comment,
-            static fn(): bool => self::completeStepInternal($step, $comment, $skipped));
+            static fn(): bool => self::completeStepInternal($step, $comment, $skipped), $command_key, $expected_attempt);
     }
 
     /** Привилегированное решение явно отделено от голоса согласующего. */
-    public static function overrideStep(Step $step, string $reason): bool
+    public static function overrideStep(Step $step, string $reason, string $command_key = '', int $expected_attempt = 0): bool
     {
         return self::manualStep($step, 'override', $reason,
-            static fn(): bool => self::completeStepInternal($step, 'Принудительное завершение: ' . $reason));
+            static fn(): bool => self::completeStepInternal($step, 'Принудительное завершение: ' . $reason, false, true), $command_key, $expected_attempt);
     }
 
-    public static function designateApprover(Step $step, array $groups_ids, array $users_ids, string $reason): bool
+    public static function designateApprover(Step $step, array $groups_ids, array $users_ids, string $reason, string $command_key = '', int $expected_attempt = 0): bool
     {
         return self::manualStep($step, 'set_approver', $reason,
-            static fn(): bool => self::designateApproverInternal($step, $groups_ids, $users_ids, $reason));
+            static fn(): bool => self::designateApproverInternal($step, $groups_ids, $users_ids, $reason), $command_key, $expected_attempt, [$groups_ids, $users_ids]);
     }
 
-    public static function reassign(Step $step, int $groups_id, int $users_id, string $reason): bool
+    public static function reassign(Step $step, int $groups_id, int $users_id, string $reason, string $command_key = '', int $expected_attempt = 0): bool
     {
         return self::manualStep($step, 'reassign', $reason,
-            static fn(): bool => self::reassignInternal($step, $groups_id, $users_id, $reason));
+            static fn(): bool => self::reassignInternal($step, $groups_id, $users_id, $reason), $command_key, $expected_attempt, [$groups_id, $users_id]);
     }
 
-    public static function withdraw(Instance $instance, string $reason): bool
+    public static function withdraw(Instance $instance, string $reason, string $command_key = '', int $expected_attempt = 0): bool
     {
         return self::manualInstance($instance, 'withdraw', $reason,
-            static fn(): bool => self::withdrawInternal($instance, $reason));
+            static fn(): bool => self::withdrawInternal($instance, $reason), $command_key, $expected_attempt);
     }
 
-    public static function abort(Instance $instance, string $reason = ''): bool
+    public static function abort(Instance $instance, string $reason = '', string $command_key = '', int $expected_attempt = 0): bool
     {
         return self::manualInstance($instance, 'abort', $reason, static function () use ($instance, $reason): bool {
             self::abortInternal($instance, $reason);
             return $instance->fields['state'] === Instance::ABORTED;
-        });
+        }, $command_key, $expected_attempt);
     }
 
-    public static function resume(Instance $instance): bool
+    public static function resume(Instance $instance, string $command_key = '', int $expected_attempt = 0): bool
     {
         return self::manualInstance($instance, 'resume', '', static function () use ($instance): bool {
             self::resumeInternal($instance);
             return true;
-        });
+        }, $command_key, $expected_attempt);
     }
 
-    public static function halt(Instance $instance, string $reason): bool
+    public static function halt(Instance $instance, string $reason, string $command_key = '', int $expected_attempt = 0): bool
     {
         return self::manualInstance($instance, 'halt', $reason, static function () use ($instance, $reason): bool {
             self::haltInternal($instance, $reason);
             return true;
-        });
+        }, $command_key, $expected_attempt);
     }
 
     public static function reopenFrom(Instance $instance, int $stages_id): bool
     {
+        if (DefinitionSnapshot::enabled($instance)) { return false; }
         return self::manualInstance($instance, 'reopen', '', static function () use ($instance, $stages_id): bool {
             self::reopenFromInternal($instance, $stages_id);
             return true;
@@ -287,31 +314,39 @@ final class Engine
                 'Запуск не подтверждён штатным правилом для этого объекта.');
             return null;
         }
-        return self::startTransaction($item, $processes_id);
+        return self::startTransaction($item, $processes_id, true);
     }
 
-    private static function startTransaction(CommonITILObject $item, int $processes_id): ?Instance
+    private static function startTransaction(CommonITILObject $item, int $processes_id, bool $from_rule = false): ?Instance
     {
         global $DB;
-        $begun = false;
+        $scope = null;
         try {
-            $DB->beginTransaction();
-            $begun = true;
+            $scope = new TransactionScope();
+            $observed = $item->fields;
+            if (!CurrentRead::load($item, (int) $item->getID())) { $scope->rollback(); return null; }
+            foreach (['entities_id', 'status', 'is_deleted', 'name', 'content'] as $field) {
+                if (($observed[$field] ?? null) !== ($item->fields[$field] ?? null)) {
+                    // Свидетельство правила относится к проверенному предмету, не к конкурентно изменённому.
+                    $scope->rollback(); return null;
+                }
+            }
+            if (!$from_rule && Authorizer::startError($item, $processes_id) !== null) { $scope->rollback(); return null; }
             // Уникальная связь instance(itemtype,items_id) сохраняется; конкурентный start не повторяется.
             $instance = self::startInternal($item, $processes_id);
             if ($instance === null) {
-                $DB->rollBack();
+                $scope->rollback();
                 return null;
             }
             if (!self::auditAction($instance, null, 'start', false)) {
                 throw new \RuntimeException('Не удалось записать запуск маршрута.');
             }
-            $DB->commit();
+            $scope->commit();
             return $instance;
         } catch (\Throwable $e) {
-            if ($begun) {
+            if ($scope !== null) {
                 try {
-                    $DB->rollBack();
+                    $scope->rollback();
                 } catch (\Throwable $rollback_error) {
                     // Подтверждения отката нет. Новый start автоматически не выполняется.
                 }
@@ -354,12 +389,17 @@ final class Engine
         }
         self::locked($instance, static function () use ($step, $instance, $task): bool {
             if (Authorizer::stepError($step, 'complete') !== null
-                || !$task->can($task->getID(), UPDATE)
-                || self::validateReport($step, '', false) !== null) {
+                || !CurrentRead::load($task, (int) $task->getID())
+                || (int) $task->fields['state'] !== Planning::DONE
+                || !empty($task->fields['is_deleted'])
+                || $step->fields['artifact_itemtype'] !== $task->getType()
+                || (int) $step->fields['artifact_items_id'] !== (int) $task->getID()) {
                 return false;
             }
             $item = $instance->getItilItem();
-            if ($item === null || (int) ($task->fields[$item::getForeignKeyField()] ?? 0) !== (int) $item->getID()) {
+            if ($item === null || (int) ($task->fields[$item::getForeignKeyField()] ?? 0) !== (int) $item->getID()
+                || !$task->can($task->getID(), UPDATE)
+                || self::validateReport($step, '', false) !== null) {
                 return false;
             }
             return self::completeStepInternal($step, 'Задача этапа отмечена выполненной.')
@@ -370,6 +410,8 @@ final class Engine
     /** Совместимость прежних маршрутов: штатный результат сохранённой child. */
     public static function delegatedCompleted(CommonITILObject $event): void
     {
+        $bound = Step::getByArtifact($event->getType(), $event->getID())?->getInstance();
+        if ($bound !== null && DefinitionSnapshot::enabled($bound)) { return; }
         $child = new ($event->getType())();
         if (!$child->getFromDB($event->getID()) || Authorizer::itemError($child, READ) !== null
             || !in_array((int) $child->fields['status'], array_merge($child::getSolvedStatusArray(), $child::getClosedStatusArray()), true)) {
@@ -381,7 +423,11 @@ final class Engine
             return;
         }
         self::locked($instance, static function () use ($step, $instance, $child): bool {
-            if (Authorizer::contextError($instance, $step) !== null
+            if (DefinitionSnapshot::enabled($instance)
+                || Authorizer::contextError($instance, $step) !== null
+                || !CurrentRead::load($child, (int) $child->getID())
+                || Authorizer::itemError($child, READ) !== null
+                || !in_array((int) $child->fields['status'], array_merge($child::getSolvedStatusArray(), $child::getClosedStatusArray()), true)
                 || $step->fields['execution_mode'] !== Stage::MODE_DELEGATED
                 || $step->fields['artifact_itemtype'] !== $child->getType()
                 || (int) $step->fields['artifact_items_id'] !== (int) $child->getID()) {
@@ -394,6 +440,12 @@ final class Engine
 
     public static function validationUpdated(CommonITILValidation $event): void
     {
+        $bound = OutcomeValidation::stepFor($event->getType(), $event->getID())
+            ?? Step::getByValidation($event->getType(), $event->getID());
+        $bound_instance = $bound?->getInstance();
+        if ($bound_instance !== null && DefinitionSnapshot::enabled($bound_instance)) {
+            self::structuredValidationUpdated($event); return;
+        }
         $validation = new ($event->getType())();
         if (!$validation->getFromDB($event->getID())) {
             return;
@@ -419,7 +471,7 @@ final class Engine
     private static function initialRequester(CommonITILObject $item): ?int
     {
         // ITEM_ADD вызывается после native post_addItem; обновляем кэш actors.
-        if (!$item->getFromDB($item->getID())) {
+        if (!CurrentRead::load($item, (int) $item->getID()) || !CurrentRead::actorsAgree($item)) {
             return null;
         }
         $requesters = [];
@@ -449,6 +501,9 @@ final class Engine
                 $item->getType()
             ), ERROR);
             return null;
+        }
+        if (($process->fields['outcome_contract'] ?? 'legacy') === DefinitionSnapshot::MODE) {
+            return self::startStructuredInternal($item, $process);
         }
         $stages = $process->getStages();
         if (!count($stages)) {
@@ -513,7 +568,7 @@ final class Engine
         }
 
         $next = null;
-        foreach ($instance->getSteps() as $row) {
+        foreach ($instance->getAttemptSteps() as $row) {
             if ($row['state'] === Step::PENDING) {
                 $next = $row;
                 break;
@@ -532,6 +587,7 @@ final class Engine
 
     private static function finish(Instance $instance): void
     {
+        if (DefinitionSnapshot::enabled($instance)) { self::finishStructured($instance); return; }
         self::enter();
         try {
             self::mustUpdate($instance, [
@@ -577,6 +633,22 @@ final class Engine
 
     private static function resumeInternal(Instance $instance): void
     {
+        if (DefinitionSnapshot::enabled($instance)) {
+            $attempt = Attempt::current($instance);
+            if ($attempt === null || $attempt->fields['state'] !== Attempt::RUNNING) {
+                throw new \RuntimeException('После отказа или уточнения требуется отдельная команда попытки.');
+            }
+            if ($instance->fields['state'] !== Instance::HALTED) { return; }
+            // Только техническая пауза той же попытки. Исторические REJECTED не переоткрываются.
+            foreach ($instance->getAttemptSteps() as $row) {
+                if (!in_array($row['state'], [Step::PENDING, Step::RUNNING, Step::DONE, Step::SKIPPED], true)) {
+                    throw new \RuntimeException('Состояние попытки требует отдельной сверки.');
+                }
+            }
+            self::mustUpdate($instance, ['id' => $instance->getID(), 'state' => Instance::RUNNING]);
+            self::advance($instance);
+            return;
+        }
         if ($instance->fields['state'] !== Instance::HALTED) {
             return;
         }
@@ -612,6 +684,7 @@ final class Engine
 
     private static function abortInternal(Instance $instance, string $reason = ''): void
     {
+        if (DefinitionSnapshot::enabled($instance)) { self::abortStructured($instance, $reason); return; }
         self::enter();
         try {
             foreach ($instance->getSteps() as $row) {
@@ -670,7 +743,9 @@ final class Engine
                 default               => self::createInlineTask($instance, $step, $stage, $item),
             };
             if ($ok === true) {
-                $status_note = self::applyStageStatus($stage, $item);
+                if (!DefinitionSnapshot::enabled($instance)) {
+                    $status_note = self::applyStageStatus($stage, $item);
+                }
             }
         } finally {
             self::leave();
@@ -679,10 +754,14 @@ final class Engine
         $instance->getFromDB($instance->getID());
 
         if ($ok !== true) {
+            if (DefinitionSnapshot::enabled($instance)) {
+                throw new \RuntimeException('Создание полного состава этапа не подтверждено.');
+            }
             self::haltInternal($instance, (string) $ok);
             return;
         }
 
+        if (DefinitionSnapshot::enabled($instance)) { return; }
         $who = self::responsibleLabel($step);
         self::msg(sprintf('Открыт этап «%s». Ответственный: %s.', $stage->fields['name'], $who));
 
@@ -875,6 +954,7 @@ final class Engine
     /** Этап-дочерняя заявка, возможно в другой организационной единице. */
     private static function createDelegated(Instance $i, Step $step, Stage $stage, CommonITILObject $item): bool|string
     {
+        if (DefinitionSnapshot::enabled($i)) { return self::createStructuredChild($i, $step, $stage, $item); }
         $target_entity = $stage->resolveEntity($item);
 
         // GLPI не проверяет это сама: модель принимает группу чужой сущности молча.
@@ -1341,11 +1421,23 @@ final class Engine
     }
 
     /** Закрыть текущий шаг и перейти к следующему. */
-    private static function completeStepInternal(Step $step, string $comment = '', bool $skipped = false): bool
+    private static function completeStepInternal(Step $step, string $comment = '', bool $skipped = false, bool $override = false): bool
     {
         $instance = $step->getInstance();
         if ($instance === null || Authorizer::contextError($instance, $step) !== null) {
             return false;
+        }
+        if (DefinitionSnapshot::enabled($instance) && $step->fields['execution_mode'] !== Stage::MODE_INLINE) {
+            if (!$override || StructuredAccess::context($step) === null) { return false; }
+            if (StructuredAccess::nativeAggregate($step) !== null) {
+                // Уже сохранённый окончательный штатный ответ сначала переносится, не заменяется override.
+                return false;
+            }
+            $key = hash('sha256', 'override:' . $step->getID());
+            $outcome = self::recordStructuredOutcome($instance, $step, Outcome::COMPLETED, 'privileged_override',
+                '', 0, (int) Session::getLoginUserID(), $comment, $comment, $key);
+            self::applyStructuredOutcome($instance, $step, $outcome);
+            return true;
         }
         $start = strtotime((string) ($step->fields['date_start'] ?? self::now()));
         $dur = max(0, time() - ($start ?: time()));
@@ -1618,7 +1710,7 @@ final class Engine
     public static function groupFitsItem(int $groups_id, CommonITILObject $item): bool
     {
         $g = new Group();
-        if (!$g->getFromDB($groups_id)) {
+        if (!CurrentRead::load($g, $groups_id)) {
             return false;
         }
         $ge = (int) $g->fields['entities_id'];
@@ -1646,6 +1738,12 @@ final class Engine
         if (trim($reason) === '') {
             self::msg('Укажите причину отзыва.', ERROR);
             return false;
+        }
+
+        if (DefinitionSnapshot::enabled($instance)) {
+            // Обязательная проверенная публичная запись входит в ту же транзакцию.
+            self::abortStructured($instance, 'Отозвано исходным инициатором. ' . trim(strip_tags($reason)));
+            return true;
         }
 
         $who = Session::getLoginUserID() ? getUserName((int) Session::getLoginUserID()) : 'инициатор';

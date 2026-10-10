@@ -10,6 +10,9 @@ use Session;
 /** Маршрут: определение последовательности этапов. */
 class Process extends CommonDBTM
 {
+    use RuntimeRead;
+
+    use DefinitionMutation;
     public static $rightname = 'plugin_itilflow_process';
     public $dohistory = true;
     public static $tag_descriptions = [];
@@ -105,6 +108,7 @@ class Process extends CommonDBTM
         $this->fields['is_recursive']     = 0;
         $this->fields['calendars_id']     = 0;
         $this->fields['version']          = 1;
+        $this->fields['outcome_contract'] = 'legacy';
     }
 
     public function prepareInputForAdd($input)
@@ -125,6 +129,16 @@ class Process extends CommonDBTM
 
     private function validateInput(array $input): array
     {
+        if (isset($input['outcome_contract']) && !in_array($input['outcome_contract'], ['legacy', DefinitionSnapshot::MODE], true)) {
+            Session::addMessageAfterRedirect('Неизвестный контракт исходов.', false, ERROR);
+            return [];
+        }
+        if (($input['outcome_contract'] ?? $this->fields['outcome_contract'] ?? 'legacy') === DefinitionSnapshot::MODE
+            && !DefinitionSnapshot::valid(['schema' => 1, 'process' => array_replace($this->fields, $input),
+                'stages' => $this->getStages()])) {
+            Session::addMessageAfterRedirect('Перед включением нового порядка сохраните маршрут и полностью настройте его этапы.', false, ERROR);
+            return [];
+        }
         if (isset($input['name']) && trim((string) $input['name']) === '') {
             Session::addMessageAfterRedirect('Укажите название маршрута.', false, ERROR);
             return [];

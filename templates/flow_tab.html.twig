@@ -21,10 +21,14 @@
 
 {% if instance.fields['state'] == 'halted' %}
    <div class="alert alert-danger d-flex align-items-center justify-content-between">
-      <span>{% if is_staff %}Маршрут остановлен. Исправьте настройку этапа и возобновите.{% else %}Обработка приостановлена, заявка передана ответственному за процесс.{% endif %}</span>
+      <span>{% if is_staff %}{% if instance.fields['outcome_contract']|default('legacy') == 'structured_v1' %}Маршрут остановлен. Отказ, уточнение и техническая пауза обрабатываются разными действиями выше.{% else %}Маршрут остановлен. Исправьте настройку этапа и возобновите.{% endif %}{% else %}Обработка приостановлена, заявка передана ответственному за процесс.{% endif %}</span>
       {% if can_resume %}
       <form method="post" action="{{ action_url }}">
          <input type="hidden" name="_glpi_csrf_token" value="{{ csrf_token() }}">
+         {% if command is not null %}
+         <input type="hidden" name="command_key" value="{{ command.key }}">
+         <input type="hidden" name="expected_attempt_id" value="{{ command.attempt_id }}">
+         {% endif %}
          <input type="hidden" name="instances_id" value="{{ instance.fields['id'] }}">
          <button class="btn btn-sm btn-warning" name="resume" value="1">Возобновить</button>
       </form>
@@ -90,6 +94,10 @@
                   {% if s['can_override'] %}
                      <form method="post" action="{{ action_url }}" class="mt-2">
                         <input type="hidden" name="_glpi_csrf_token" value="{{ csrf_token() }}">
+         {% if command is not null %}
+         <input type="hidden" name="command_key" value="{{ command.key }}">
+         <input type="hidden" name="expected_attempt_id" value="{{ command.attempt_id }}">
+         {% endif %}
                         <input type="hidden" name="steps_id" value="{{ s['id'] }}">
                         <label class="form-label small">Причина принудительного завершения</label>
                         <textarea class="form-control form-control-sm" name="report" required></textarea>
@@ -119,6 +127,10 @@
          {% endif %}
          <form method="post" action="{{ action_url }}">
             <input type="hidden" name="_glpi_csrf_token" value="{{ csrf_token() }}">
+         {% if command is not null %}
+         <input type="hidden" name="command_key" value="{{ command.key }}">
+         <input type="hidden" name="expected_attempt_id" value="{{ command.attempt_id }}">
+         {% endif %}
             <input type="hidden" name="steps_id" value="{{ form['steps_id'] }}">
 
             {% if form['comment'] != 'none' %}
@@ -168,6 +180,10 @@
          </p>
          <form method="post" action="{{ action_url }}">
             <input type="hidden" name="_glpi_csrf_token" value="{{ csrf_token() }}">
+         {% if command is not null %}
+         <input type="hidden" name="command_key" value="{{ command.key }}">
+         <input type="hidden" name="expected_attempt_id" value="{{ command.attempt_id }}">
+         {% endif %}
             <input type="hidden" name="steps_id" value="{{ approver['steps_id'] }}">
             <div class="row g-2 align-items-end">
                <div class="col-md-4">
@@ -212,6 +228,10 @@
       <div class="card-body">
          <form method="post" action="{{ action_url }}">
             <input type="hidden" name="_glpi_csrf_token" value="{{ csrf_token() }}">
+         {% if command is not null %}
+         <input type="hidden" name="command_key" value="{{ command.key }}">
+         <input type="hidden" name="expected_attempt_id" value="{{ command.attempt_id }}">
+         {% endif %}
             <input type="hidden" name="steps_id" value="{{ reassign['steps_id'] }}">
             <div class="row g-2 align-items-end">
                <div class="col-md-4">
@@ -248,6 +268,10 @@
 {% if withdraw is not null %}
    <form method="post" action="{{ action_url }}" class="mt-3 d-flex gap-2 align-items-center flex-wrap">
       <input type="hidden" name="_glpi_csrf_token" value="{{ csrf_token() }}">
+         {% if command is not null %}
+         <input type="hidden" name="command_key" value="{{ command.key }}">
+         <input type="hidden" name="expected_attempt_id" value="{{ command.attempt_id }}">
+         {% endif %}
       <input type="hidden" name="instances_id" value="{{ withdraw['instances_id'] }}">
       <input type="text" class="form-control" style="max-width:340px" name="withdraw_reason"
              required placeholder="Причина отзыва заявки">
@@ -261,6 +285,10 @@
 {% if can_abort %}
    <form method="post" action="{{ action_url }}" class="mt-3">
       <input type="hidden" name="_glpi_csrf_token" value="{{ csrf_token() }}">
+         {% if command is not null %}
+         <input type="hidden" name="command_key" value="{{ command.key }}">
+         <input type="hidden" name="expected_attempt_id" value="{{ command.attempt_id }}">
+         {% endif %}
       <input type="hidden" name="instances_id" value="{{ instance.fields['id'] }}">
       <label class="form-label">Причина прекращения маршрута</label>
       <textarea class="form-control mb-2" name="abort_reason" required></textarea>
