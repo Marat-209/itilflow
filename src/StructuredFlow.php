@@ -686,7 +686,13 @@ trait StructuredFlow
         self::enter();
         try {
             self::mustAdd(new \ITILSolution(), ['itemtype' => $item->getType(), 'items_id' => $item->getID(),
-                'content' => '<p>' . nl2br(htmlescape($text)) . '</p>']);
+                'content' => '<p>' . nl2br(htmlescape($text)) . '</p>', '_disable_auto_assign' => true]);
+            // Последний ответ мог дать согласующий из самообслуживания: GLPI сохранит решение,
+            // но отбросит смену статуса без права изменения. Статус ставит сам маршрут.
+            if (CurrentRead::load($item, (int) $item->getID())
+                && !in_array((int) $item->fields['status'], array_merge($item::getSolvedStatusArray(), $item::getClosedStatusArray()), true)) {
+                $item->update(['id' => $item->getID(), 'status' => $item::SOLVED, '_from_assignment' => true]);
+            }
         } finally { self::leave(); }
     }
 
