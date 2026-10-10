@@ -79,6 +79,11 @@ final class StructuredUi
         }
         $pending_transfer = false;
         $current = $instance->getCurrentStep();
+        if ($manager && $current !== null && StructuredAccess::context($current) !== null
+            && ($current->fields['status_sync_state'] ?? '') === StatusSync::FAILED) {
+            $forms[] = self::form('retry_status_sync', $instance, $attempt, $current)
+                + ['title' => 'Повторно поставить обновление статуса в очередь', 'needs_subject' => false];
+        }
         if ($current !== null && Outcome::forStep($current->getID()) === null) {
             $roster = StructuredAccess::roster($current);
             if ($roster !== null) {

@@ -1,5 +1,6 @@
 <section class="mb-3">
   <h4>Явные исходы отделов · попытка {{ attempt_number }}</h4>
+  <div class="small text-muted mb-2">Настроенные статусы применяет штатная фоновая задача GLPI itilflow_status_sync. Она устанавливается выключенной; администратор включает её после настройки CLI cron и проверки. Открытие этапа не означает, что статус уже изменён.</div>
   {% if attempt_state == 'waiting_input' %}<div class="alert alert-warning">Ожидается уточнение предмета. Новые задачи и согласования появятся после подтверждения.</div>{% endif %}
   {% if pending_transfer %}<div class="alert alert-info">Есть сохранённые ответы согласующих. Пока нет окончательного исхода, этап не считается завершённым; ответ может быть промежуточным или требовать сверки переноса.</div>{% endif %}
   {% for row in history %}
@@ -25,7 +26,7 @@
     {% if form.action == 'department_outcome' %}<label class="form-label">Исход</label><select name="outcome" class="form-select mb-2"><option value="completed">Выполнено</option><option value="refused">Отказано</option></select>{% endif %}
     {% if form.targets is defined %}<label class="form-label">Точка возврата</label><select name="target_stage_id" class="form-select mb-2" required>{% for id, label in form.targets %}<option value="{{ id }}">{{ label }}</option>{% endfor %}</select>{% endif %}
     {% if form.needs_subject %}<label class="form-label">Подтверждённый предмет новой попытки</label><textarea class="form-control mb-2" name="subject_summary" required maxlength="16000"></textarea>{% endif %}
-    {% if form.action not in ['explain_outcome', 'publish_positive_result', 'reconcile_outcome'] %}<label class="form-label">Основание действия (внутреннее)</label><textarea name="reason" class="form-control mb-2" required maxlength="8000"></textarea>{% endif %}
+    {% if form.action not in ['explain_outcome', 'publish_positive_result', 'reconcile_outcome', 'retry_status_sync'] %}<label class="form-label">Основание действия (внутреннее)</label><textarea name="reason" class="form-control mb-2" required maxlength="8000"></textarea>{% endif %}
     {% if form.action in ['department_outcome', 'request_clarification', 'explain_outcome', 'publish_positive_result'] %}<label class="form-label">Публичное пояснение для заявителя</label><textarea name="public_summary" class="form-control mb-2" required maxlength="8000"></textarea><div class="form-text">Укажите безопасный итог своими словами. Внутренние комментарии и вложения автоматически не копируются.</div>{% endif %}
     <button type="submit" class="btn btn-primary">{{ form.title }}</button>
   </form>

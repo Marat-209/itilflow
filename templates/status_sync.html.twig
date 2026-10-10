@@ -1,0 +1,14 @@
+{% if completion %}
+   <div class="alert alert-info">
+      <strong>{{ completion.title }}</strong>
+      <div>{{ completion.message }}</div>
+   </div>
+{% endif %}
+
+{% for warning in status_sync_warnings %}
+   <div class="alert {{ warning.queued ? 'alert-info' : 'alert-warning' }}">
+      <strong>{{ warning.title }}</strong>
+      <div>{{ warning.message }}</div>
+      {% if warning.unknown and is_staff %}<div>Исход записи неизвестен. Повтор остановлен до проверки результата.</div>{% endif %}
+   </div>
+{% endfor %}

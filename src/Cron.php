@@ -20,6 +20,9 @@ class Cron extends CommonDBTM
     /** Описание задачи в списке автоматических действий. */
     public static function cronInfo($name): array
     {
+        if ($name === 'itilflow_status_sync') {
+            return ['description' => 'Синхронизация статусов этапов. Требует включения после настройки штатного CLI cron.'];
+        }
         if ($name === 'itilflow_deadlines') {
             return [
                 'description' => 'Контроль сроков этапов: отметка просрочки и запись в журнал',
@@ -31,6 +34,11 @@ class Cron extends CommonDBTM
     /**
      * @return int -1 ошибка, 0 нечего делать, 1 что-то сделано
      */
+    public static function cronItilflow_status_sync(CronTask $task): int
+    {
+        return StatusSyncCron::run($task);
+    }
+
     public static function cronItilflow_deadlines(CronTask $task): int
     {
         $done = 0;

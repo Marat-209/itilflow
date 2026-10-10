@@ -212,6 +212,8 @@ final class Ui
         TemplateRenderer::getInstance()->display('@itilflow/flow_tab.html.twig', [
             'command' => self::commandFields($instance),
             'form'          => $form,
+            'completion' => Completion::describe($instance, $item, $is_staff),
+            'status_sync_warnings' => $current !== null && ($sync = StatusSync::describe($current)) !== null ? [$sync] : [],
             'is_staff'      => $is_staff,
             'item'          => $item,
             'instance'      => $instance,

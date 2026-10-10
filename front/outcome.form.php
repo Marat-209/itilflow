@@ -38,6 +38,8 @@ if ($instance->getFromDB($id('instances_id'))) {
             $result = Engine::requestClarification($step, $id('target_stage_id'), $text('reason'), $text('public_summary'), $key, $attempt);
         } elseif ($action === 'reconcile_outcome') {
             $result = Engine::reconcileOutcome($step, $text('validation_itemtype', 100), $id('validations_id'), $key, $attempt);
+        } elseif ($action === 'retry_status_sync') {
+            $result = Engine::retryStatusSync($step, $key, $attempt);
         } elseif (in_array($action, ['explain_outcome', 'publish_positive_result'], true)) {
             $outcome = new Outcome();
             if ($outcome->getFromDB($id('outcomes_id')) && (int) $outcome->fields['plugin_itilflow_steps_id'] === (int) $step->getID()) {

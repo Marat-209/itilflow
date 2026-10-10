@@ -81,7 +81,7 @@ trait StructuredFlow
                 && (int) $step->fields['plugin_itilflow_instances_id'] === (int) $instance->getID()
                 && Authorizer::replayStepError($step, substr($action, 5)) === null;
         }
-        if (in_array($action, ['new_attempt', 'activate_attempt', 'reconcile_outcome'], true)) {
+        if (in_array($action, ['new_attempt', 'activate_attempt', 'reconcile_outcome', 'retry_status_sync'], true)) {
             return StructuredAccess::manageError($instance) === null;
         }
         $step = new Step();
@@ -118,6 +118,24 @@ trait StructuredFlow
                     '', 0, (int) \Session::getLoginUserID(), $reason, $public_summary, $command_key);
                 self::applyStructuredOutcome($instance, $step, $record);
                 return self::structuredResult('applied', $instance, $step, $record);
+            });
+    }
+
+    /** Повторяется только запрос статуса; этап, артефакты и исход повторно не создаются. */
+    public static function retryStatusSync(Step $step, string $command_key, int $expected_attempt): array
+    {
+        $instance = $step->getInstance();
+        if ($instance === null) { return ['status' => 'rejected']; }
+        return self::structuredCommand($instance, 'retry_status_sync', $command_key, $expected_attempt,
+            [$step->getID()], static function () use ($instance, $step): array {
+                if (StructuredAccess::manageError($instance) !== null || StructuredAccess::context($step) === null
+                    || ($step->fields['status_sync_state'] ?? '') !== StatusSync::FAILED) {
+                    return self::structuredResult('rejected', $instance);
+                }
+                self::enter();
+                try { $sync = StatusSync::retry($step); }
+                finally { self::leave(); }
+                return self::structuredResult($sync['state'] === StatusSync::QUEUED ? 'applied' : 'rejected', $instance, $step);
             });
     }
 

@@ -20,6 +20,15 @@ final class Engine
     /** Защита от рекурсии: объекты, которые создаёт сам движок, не должны его же и триггерить. */
     private static int $inside = 0;
 
+    /** Вызов только из зарегистрированного штатного cron; без подмены сессии. */
+    public static function synchronizeStatusFromCron(Step $step, \CronTask $task): array
+    {
+        StatusSync::assertCron($task);
+        self::enter();
+        try { return StatusSync::runCron($step, $task); }
+        finally { self::leave(); }
+    }
+
     public static function isInside(): bool
     {
         return self::$inside > 0;
@@ -743,7 +752,12 @@ final class Engine
                 default               => self::createInlineTask($instance, $step, $stage, $item),
             };
             if ($ok === true) {
-                if (!DefinitionSnapshot::enabled($instance)) {
+                if (DefinitionSnapshot::enabled($instance)) {
+                    $sync = StatusSync::request($step, (int) $stage->fields['ticket_status'], (int) Session::getLoginUserID());
+                    if ($sync['state'] !== StatusSync::NONE && !$sync['verified']) {
+                        self::msg('Статус заявки ожидает штатной фоновой задачи. Включите itilflow_status_sync после настройки и проверки.', WARNING);
+                    }
+                } else {
                     $status_note = self::applyStageStatus($stage, $item);
                 }
             }
