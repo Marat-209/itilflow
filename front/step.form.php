@@ -85,6 +85,11 @@ switch ($action) {
             }
             $result = [];
             foreach ($values as $value) {
+                // Перед каждым списком с множественным выбором GLPI ставит скрытое поле с тем же
+                // именем и пустым значением: пустой список приходит как «», это «никого не выбрали».
+                if ($value === '') {
+                    continue;
+                }
                 if ((!is_string($value) && !is_int($value)) || !preg_match('/^[1-9][0-9]*$/D', (string) $value)
                     || (string) (int) $value !== (string) $value) {
                     return null;
@@ -97,6 +102,8 @@ switch ($action) {
         $users = $ids('appr_users_id');
         if ($groups !== null && $users !== null) {
             Engine::designateApprover($step, $groups, $users, $text('appr_reason'), $command_key, $expected_attempt);
+        } else {
+            Session::addMessageAfterRedirect('Согласующий не указан: выбор не распознан. Обновите карточку и выберите заново.', false, ERROR);
         }
         break;
     case 'reassign':
