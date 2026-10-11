@@ -663,15 +663,22 @@ trait StructuredFlow
         self::mustUpdate($attempt, ['id' => $attempt->getID(), 'state' => Attempt::DONE, 'date_end' => self::now()]);
         self::mustUpdate($instance, ['id' => $instance->getID(), 'state' => Instance::DONE,
             'plugin_itilflow_stages_id_current' => 0, 'date_end' => self::now()]);
-        // Итог последнего отдела — содержательный ответ заявителю штатным решением заявки.
+        // Итог последнего этапа — содержательный ответ заявителю штатным решением заявки.
+        // Обычно это итог последнего отдела. Если маршрут заканчивается задачей в самой заявке
+        // («Итог заявителю»), ответом служит её отчёт — но только когда ход этапов и так пишется
+        // в ленту заявителю: иначе отчёт задачи внутренний и в решение не попадает.
+        $process = DefinitionSnapshot::process($instance);
+        $public_log = !empty($process?->fields['public_log']);
         $final = '';
         foreach ($steps as $row) {
             $outcome = Outcome::forStep((int) $row['id']);
             if ($outcome !== null && trim((string) $outcome->fields['public_summary']) !== '') {
                 $final = trim((string) $outcome->fields['public_summary']);
+            } elseif ($public_log && $row['execution_mode'] === Stage::MODE_INLINE && $row['state'] === Step::DONE
+                && ($report = trim(strip_tags((string) ($row['comment'] ?? '')))) !== '') {
+                $final = $report;
             }
         }
-        $process = DefinitionSnapshot::process($instance);
         self::solveStructured($instance->getItilItem(), sprintf('Заявка выполнена: все этапы маршрута «%s» пройдены.',
             (string) ($process?->fields['name'] ?? '')) . ($final !== '' ? "\nИтог: " . $final : ''));
     }
