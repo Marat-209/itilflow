@@ -373,6 +373,10 @@ class Stage extends CommonDBChild
 
     public function prepareInputForAdd($input)
     {
+        // Форма перед add() проверяет право через check(-1), и та заполняет поля объекта
+        // умолчаниями формы (getEmpty). В базу же идёт только ввод, поэтому проверка
+        // нового этапа не должна видеть эти умолчания как сохранённые значения.
+        $this->fields = [];
         if (!isset($input['ranking']) || (int) $input['ranking'] <= 0) {
             $max = 0;
             foreach ((new self())->find(
