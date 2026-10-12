@@ -121,16 +121,18 @@ if ($instance !== null) {
     $step = $instance->getCurrentStep();
     ok($step !== null && (int) $step->fields['plugin_itilflow_stages_id'] === $s1, 'идёт этап согласования');
     // Исполнитель указывает согласующего, согласующий даёт визу — открывается дочерняя.
-    $ok = $step !== null && Engine::designateApprover($step, [], [$admin], 'Проверка 1.9.', bin2hex(random_bytes(8)),
-        (int) $attempt->fields['number']);
+    $ok = $step !== null && Engine::designateApprover($step, [], [$admin], 'Проверка 1.9.', bin2hex(random_bytes(32)),
+        (int) $attempt->getID());
     ok($ok, 'согласующий указан', implode(' | ', soobshch()));
     $viza = $DB->request(['FROM' => 'glpi_ticketvalidations', 'WHERE' => ['tickets_id' => $tid,
         'status' => \CommonITILValidation::WAITING], 'LIMIT' => 1])->current();
     ok($viza !== null, 'виза создана');
     if ($viza !== null) {
+        // Как кнопка «Согласовать» в ленте: GLPI отправляет и того, кто отвечает.
         $v = new TicketValidation();
-        $v->update(['id' => $viza['id'], 'status' => \CommonITILValidation::ACCEPTED, 'comment_validation' => 'Согласовано.']);
-        soobshch();
+        $res = $v->update(['id' => $viza['id'], 'users_id_validate' => $admin,
+            'status' => \CommonITILValidation::ACCEPTED, 'comment_validation' => 'Согласовано.']);
+        ok((bool) $res, 'виза согласована', implode(' | ', soobshch()));
         $sh = $DB->request(['FROM' => Step::getTable(), 'WHERE' => ['plugin_itilflow_instances_id' => $instance->getID(),
             'plugin_itilflow_stages_id' => $s2], 'ORDER' => 'id DESC', 'LIMIT' => 1])->current();
         ok($sh !== null && $sh['artifact_itemtype'] === 'Ticket' && (int) $sh['artifact_items_id'] > 0,
