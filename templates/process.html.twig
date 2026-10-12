@@ -35,7 +35,14 @@
       </div>
    {% endif %}
 
-   <form name="itilflow_process_form" id="itilflow-process-{{ rand }}" method="post" action="{{ target }}" data-submit-once>
+   {# На узком экране подпись поля во всю ширину — над полем, а не в узкой колонке слева. #}
+   <style>
+      @media (max-width: 767.98px) {
+         .itilflow-form .col-12.glpi-full-width .col-form-label,
+         .itilflow-form .col-12.glpi-full-width .field-container { width: 100%; }
+      }
+   </style>
+   <form class="itilflow-form" name="itilflow_process_form" id="itilflow-process-{{ rand }}" method="post" action="{{ target }}" data-submit-once>
       <input type="hidden" name="_glpi_csrf_token" value="{{ csrf_token() }}">
       {% if not item.isNewItem() %}
          <input type="hidden" name="id" value="{{ item.fields['id'] }}">

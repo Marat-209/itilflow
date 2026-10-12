@@ -58,7 +58,14 @@
 {% set process_url = path('/plugins/itilflow/front/process.form.php') ~ '?id=' ~ processes_id %}
 
 <div class="asset">
-   <form name="itilflow_stage_form" id="itilflow-stage-{{ rand }}" method="post" action="{{ target }}" data-submit-once
+   {# На узком экране подпись поля во всю ширину — над полем, а не в узкой колонке слева. #}
+   <style>
+      @media (max-width: 767.98px) {
+         .itilflow-form .col-12.glpi-full-width .col-form-label,
+         .itilflow-form .col-12.glpi-full-width .field-container { width: 100%; }
+      }
+   </style>
+   <form class="itilflow-form" name="itilflow_stage_form" id="itilflow-stage-{{ rand }}" method="post" action="{{ target }}" data-submit-once
          data-itilflow-structured="{{ structured ? 1 : 0 }}">
       <input type="hidden" name="_glpi_csrf_token" value="{{ csrf_token() }}">
       <input type="hidden" name="plugin_itilflow_processes_id" value="{{ processes_id }}">
