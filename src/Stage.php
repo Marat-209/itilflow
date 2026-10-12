@@ -397,18 +397,27 @@ class Stage extends CommonDBChild
         }
         unset($input['_deadline_value'], $input['_deadline_unit']);
 
+        // Точки возврата из формы — галочки «этот этап и предыдущие».
         if (isset($input['_structured_return_targets_present']) && !isset($input['_structured_return_targets'])) { $input['_structured_return_targets'] = []; }
         unset($input['_structured_return_targets_present']);
         if (array_key_exists('_structured_return_targets', $input)) {
             $values = $input['_structured_return_targets'];
-            if (!is_array($values)) { return []; }
             $targets = [];
-            foreach ($values as $value) {
+            foreach (is_array($values) ? $values : [null] as $value) {
                 if ((!is_string($value) && !is_int($value)) || !preg_match('/^[1-9][0-9]*$/D', (string) $value)
-                    || (string) (int) $value !== (string) $value) { return []; }
+                    || (string) (int) $value !== (string) $value) {
+                    Session::addMessageAfterRedirect('Точки возврата заданы неверно — отметьте их заново.', false, ERROR);
+                    return [];
+                }
                 $targets[] = (int) $value;
             }
-            $input['return_targets'] = DefinitionSnapshot::encode(array_values(array_unique($targets)));
+            $targets = array_values(array_unique($targets));
+            // Тот же набор, что в базе, — прежний порядок записи: форма перечисляет этапы по номеру.
+            $stored = DefinitionSnapshot::targets($this->fields['return_targets'] ?? null);
+            if ($stored !== null && count($stored) === count($targets) && !array_diff($stored, $targets)) {
+                $targets = $stored;
+            }
+            $input['return_targets'] = DefinitionSnapshot::encode($targets);
             unset($input['_structured_return_targets']);
         }
         $process = new Process();
@@ -416,16 +425,36 @@ class Stage extends CommonDBChild
         if ($process->getFromDB($pid) && ($process->fields['outcome_contract'] ?? 'legacy') === DefinitionSnapshot::MODE) {
             $merged = array_replace($this->fields, $input);
             $targets = DefinitionSnapshot::targets($merged['return_targets'] ?? '[]');
-            if ($targets === null || !in_array($merged['negative_policy'] ?? '', ['block', 'abort'], true)
-                || (($merged['execution_mode'] ?? self::MODE_INLINE) === self::MODE_DELEGATED
-                    && !in_array($merged['department_result_source'] ?? '', ['assignee_action', 'native_validation'], true))) {
-                Session::addMessageAfterRedirect('Укажите источник исхода, политику отказа и допустимые точки возврата.', false, ERROR);
+            // Три поля — три сообщения, словами формы.
+            if ($targets === null) {
+                Session::addMessageAfterRedirect('Точки возврата заданы неверно — отметьте их заново.', false, ERROR);
+                return [];
+            }
+            if (($merged['execution_mode'] ?? self::MODE_INLINE) === self::MODE_DELEGATED
+                && !in_array($merged['department_result_source'] ?? '', ['assignee_action', 'native_validation'], true)) {
+                Session::addMessageAfterRedirect('Выберите, как отдел сообщает итог: без этого маршрут не запустится.', false, ERROR);
+                return [];
+            }
+            if (!in_array($merged['negative_policy'] ?? '', ['block', 'abort'], true)) {
+                Session::addMessageAfterRedirect('Выберите, что делать при отказе: без этого маршрут не запустится.', false, ERROR);
                 return [];
             }
             foreach ($targets as $target) {
+                if ($target === (int) $this->getID()) {
+                    continue; // этот же этап — всегда «не позже себя»
+                }
                 $stage = new self();
-                if (!$stage->getFromDB($target) || (int) $stage->fields['plugin_itilflow_processes_id'] !== $pid
-                    || (int) $stage->fields['ranking'] > (int) ($merged['ranking'] ?? 0)) { return []; }
+                if (!$stage->getFromDB($target) || (int) $stage->fields['plugin_itilflow_processes_id'] !== $pid) {
+                    Session::addMessageAfterRedirect('Точка возврата не найдена: этап удалён или из другого маршрута. Обновите форму.', false, ERROR);
+                    return [];
+                }
+                if ((int) $stage->fields['ranking'] > (int) ($merged['ranking'] ?? 0)) {
+                    Session::addMessageAfterRedirect(sprintf(
+                        'Точка возврата «%d. %s» стоит позже этого этапа (%d): отметьте этот этап или предыдущие.',
+                        $stage->fields['ranking'], $stage->fields['name'], (int) ($merged['ranking'] ?? 0)
+                    ), false, ERROR);
+                    return [];
+                }
             }
             $input['return_targets'] = DefinitionSnapshot::encode($targets);
         }
@@ -549,6 +578,46 @@ class Stage extends CommonDBChild
         // работоспособной настройке и вводила администраторов в заблуждение.
 
         return $input;
+    }
+
+    /** Что убрано из точек возврата других этапов при удалении этого. */
+    private ?array $unlinkedTargets = null;
+
+    /**
+     * Удаляемый этап убирается из точек возврата других этапов маршрута — в той же
+     * транзакции, что и удаление. Раньше удаление такого этапа откатывалось
+     * с «Изменение определения не подтверждено. Обновите страницу».
+     */
+    public function pre_deleteItem()
+    {
+        global $DB;
+        $this->unlinkedTargets = null;
+        $id = (int) $this->getID();
+        $ranks = [];
+        foreach ((new self())->find(['plugin_itilflow_processes_id' => (int) $this->fields['plugin_itilflow_processes_id']],
+            ['ranking', 'id']) as $sid => $row) {
+            $targets = DefinitionSnapshot::targets($row['return_targets'] ?? null);
+            if ((int) $sid === $id || $targets === null || !in_array($id, $targets, true)) {
+                continue;
+            }
+            $DB->update(self::getTable(), ['return_targets' => DefinitionSnapshot::encode(array_values(array_diff($targets, [$id])))],
+                ['id' => (int) $sid]);
+            $ranks[] = (int) $row['ranking'];
+        }
+        if ($ranks) {
+            $this->unlinkedTargets = ['ranking' => (int) $this->fields['ranking'], 'name' => (string) $this->fields['name'], 'ranks' => $ranks];
+        }
+        return parent::pre_deleteItem();
+    }
+
+    public function post_purgeItem()
+    {
+        parent::post_purgeItem();
+        if ($this->unlinkedTargets !== null) {
+            $u = $this->unlinkedTargets;
+            Session::addMessageAfterRedirect(sprintf('Этап %d «%s» удалён и убран из точек возврата %s %s.',
+                $u['ranking'], $u['name'], count($u['ranks']) === 1 ? 'этапа' : 'этапов', implode(', ', $u['ranks'])), false, INFO);
+        }
     }
 
     /** Сущность, в которой должен исполняться этап для конкретной заявки. */

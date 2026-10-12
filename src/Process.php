@@ -145,11 +145,13 @@ class Process extends CommonDBTM
             Session::addMessageAfterRedirect('Неизвестный контракт исходов.', false, ERROR);
             return [];
         }
-        if (($input['outcome_contract'] ?? $this->fields['outcome_contract'] ?? 'legacy') === DefinitionSnapshot::MODE
-            && !DefinitionSnapshot::valid(['schema' => 1, 'process' => array_replace($this->fields, $input),
-                'stages' => $this->getStages()])) {
-            Session::addMessageAfterRedirect('Перед включением нового порядка сохраните маршрут и полностью настройте его этапы.', false, ERROR);
-            return [];
+        if (($input['outcome_contract'] ?? $this->fields['outcome_contract'] ?? 'legacy') === DefinitionSnapshot::MODE) {
+            // Вместо общей фразы — первая причина из строки готовности, с номером этапа.
+            $reason = Readiness::firstSnapshotReason(array_replace($this->fields, $input), $this->getStages());
+            if ($reason !== null) {
+                Session::addMessageAfterRedirect($reason, false, ERROR);
+                return [];
+            }
         }
         if (isset($input['name']) && trim((string) $input['name']) === '') {
             Session::addMessageAfterRedirect('Укажите название маршрута.', false, ERROR);

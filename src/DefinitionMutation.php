@@ -9,6 +9,8 @@ trait DefinitionMutation
     {
         global $DB;
         $scope = null;
+        // Сколько ошибок уже было: если проверка назвала причину, общей фразы не добавляем.
+        $errors = count($_SESSION['MESSAGE_AFTER_REDIRECT'][ERROR] ?? []);
         try {
             $scope = new TransactionScope();
             $ids = [];
@@ -44,7 +46,9 @@ trait DefinitionMutation
             return $value;
         } catch (\Throwable $e) {
             if ($scope !== null) { try { $scope->rollback(); } catch (\Throwable $ignored) {} }
-            \Session::addMessageAfterRedirect('Изменение определения не подтверждено. Обновите страницу.', false, ERROR);
+            if (count($_SESSION['MESSAGE_AFTER_REDIRECT'][ERROR] ?? []) <= $errors) {
+                \Session::addMessageAfterRedirect('Изменение определения не подтверждено. Обновите страницу.', false, ERROR);
+            }
             return false;
         }
     }
