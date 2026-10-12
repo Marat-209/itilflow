@@ -250,6 +250,21 @@ class Stage extends CommonDBChild
 
     private function validateInput(array $input): array
     {
+        // Срок из формы — число и единица; в базе по-прежнему минуты. Рабочий день —
+        // по календарю маршрута. Старый ввод deadline_minutes (API) работает как раньше.
+        if (array_key_exists('_deadline_value', $input)) {
+            $owner = new Process();
+            $owner->getFromDB((int) ($input['plugin_itilflow_processes_id'] ?? $this->fields['plugin_itilflow_processes_id'] ?? 0));
+            $minutes = Deadline::toMinutes($input['_deadline_value'], (string) ($input['_deadline_unit'] ?? Deadline::DAY),
+                Deadline::dayMinutes((int) ($owner->fields['calendars_id'] ?? 0)));
+            if ($minutes === null) {
+                Session::addMessageAfterRedirect('Срок этапа: укажите число рабочих дней или часов, например 3 или 1.5.', false, ERROR);
+                return [];
+            }
+            $input['deadline_minutes'] = $minutes;
+        }
+        unset($input['_deadline_value'], $input['_deadline_unit']);
+
         if (isset($input['_structured_return_targets_present']) && !isset($input['_structured_return_targets'])) { $input['_structured_return_targets'] = []; }
         unset($input['_structured_return_targets_present']);
         if (array_key_exists('_structured_return_targets', $input)) {
