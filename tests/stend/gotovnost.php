@@ -199,14 +199,22 @@ porcha('правило не видит маршрут', $P, static function () u
     $DB->update('glpi_rules', ['entities_id' => $chuzhaya, 'is_recursive' => 0], ['id' => $pravilo['id']]);
 }, 'Правило «' . $pravilo['name'] . '» (организация «', null, false);
 
-$deti = array_values(array_diff(array_map('intval', getSonsOf('glpi_entities', $pe)), [$pe]));
-if ($deti) {
-    porcha('правило шире маршрута', $P, static function () use ($DB, $P, $pravilo, $pe): void {
-        $DB->update(Process::getTable(), ['is_recursive' => 0], ['id' => $P]);
-        $DB->update('glpi_rules', ['entities_id' => $pe, 'is_recursive' => 1], ['id' => $pravilo['id']]);
+// Правило шире маршрута: и маршрут, и правило — в организации с подчинёнными,
+// правило действует и в подчинённых, а маршрут там не виден.
+$sDetmi = null;
+foreach ($DB->request(['SELECT' => ['id'], 'FROM' => 'glpi_entities', 'ORDER' => 'id']) as $e) {
+    if (count(getSonsOf('glpi_entities', (int) $e['id'])) > 1) {
+        $sDetmi = (int) $e['id'];
+        break;
+    }
+}
+if ($sDetmi !== null) {
+    porcha('правило шире маршрута', $P, static function () use ($DB, $P, $pravilo, $sDetmi): void {
+        $DB->update(Process::getTable(), ['is_recursive' => 0, 'entities_id' => $sDetmi], ['id' => $P]);
+        $DB->update('glpi_rules', ['entities_id' => $sDetmi, 'is_recursive' => 1], ['id' => $pravilo['id']]);
     }, 'Правило «' . $pravilo['name'] . '» работает и в подчинённых организациях', null, false);
 } else {
-    info('у организации маршрута нет подчинённых — случай «правило шире маршрута» не проверен');
+    info('организаций с подчинёнными нет — случай «правило шире маршрута» не проверен');
 }
 
 // Прежний порядок: «Вернуться на этап» без этапа.
