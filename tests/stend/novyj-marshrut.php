@@ -51,6 +51,7 @@ $input = kakBrauzer($x, '//form[@name="itilflow_process_form"]', ['name' => '[Т
 ok(($input['outcome_contract'] ?? '') === DefinitionSnapshot::MODE, 'форма нового маршрута отправляет новый порядок');
 soobshch();
 $p = new Process();
+$p->check(-1, CREATE, $input); // как front/process.form.php
 $pid = (int) $p->add($input);
 $m = soobshch();
 ok($pid > 0, 'пустой маршрут нового порядка сохраняется', implode(' | ', $m));
@@ -70,7 +71,10 @@ function novyjEtap(int $pid, array $izmenit): array
     $x = dom(vyvod(static function () use ($pid): void { (new Stage())->showForm(-1, ['plugin_itilflow_processes_id' => $pid]); }));
     $input = kakBrauzer($x, '//form[@name="itilflow_stage_form"]', $izmenit);
     soobshch();
+    // Как front/stage.form.php: сначала проверка права на новый объект — она заполняет
+    // поля объекта умолчаниями формы, — затем добавление тем же объектом.
     $st = new Stage();
+    $st->check(-1, CREATE, $input);
     $id = (int) $st->add($input);
     $st = new Stage();
     $st->getFromDB($id);
