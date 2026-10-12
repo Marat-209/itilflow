@@ -64,6 +64,16 @@ class Process extends CommonDBTM
         ];
     }
 
+    /** «Для чего маршрут» — подписи типов объекта в форме маршрута. */
+    public static function getItemtypeFormLabels(): array
+    {
+        return [
+            'Ticket'  => 'Заявки',
+            'Change'  => 'Изменения',
+            'Problem' => 'Проблемы',
+        ];
+    }
+
     public function defineTabs($options = [])
     {
         $tabs = [];
@@ -80,7 +90,8 @@ class Process extends CommonDBTM
             'item'         => $this,
             'params'       => $options,
             'enforcements' => self::getEnforcementLabels(),
-            'itemtypes'    => self::getSupportedItemtypes(),
+            'itemtypes'    => self::getItemtypeFormLabels(),
+            'structured'   => ($this->fields['outcome_contract'] ?? 'legacy') === DefinitionSnapshot::MODE,
         ]);
         return true;
     }
