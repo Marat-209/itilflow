@@ -1,3 +1,7 @@
+{#
+   Вкладка «Этапы» маршрута: строка готовности и таблица № · Этап · Как выполняется · Кто · Срок · Если отказ.
+   «Если отказ» — по порядку исходов маршрута. На узком экране строки — карточки.
+#}
 {{ include('@itilflow/readiness.html.twig', {'r': readiness, 'stage_view': false}) }}
 
 <div class="mb-3">
@@ -9,72 +13,65 @@
    {% endif %}
 </div>
 
-{% if stages|length == 0 %}
+{% if rows|length == 0 %}
    <div class="alert alert-info">
       В маршруте пока нет этапов. Маршрут без этапов не запускается.
    </div>
 {% else %}
-   <div class="table-responsive">
-      <table class="table table-hover">
-         <thead>
-            <tr>
-               <th style="width:64px">Порядок</th>
-               <th>Этап</th>
-               <th>Режим</th>
-               <th>Ответственные</th>
-               <th>Сущность</th>
-               <th>Норматив</th>
-               <th>Отчёт</th>
-               <th>При отклонении</th>
-            </tr>
-         </thead>
-         <tbody>
-         {% for s in stages %}
-            <tr>
-               <td class="text-center fw-bold">{{ s['ranking'] }}</td>
-               <td>
+   <style>
+      @media (max-width: 575.98px) {
+         .itilflow-stages thead { display: none; }
+         .itilflow-stages tr { display: block; border-bottom: 1px solid var(--tblr-border-color, #e6e7e9); padding: .5rem 0; }
+         .itilflow-stages td { display: flex; gap: .5rem; border: 0; padding: .15rem .5rem; }
+         .itilflow-stages td::before { content: attr(data-label); flex: 0 0 7.5rem; color: var(--tblr-secondary, #667382); }
+      }
+      .itilflow-stages tr.itilflow-problem > td:first-child { box-shadow: inset 3px 0 0 var(--tblr-warning, #f59f00); }
+   </style>
+   <table class="table table-hover itilflow-stages">
+      <thead>
+         <tr>
+            <th style="width:56px">№</th>
+            <th>Этап</th>
+            <th>Как выполняется</th>
+            <th>Кто</th>
+            <th>Срок</th>
+            <th>Если отказ</th>
+         </tr>
+      </thead>
+      <tbody>
+      {% for s in rows %}
+         <tr data-itilflow-stage="{{ s.id }}" class="{{ s.problems is not empty ? 'itilflow-problem' : '' }}">
+            <td class="fw-bold" data-label="№">{{ s.ranking }}</td>
+            <td data-label="Этап">
+               <span>
                   {% if can_edit %}
-                     <a href="{{ path('/plugins/itilflow/front/stage.form.php') }}?id={{ s['id'] }}">{{ s['name'] }}</a>
+                     <a href="{{ path('/plugins/itilflow/front/stage.form.php') }}?id={{ s.id }}">{{ s.name }}</a>
                   {% else %}
-                     {{ s['name'] }}
+                     {{ s.name }}
                   {% endif %}
-                  {% if s['is_optional'] %}<span class="badge bg-secondary ms-2">необязательный</span>{% endif %}
-               </td>
-               <td>{{ modes[s['execution_mode']]|default(s['execution_mode']) }}</td>
-               <td>
-                  {% if s['groups_id'] %}
-                     {{ group_names[s['groups_id']]|default('—') }}
-                  {% elseif s['users_id'] %}
-                     {{ call('getUserName', [s['users_id']]) }}
-                  {% else %}
-                     <span class="text-danger">не назначен</span>
-                  {% endif %}
-               </td>
-               <td>
-                  {% if s['entity_strategy'] == 'fixed' %}
-                     {{ call('Dropdown::getDropdownName', ['glpi_entities', s['entities_id_target']]) }}
-                  {% elseif s['entity_strategy'] == 'by_group' %}
-                     сущность группы
-                  {% else %}
-                     как у заявки
-                  {% endif %}
-               </td>
-               <td>{% if s['duration'] %}{{ (s['duration'] // 60) }} мин{% else %}—{% endif %}</td>
-               <td>
-                  {% if s['completion_comment'] == 'required' %}<span class="badge bg-red-lt">обязателен</span>
-                  {% elseif s['completion_comment'] == 'none' %}<span class="text-muted">—</span>
-                  {% else %}<span class="text-muted">по желанию</span>{% endif %}
-               </td>
-               <td>
-                  {% if s['execution_mode'] == 'approval' %}
-                     {% if s['on_reject'] == 'back' %}вернуть на этап
-                     {% elseif s['on_reject'] == 'abort' %}прервать маршрут
-                     {% else %}остановить маршрут{% endif %}
-                  {% else %}—{% endif %}
-               </td>
-            </tr>
-         {% endfor %}
-         </tbody>
-      </table>
-   </div>
+                  {% if s.report_required %}<span class="badge bg-secondary-lt ms-1">отчёт обязателен</span>{% endif %}
+                  {% if s.is_optional %}<span class="badge bg-secondary-lt ms-1">можно пропустить</span>{% endif %}
+                  {% for p in s.problems %}
+                     <span class="d-block small text-warning">{{ p }}</span>
+                  {% endfor %}
+               </span>
+            </td>
+            <td data-label="Как">{{ s.mode }}</td>
+            <td data-label="Кто" data-itilflow-col="who">
+               <span>
+                  {% if s.who is empty %}<span class="text-danger">не выбран</span>{% else %}{{ s.who }}{% endif %}
+                  {% if s.who_sub is not empty %}<span class="d-block small text-muted">{{ s.who_sub }}</span>{% endif %}
+               </span>
+            </td>
+            <td data-label="Срок" data-itilflow-col="deadline">{{ s.deadline }}</td>
+            <td data-label="Если отказ" data-itilflow-col="reject">
+               <span>
+                  {{ s.reject }}
+                  {% if s.reject_sub is not empty %}<span class="d-block small text-muted">{{ s.reject_sub }}</span>{% endif %}
+               </span>
+            </td>
+         </tr>
+      {% endfor %}
+      </tbody>
+   </table>
 {% endif %}

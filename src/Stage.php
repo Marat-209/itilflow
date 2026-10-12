@@ -167,24 +167,83 @@ class Stage extends CommonDBChild
 
     public static function showForProcess(Process $process): void
     {
-        $stages = $process->getStages();
-        $groups = [];
-        foreach ($stages as $s) {
-            if ($s['groups_id']) {
-                $g = new \Group();
-                $g->getFromDB($s['groups_id']);
-                $groups[$s['groups_id']] = $g->fields['name'] ?? '';
-            }
-        }
+        $readiness = Readiness::check($process);
         TemplateRenderer::getInstance()->display('@itilflow/stages.html.twig', [
             'process'    => $process,
-            'stages'     => $stages,
-            'group_names' => $groups,
-            'modes'      => self::getModeLabels(),
+            'rows'       => self::tableRows($process, $readiness['problems']),
             'can_edit'   => $process->canUpdateItem(),
-            'new_stage'  => new self(),
-            'readiness'  => Readiness::check($process),
+            'readiness'  => $readiness,
         ]);
+    }
+
+    /**
+     * Строки вкладки «Этапы»: то, что действует, словами формы.
+     * «Если отказ» — по порядку исходов маршрута; срок — в днях или часах календаря.
+     */
+    public static function tableRows(Process $process, array $problems = []): array
+    {
+        $stages = $process->getStages();
+        $structured = ($process->fields['outcome_contract'] ?? 'legacy') === DefinitionSnapshot::MODE;
+        $day = Deadline::dayMinutes((int) ($process->fields['calendars_id'] ?? 0));
+        $ranks = array_column($stages, 'ranking', 'id');
+        $modes = self::getModeLabels();
+        $rows = [];
+        foreach ($stages as $s) {
+            $mode = (string) $s['execution_mode'];
+            $who = '';
+            if ($mode === self::MODE_APPROVAL && $s['approver_source'] !== self::APPROVER_FIXED) {
+                $who = 'согласующий — при прохождении';
+            } else {
+                $g = new \Group();
+                if ((int) $s['groups_id'] > 0 && $g->getFromDB((int) $s['groups_id'])) {
+                    $who = (string) $g->fields['name'];
+                } elseif ((int) $s['users_id'] > 0) {
+                    $who = (string) getUserName((int) $s['users_id']);
+                }
+            }
+            $who_sub = '';
+            if ($mode === self::MODE_DELEGATED) {
+                $who_sub = match ($s['entity_strategy']) {
+                    'by_group' => 'в организации группы',
+                    'fixed'    => 'в организации «' . \Dropdown::getDropdownName('glpi_entities', (int) $s['entities_id_target']) . '»',
+                    default    => 'в организации заявки',
+                };
+            }
+            $reject = '—';
+            $reject_sub = '';
+            if ($mode !== self::MODE_INLINE && $structured) {
+                $reject = match ($s['negative_policy']) {
+                    self::REJECT_ABORT => 'отказ заявителю',
+                    self::REJECT_BLOCK => 'остановить',
+                    default            => 'не выбрано',
+                };
+                $targets = array_map(static fn(int $t): string => isset($ranks[$t]) ? (string) $ranks[$t] : '?',
+                    DefinitionSnapshot::targets($s['return_targets'] ?? null) ?? []);
+                $reject_sub = 'возврат: ' . ($targets ? implode(', ', $targets) : 'нет');
+            } elseif ($mode !== self::MODE_INLINE) {
+                $reject = match ($s['on_reject']) {
+                    self::REJECT_BACK  => 'вернуть на ' . ($ranks[(int) $s['plugin_itilflow_stages_id_reject']] ?? '?'),
+                    self::REJECT_ABORT => 'прервать маршрут',
+                    default            => 'остановить маршрут',
+                };
+            }
+            $rows[] = [
+                'id'          => (int) $s['id'],
+                'ranking'     => (int) $s['ranking'],
+                'name'        => (string) $s['name'],
+                'mode'        => $modes[$mode] ?? $mode,
+                'who'         => $who,
+                'who_sub'     => $who_sub,
+                'deadline'    => Deadline::label((int) $s['deadline_minutes'], $day),
+                'reject'      => $reject,
+                'reject_sub'  => $reject_sub,
+                'report_required' => $mode === self::MODE_INLINE && $s['completion_comment'] === 'required',
+                'is_optional' => $mode === self::MODE_INLINE && !empty($s['is_optional']),
+                'problems'    => array_column(array_filter($problems,
+                    static fn(array $x): bool => $x['stage'] === (int) $s['id']), 'text'),
+            ];
+        }
+        return $rows;
     }
 
     public function showForm($ID, array $options = [])
