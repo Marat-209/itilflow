@@ -1,460 +1,276 @@
-# Tutorial: building a route from scratch
+# Setting up a route step by step
 
 English · **[Русский](TUTORIAL.md)**
 
-Walked through on a real process — provisioning a workstation for a new employee.
-By the end you will have a working route that carries a ticket across five
-departments on its own and refuses to let it close early.
+Two illustrative examples. Entity, group and category names are made up —
+use your own. The interface is Russian only; Russian labels are given in
+«quotes» where it helps to find them on screen.
 
-> **Language notice.** The plugin's interface is Russian only. Menu paths and
-> field names below are given in English for readability; on screen they appear
-> in Russian. The Russian original of this tutorial is the reference version.
+- **Example 1** — "Request with approval": manager approval → work by
+  a department → answer to the requester. New outcome handling: refusal,
+  return for clarification, the result as the ticket solution.
+- **Example 2** — "Work inside one department": three tasks in one ticket,
+  previous handling. The simplest setup.
 
-The complete field-by-field reference is the
-[administrator manual](itilflow-manual.pdf) *(Russian)*. This document only
-covers the path from an empty GLPI to a working process.
+Before you start: [installation](INSTALL.en.md) and the **Stage routes** right
+in your own profile ([RIGHTS.en.md](RIGHTS.en.md)).
 
 ---
 
-## What we are building
+## Example 1. Request with approval
 
-A production department head orders a workstation for a new hire. The ticket then
-has to pass through:
+| # | Stage | Mode | Who | Refusal | Return for clarification |
+|---|---|---|---|---|---|
+| 10 | Manager approval | Approval | named during processing | abort | to stage 10 |
+| 20 | Department work | Child ticket | group "Service department" | abort | to stage 10 or 20 |
+| 30 | Answer to the requester | Task in the ticket | group "First line" | stop | — |
 
-| # | Stage | Who does it | Mode | Deadline |
-|---|---|---|---|---|
-| 10 | Budget approval | IT director | approval, 100% threshold | — |
-| 20 | Stock check | warehouse | child ticket | 4 working hours |
-| 30 | Equipment purchase | warehouse | child ticket, **optional** | 4 working hours |
-| 40 | HR onboarding | HR | child ticket | 1 working day |
-| 50 | Security clearance | security | child ticket | 2 working hours |
-| 60 | Access approval | security | approval, 50% threshold | — |
-| 70 | Setup and software | IT support | child ticket | 8 working hours |
-| 80 | Handover and signed form | equipment desk | task in the ticket | 2 hours |
+### Step 1. GLPI dropdowns
 
-Numbering in steps of 10 is not decoration. A new stage between the second and
-the third gets number 25 without renumbering anything else.
+The route relies on stock GLPI dropdowns — prepare them first.
 
-This particular set is deliberate: it exercises all three execution modes, all
-three entity strategies, an optional stage, mandatory completion reports,
-deadline escalation, and both of the interesting reactions to a rejected
-approval.
+**Entities.** For the example: a root entity holding the requesters, and
+a child entity "Service department" where the child ticket goes.
 
-![Route across departments](img/route-lanes.en.svg)
+**Groups** (**Administration → Groups**):
 
-## Step 0. Verify the installation
+| Group | Where | Flags |
+|---|---|---|
+| First line | root entity, **visible in child entities** | "Can be assigned to tickets" |
+| Service department | entity "Service department" | "Can be assigned to tickets" |
 
-**Setup → Plugins** — itilflow must be enabled.
+Without "Can be assigned to tickets" the group is missing from the stage's
+list. The group of a "Task in the ticket" stage must be visible in the
+ticket's entity — hence "visible in child entities". Put people in the groups
+(the "Users" tab).
 
-**Setup → Automatic actions** — the stage deadline control task must be listed as
-scheduled. Without it, lateness is never flagged.
+**Categories** (**Setup → Dropdowns → Ticket categories**), both visible in
+child entities:
 
-**Administration → Profiles → [your profile] → Setup** — grant yourself the
-**stage routes** right, or the menu entry will not appear.
+1. "Request with approval" — the rule starts the route on it.
+2. "Route stage" — a service category for stage child tickets.
 
-## Step 1. GLPI reference data
+**Profiles.** Each participant needs a technician profile in the entity where
+their object lives: the approver and the first line in the ticket's entity,
+the department's technician in "Service department". A self-service profile is
+enough to answer approvals and to withdraw one's own ticket, but not to work
+on stages.
 
-The route defines no reference data of its own; it builds on the stock objects.
-Prepare them first, or the stage form will show empty dropdowns.
+**Calendar and SLA** — optional: a calendar for the stage deadline, an SLA for
+the child ticket.
 
-### Groups
-
-**Administration → Groups** — one group per participant: warehouse, HR, security,
-IT support, equipment desk.
-
-Two flags without which nothing works:
-
-- **Can be assigned to tickets** — mandatory. Without it the group never appears
-  in the stage dropdown even though it exists in the directory. This is mistake
-  number one for everyone configuring a route for the first time.
-- **Child entities** (recursive) — for the group that closes a stage in
-  task-in-ticket mode. The task lives on the parent ticket, so the group must be
-  visible in the parent's entity.
-
-Do not forget to put people in the groups: the **Users** tab inside the group.
-Only a member of the named group can close the stage.
-
-### Ticket categories
-
-**Setup → Dropdowns → Ticket categories** — two are needed:
-
-1. **Workstation provisioning for a new employee** — the business rule keys off
-   this to start the route.
-2. **Route stage** — a service category for the stages' child tickets. Your
-   ordinary SLA-assignment and routing rules will work through it.
-
-Make both recursive from the top entity, or they will not be visible in the
-departments.
-
-## Step 2. Calendar and service levels
-
-You can skip this at first and come back later — but then stages will have no
-deadlines.
-
-### Working calendar
-
-**Setup → Calendars** — create a schedule and add working-time segments, for
-example Mon–Fri 09:00 to 18:00.
-
-The calendar settles something important: nights and weekends do not eat the
-allowance. A stage opened on Friday at 17:30 with a 4-hour deadline expires on
-Monday at 12:30, not overnight on Saturday.
-
-### SLAs
-
-**Setup → Service levels** — first the agreement (SLM), then one SLA per
-department inside it with different durations: warehouse 4 hours, HR 1 day, IT 8
-hours, security 2 hours. Type: time to resolve (TTR).
-
-**A useful technique: cumulative deadlines.** Define deadlines not as a stage's
-duration but as a point measured from the ticket's start: "stage 1 — 30 minutes",
-"stage 2 — 50 minutes", "stage 3 — 170 minutes". Then the deadline does not
-depend on when someone picked the stage up, and the working calendar shifts it
-across nights and weekends by itself.
-
-## Step 3. Create the route
+### Step 2. The route
 
 **Administration → Stage routes → Add**
 
-| Field | Set to | Why |
+| Field | Value | Why |
 |---|---|---|
-| Route name | what the process is called in your company | both the performer and the requester see it |
-| Object type | Ticket | cannot be changed once the first routes have run |
-| Organisational entity | where the route itself lives | decides whether the route is offered in a business rule's action |
-| Visible in child entities | **Yes**, if the rule will live in a sub-entity | otherwise the rule's route dropdown comes up empty |
-| Enforcement mode | **Audit** | see below |
-| Block resolution until complete | Yes | otherwise the route is a hint with no teeth |
-| Write stage progress to the timeline | Yes | the requester follows along and stops calling the desk |
-| Show the route tab to the requester | Yes | independent flag: you can log without showing the table |
-| Requester may withdraw | Yes | switch off for processes that cannot be cancelled on request — terminations, access revocation |
-| Working calendar | your schedule | the stage deadline is counted against it |
-| Route active | Yes | an inactive route cannot start on new tickets |
+| Route name | Request with approval | seen by technicians and the requester |
+| Item type | Ticket | do not change after the first starts |
+| Entity | root | |
+| Visible in child entities | **Yes** | otherwise a rule in a child entity cannot see the route |
+| Control mode | Log | start with Log, later Warn, then Block |
+| Block resolution until the route is complete | Yes | otherwise the route is only a hint |
+| Write stage progress to the ticket timeline | Yes | the requester sees progress; needed for stage 30's report to become the result |
+| Show the route tab to the requester | Yes | |
+| Requester may withdraw the ticket | Yes | |
+| Working calendar | optional | for the stage deadline |
+| Outcome handling | **Previous handling** for now | we switch in step 4 |
+| Route is active | Yes | an inactive route is assigned by the rule but never starts |
 
-**About the enforcement mode.** For a first rollout choose **Audit**. Everything
-is allowed and violations are recorded silently — after a month you will have
-real statistics on where the procedure diverges from practice. Then **Warn** for
-the transition period. Only once the process has settled, **Strict**. Turning on
-strict enforcement over live traffic means a wave of complaints and no insight
-into what is actually wrong with the procedure.
+Save.
 
-![Route form](img/ui-route-form.png)
+![Route form (screenshot of 1.6–1.7, fictional data; 1.8.0 fields not shown)](img/ui-route-form.png)
 
-## Step 4. Define the stages
+### Step 3. Stages
 
-The **Stages** tab inside the route → "Add stage".
+The **"Stages"** tab → "Add stage". The **"Department outcome and new attempt"**
+block at the bottom of the form applies only with the new handling, but can be
+filled in right away.
 
-Each stage minimally needs a name, an order number, an execution mode and an
-owner — a group or a person. Below are three stages, one per mode; the rest
-follow by analogy.
-
-### An approval stage (10)
+**Stage 10 — Manager approval**
 
 | Field | Value |
 |---|---|
-| Name | Budget approval by the IT director |
+| Stage name | Manager approval |
 | Order | 10 |
-| Execution mode | **Approval** |
-| Individual owner | IT director |
+| Execution mode | Approval |
+| Item status at this stage | Approval |
+| Who approves | Named during processing |
 | Approval threshold, % | 100 |
-| On rejection | **Abort the route** |
-| Status on this stage | **Approval** |
-| Instructions | what exactly to check |
+| Instructions | what the approver should check |
+| Negative outcome | Abort after refusal |
 
-A 100% threshold requires every approver; 50% means a majority suffices. If a
-person rather than a group is named, the threshold is meaningless.
+Leave group and person empty: the ticket's assignee names the approver.
 
-**Status on this stage** moves the ticket to the chosen status as soon as the
-stage is taken into work: *approval* while it is being signed off, *pending*
-while an answer is awaited. The phase is then visible from the ticket list
-without opening anything. The change is written to the timeline. The default is
-*leave unchanged*; terminal statuses are not offered — closing is configured on
-the route.
-
-There are three reactions to a rejection, and choosing between them is a
-substantive decision:
-
-- **Halt** — the route stops, the ticket still cannot be closed, an
-  administrator has to intervene. For when a rejection means a problem a human
-  must look at.
-- **Return to a stage** — a new pass starting from the named stage; the previous
-  pass's history is kept in full. For when a rejection means "redo this part".
-- **Abort** — the route is cancelled and the ticket can be closed. For when a
-  rejection means the whole thing is off.
-
-**If the approver is not known in advance**, set the "who approves" field to
-"chosen while the ticket runs" and leave the group and the individual empty.
-The stage opens and waits: the route tab shows a form where the ticket's
-assignee or a process administrator names the approver and gives a mandatory
-reason for the choice. This is how owner approval works when the registry of
-resource owners lives outside GLPI.
-
-That form accepts **several people and groups at once** — each one gets its own
-separate request. For example, access to a network folder is signed off by the
-requester's manager and by the folder's owner, and those are two independent
-decisions. How many sign-offs the stage needs is set by its own **approval
-threshold**: 100% requires all of them, 50% requires half. While sign-offs are
-still missing, the ticket timeline says how many are awaited.
-
-**The approver needs no special right.** Being named as the approver on the
-stage is enough. In GLPI 11 the answer buttons are shown based on `canAnswer()`,
-which only checks that assignment and ignores profile rights. The
-approve-request / approve-incident right governs something else — who GLPI
-offers in its own approver picker — and the route sets the approver itself
-without using that picker. Verified on 11.0.8: an approver on the stock
-Technician profile answers normally.
-
-### A child-ticket stage (20)
+**Stage 20 — Department work**
 
 | Field | Value |
 |---|---|
-| Name | Stock check |
+| Stage name | Department work |
 | Order | 20 |
-| Execution mode | **Child ticket** |
-| Owner group | Warehouse |
-| Where the stage runs | **Fixed entity** |
-| Target entity | Procurement and warehouse |
+| Execution mode | Child ticket |
+| Responsible group | Service department |
+| Item status at this stage | Pending |
+| Where the stage runs | Fixed entity → "Service department" |
 | Child ticket category | Route stage |
-| Child ticket SLA | Warehouse — 4 working hours |
-| Completion report | **Mandatory** |
-| Instructions | what to check and what to state in the report |
+| Child ticket SLA | optional |
+| Instructions | what to do and what to write as the result |
+| Outcome source | Explicit answer by the assigned technician |
+| Negative outcome | Abort after refusal |
 
-Three strategies for the organisational entity:
-
-- **Parent's entity** — the stage stays where the ticket is. The whole process
-  inside one branch.
-- **Fixed entity** — always the one named. A centralised service: one security
-  team for the whole group.
-- **Group's entity** — derived from the owner group. For when the performer is
-  decided by a rule rather than hardcoded.
-
-**Careful.** The owner group must be visible in the target entity. GLPI's data
-model does not forbid naming a group from a different entity — the record saves
-without a single error, only the dropdown filters. The result is a ticket
-assigned to a group that cannot see it, hanging forever. The plugin checks this
-itself and halts the route with a clear message instead of creating a dead
-ticket. If a route halts the moment a stage opens, this is almost always why:
-make the group recursive from a parent entity, or pick a group from the target
-entity.
-
-This is a complete stage form — the optional purchase stage in child-ticket
-mode:
-
-![Stage configuration form](img/ui-stage-form.png)
-
-### A task stage (80)
+**Stage 30 — Answer to the requester**
 
 | Field | Value |
 |---|---|
-| Name | Handover and signed form |
-| Order | 80 |
-| Execution mode | **Task in the ticket** |
-| Owner group | Equipment desk (recursive) |
-| Where the stage runs | Parent's entity |
-| Stage deadline, minutes | 120 |
-| Effort estimate | planned effort |
-| Completion report | Mandatory |
+| Stage name | Answer to the requester |
+| Order | 30 |
+| Execution mode | Task in the ticket |
+| Responsible group | First line |
+| Where the stage runs | Parent ticket's entity |
+| Completion report | Ask, mandatory |
+| Instructions | write the answer for the requester |
+| Negative outcome | Stop after refusal |
 
-The cheapest mode: the task is created inside the same ticket. For the duration
-of the stage the plugin adds the group to the ticket's assignees — otherwise it
-would not see the ticket at all — and removes it once the stage closes.
+With the new handling "Negative outcome" is mandatory on every stage, even
+where refusals never happen.
 
-**Stage deadline and effort estimate are different fields.** The estimate is
-planned effort; it lands on the task and in effort reports. The stage deadline is
-a due point: after how many working minutes the stage counts as late. A task has
-no countdown timer and cannot have one — a GLPI task never has its own SLA, which
-is a data model limitation. If you need a countdown, use child-ticket mode.
+**Return points.** A stage can be chosen as a return point only after it has
+been saved once. Open stage 10 and select "Manager approval" in "Allowed
+return points"; open stage 20 and select both 10 and 20. Stage 30 has no
+return points — a task in the ticket cannot return.
 
-### How the performer closes the stage
+![Stage form (screenshot of 1.6–1.7, fictional data; the "Department outcome and new attempt" block is not shown)](img/ui-stage-form.png)
 
-There is no separate window on the ticket fields. On the main form, at the
-bottom of the timeline, open the **Answer** menu. It contains **Complete
-stage**. Choosing it opens the form: the stage title, the text from the
-stage's content field, the "what was done" field and the button.
+### Step 4. New outcome handling
 
-The item is there for this stage's assignee and for a process administrator,
-in the central interface. Self-service does not show it. If a profile hid the
-Stage route tab, the Answer item remains.
+Open the route and set **"Outcome handling" → "Explicit outcomes and new
+attempts"**. If a stage lacks an outcome source or a negative outcome, or its
+return points are invalid, the route will not save and says what to fill in.
 
-A mandatory report cannot be bypassed by marking the task done: GLPI rejects
-the change and asks to close the stage through Complete stage. If the report
-is optional, marking the task done still closes the stage.
+The new handling applies to starts after the save. Tickets already running
+finish the previous way.
 
-A stage that is waiting for an approver to be named shows **Name the
-approver** in the same menu: a user or a group, and a mandatory reason. An
-approval that already exists closes with the stock Approve / Refuse buttons.
-A child ticket closes when it is resolved; it has no extra button.
-
-### An optional stage (30)
-
-Set **stage is optional = Yes** and the performer gets a "skip stage" button. A
-reason is always mandatory and is written to the ticket timeline as a public
-entry.
-
-This is the only way to bypass a step: there is no automatic "skip if the amount
-is under N", and conditional stages do not exist.
-
-## Step 5. Configure the start
-
-The route is started by an action on a **stock business rule**, not by a separate
-mechanism in the plugin. This is deliberate: the administrator configures the
-start with the same criteria as everything else in GLPI, and no second condition
-language appears in the system.
-
-![Route start chain](img/start-chain.en.svg)
+### Step 5. Start by a rule
 
 **Administration → Rules → Business rules for tickets → Add**
 
-- **Criterion:** Category — is — "Workstation provisioning for a new employee"
-- **Action:** Start stage route — assign — your route
+- **Criterion:** Category — is — "Request with approval".
+- **Actions:**
+  - Start stage route («Запустить маршрут этапов») — assign — "Request with
+    approval";
+  - assign the assignee group "First line" with a stock action of the same or
+    another rule. The ticket needs an assignee: they name the approver and
+    continue the route after clarification.
 
-You can combine this with any other criteria: ticket type, location, requester's
-group, organisational entity.
+![Route start chain](img/start-chain.en.svg)
 
-**Check that the route is active.** An inactive route is still assigned by the
-rule, but `Engine::start()` will not start it — silently, with no message. From
-the outside this looks like "the rule does not work". Before version 1.3.2 the
-form created routes switched off, so on older routes check this first: the route
-form, the "route active" field.
+If the list of routes in the rule action is empty, the route lives in another
+entity and is not flagged "Visible in child entities". Mind the rule order and
+"Stop processing": a rule higher up may take the ticket first.
 
-**If the rule's route dropdown is empty**, the route lives in a different
-organisational entity and is not marked visible in child entities. The action's
-dropdown is filtered by the rule's entity: a rule in a sub-entity sees routes of
-that sub-entity and of its parents, but only those with child-entity visibility
-switched on. This is the most common cause of "the rule does not fire" — the rule
-saves without a usable value and silently does nothing.
+A route can also be started by hand: the ticket's **"Stage route"** tab → pick
+the route → "Start route" (requires the Stage routes right).
 
-Rules have an order and a stop-processing flag. If the route does not start when
-a ticket is created, check that too: another rule higher in the order may have
-pre-empted it.
+**Catalogue form (optional).** In **Administration → Forms** create a form and,
+in its destination, set the category "Request with approval" as a specific
+value — the requester cannot pick the wrong category. In GLPI 11 the catalogue
+is at `/ServiceCatalog`, a form at `/Form/Render/<form id>`.
 
-The route can also be started by hand: on the ticket, the **Stage route** tab →
-pick a route → "Start route". Requires the stage routes right.
+### Step 6. Check
 
-## Step 6. A service catalogue form
+Walk the route as each participant, not as an administrator: as an
+administrator you see neither visibility limits nor missing rights.
 
-Optional, but a large improvement. Without a form the requester has to pick the
-right category themselves — and will get it wrong. With a form the category is
-fixed in the destination configuration and there is nothing to get wrong.
+**Normal path**
 
-**Administration → Forms → Add**
+1. **The requester** creates a ticket in "Request with approval". On the
+   "Stage route" tab stage 10 is "Now", waiting for the ticket's assignee to
+   name the approver.
+2. **First line** (the ticket's assignee): in the stage 10 row (or **Answer →
+   Name the approver**) picks a person and writes the basis in "Why them".
+3. **The approver**: "Approve or refuse" in the stage row → "Approve" (or the
+   stock approval answer in the timeline). Stage 10 is "Done", stage 20 opens,
+   and a child ticket "[Этап 20, попытка 1] …" appears in "Service department".
+4. **The department's technician** opens the child ticket, its route tab →
+   "Record result" → writes the result → "Done". The child ticket is solved
+   with the same text, stage 30 opens.
+5. **First line**: "Complete stage" in the stage 30 row (or **Answer → Complete
+   stage**), fills in "What was done".
+6. The ticket is solved with "all stages of the route are done" and the result.
+   The requester accepts the solution the stock way.
 
-Questions for our process: new employee's full name, position, start date,
-workstation type, whether access to the accounting system is needed, additional
-requests.
+**Refusal.** The approver refuses with a comment — the ticket is solved with
+"Refused at stage «Manager approval»" and the reason.
 
-Then the **Destinations** tab, where the form becomes a ticket:
+**Return for clarification.**
 
-| Destination field | Strategy |
-|---|---|
-| Title | from the answer to the name question |
-| Description | assembled from answers by substitution |
-| **Category** | **specific value** — the one the rule keys off |
-| Organisational entity | from the form filler |
-| Type | service request |
+1. The department's technician: "Record result" → writes what to clarify →
+   "Return for clarification".
+2. The requester sees a request to reply with a comment, and replies.
+3. First line: "Continue after clarification" → briefly what was clarified →
+   which stage to continue from (10 or 20).
+4. A new attempt opens; the earlier result is in the "Stage history".
 
-And the **Access** tab — who can see the form.
+**Also check**
 
-The chain looks like this:
+- The child ticket cannot be solved by hand without an outcome — GLPI shows
+  a message.
+- While the route is not done the ticket cannot be solved (in Log mode the
+  attempt passes but lands in "Out-of-order actions").
+- The requester can withdraw the ticket with a reason — it is solved with that
+  reason.
+- The ticket status changes to "Approval" and "Pending" within a minute if
+  `itilflow_status_sync` is enabled.
+- The **approval sheet** (button in the tab header) shows the whole run.
 
-```
-employee fills in the form
-    → a ticket is created in their department with the fixed category
-        → the business rule sees the category
-            → the route starts and the first stage opens
-```
+![Approval sheet (screenshot of 1.6–1.7, fictional data)](img/ui-approval-sheet.png)
 
-The category is the only thing linking the form to the route.
+---
 
-## Step 7. Test it
+## Example 2. Work inside one department
 
-Create a test ticket in the right category — through the form or directly.
+All stages are tasks in one ticket, previous outcome handling. Suits an
+internal procedure of one unit.
 
-The **Stage route** tab should show the list: the first stage in progress, the
-rest queued. The ticket timeline should carry a public entry about the first
-stage starting.
+| # | Stage | Mode | Group | Notes |
+|---|---|---|---|---|
+| 10 | Triage | Task in the ticket | First line | optional report |
+| 20 | Do the work | Task in the ticket | Service department | stage deadline 480 minutes |
+| 30 | Check the result | Task in the ticket | First line | **optional stage**, mandatory report |
 
-Then walk the whole route, logging in as each performer in turn. This matters:
-as an administrator you will see neither the visibility limits nor the permission
-problems, and every rake will be found in production instead.
+1. **Groups.** Both groups are visible in the tickets' entity ("visible in
+   child entities" from a parent entity): the task lives in the ticket itself,
+   and for the duration of the stage the plugin adds the group to its
+   assignees.
+2. **Route.** As in example 1, "Outcome handling" — "Previous handling", with
+   your own category and rule.
+3. **Stages.** Mode "Task in the ticket", "Where the stage runs" — "Parent
+   ticket's entity". Stage 20 has "Stage deadline, minutes" = 480 and the route
+   has a working calendar: `itilflow_deadlines` marks it overdue. Stage 30 has
+   "Optional stage" = Yes.
+4. **Walk-through.** Each stage's assignee clicks "Complete stage" in the stage
+   row or in **Answer → Complete stage**. Stage 30 also offers "Skip" — the
+   reason is mandatory and goes to the timeline.
+5. **End.** After stage 30 the solution block is lifted, and the assignee
+   writes the ticket solution the stock way.
 
-What to check along the way:
+To move such a route to the new handling, fill in "Negative outcome" on every
+stage and choose "Explicit outcomes and new attempts": at the end the ticket
+will be solved automatically with the last stage's report as the result.
 
-- **Approval stage.** The approver sees the request in the timeline and can
-  answer with the approve/reject buttons. No buttons means the approval rights
-  were not granted.
-- **Child-ticket stage.** The ticket appeared in the target entity, has an SLA
-  with a visible countdown, and the right group assigned. The requester was not
-  carried over — for them the stage is internal work. Resolving the child moves
-  the route on.
-- **Task stage.** The task was created on the parent ticket and the group was
-  added to the assignees. In the central interface the assignee opens
-  **Answer → Complete stage**, fills in what was done and submits. After the
-  stage closes, the group is removed from the assignees. There is no separate
-  window on the ticket fields.
-- **Optional stage.** The same form has Skip stage, and it will not submit
-  without a reason.
-- **Mandatory report.** The completion field will not submit empty. Marking
-  the task done is also rejected while the report is mandatory.
-- **Blocked resolution.** Until the route completes, the ticket cannot be
-  resolved and no solution can be added. In audit mode the attempt succeeds but
-  lands in the violation log under the stage table.
-- **Lateness.** A stage with a deadline left open past it is flagged red once the
-  automatic action runs, and a private comment appears on the ticket.
+---
 
-![Route tab on a ticket](img/ui-ticket-tab.png)
+## Rollout
 
-## What to look at afterwards
+1. A month in **Log** mode: out-of-order actions are logged, authority is
+   always checked.
+2. Review the log: regular bypassing usually points at the procedure — an
+   unneeded stage, the wrong owner, an unrealistic deadline.
+3. **Warn** for a transition period.
+4. **Block** once bypasses have almost stopped.
 
-**Approval sheet** — the button in the route tab header. A printable summary of
-the run: per stage pass, the owner, a reassignment note with its reason, who
-actually closed it, start, due, end, duration, the lateness flag, the performer's
-report. This is the document for review and audit.
+Set up a substantially changed process as a new route, and keep the old one
+while tickets still run on it.
 
-![Approval sheet](img/ui-approval-sheet.png)
-
-**Bottleneck report** — **Administration → Stage routes → Bottlenecks**. Per
-stage: runs, mean, median, maximum duration, breaches, returns, reassignments.
-
-How to read it: the mean is misleading. A jam shows where the **maximum is far
-above the median** — most tickets clear the stage quickly while a subset gets
-stuck for a long time, and that subset is what to investigate. Many returns mean
-the previous stage's requirements are poorly worded; many reassignments mean the
-wrong owner was chosen.
-
-**Violation log** — under the stage table, visible to staff only. Who tried to
-bypass the order, how often, and what stopped them. In audit mode every entry
-reads "allowed, recorded" — that is the raw material for deciding where the
-procedure diverges from practice.
-
-## Common mistakes
-
-| Symptom | Cause | What to do |
-|---|---|---|
-| The route does not start when a ticket is created | the business rule did not fire: wrong category, rule inactive, or pre-empted by a rule higher in the order | check the rule, its order and the stop-processing flag |
-| The group is missing from the stage dropdown | the "can be assigned to tickets" flag is not set | set the flag on the group |
-| The performer cannot see the ticket or close the stage | the group is not among the ticket's assignees, or the profile cannot see its groups' tickets | the plugin adds the group itself for the stage; if that did not help, check the "show assigned tickets" right |
-| There is no separate window; the button is only inside Answer | that is how GLPI's timeline menu works: the plugin adds an item, not its own tile on the form | **Answer → Complete stage**. The form opens after the item is chosen |
-| Answer has no Complete stage | you are not the current stage's assignee, the interface is self-service, or the stage is an approval or a child ticket | sign in as the assignee in the central interface. Approvals and child tickets close through their own stock cards |
-| The approver sees no answer buttons | they are not the approver on the current stage, or the stage is already closed | check the ticket's approvals tab; the profile right is irrelevant here |
-| The route halted the moment a stage opened | the owner group does not belong to the target entity and is not visible in it | make the group recursive from a parent entity, or pick one from the target |
-| The ticket will not close although every stage is done | the route is halted after a rejected approval | Stage route tab → Resume or Abort |
-| Two stages share an order number | manual edit of the order | the plugin moved the second to the end and warned; fix the number |
-| The requester sees internal detail | the public log is on for a process not meant for the requester | switch off the timeline log and the requester tab for that route |
-| The child ticket has a different SLA than the stage specifies | the stage sets the SLA when the child ticket is created, and a GLPI business rule then overrides it | look for rules with an SLA action, exclude the stage's category from them, or drop the SLA from the stage and let the rules decide |
-| A performer or approver can do nothing with the ticket | in that ticket's entity they only hold a self-service profile | grant a technician profile in the right entity: the right depends not only on the profile but on where it was granted |
-
-## Next
-
-The route works — now it has to be rolled out. The order is:
-
-1. A month in **Audit** mode. Restrict nobody, gather statistics.
-2. Review the violation log. Where bypassing is routine, the issue is usually not
-   discipline but the procedure: a redundant stage, the wrong owner, an
-   unrealistic deadline. Edit the route freely — tickets in flight play out their
-   own version of the definition and will not break.
-3. Switch to **Warn** for the transition period.
-4. Once bypasses have all but stopped, **Strict**.
-
-Edit the procedure with confidence at any point: every save increments the route
-version, and a ticket records its version at start and plays it through to the
-end. A new revision applies only to tickets started after the save.
+Problems and their causes: [FAQ.en.md](FAQ.en.md).
