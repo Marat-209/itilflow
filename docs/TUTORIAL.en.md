@@ -7,10 +7,11 @@ use your own. The interface is Russian only; Russian labels are given in
 «quotes» where it helps to find them on screen.
 
 - **Example 1** — "Request with approval": manager approval → work by
-  a department → answer to the requester. New outcome handling: refusal,
-  return for clarification, the result as the ticket solution.
-- **Example 2** — "Work inside one department": three tasks in one ticket,
-  previous handling. The simplest setup.
+  a department → answer to the requester: refusal, return for clarification,
+  the result as the ticket solution.
+- **Example 2** — "Work inside one department": three tasks in one ticket.
+  The simplest setup. At the end — how to convert a route created before
+  1.9.0.
 
 Before you start: [installation](INSTALL.en.md) and the **Stage routes** right
 in your own profile ([RIGHTS.en.md](RIGHTS.en.md)).
@@ -63,95 +64,95 @@ the child ticket.
 
 **Administration → Stage routes → Add**
 
+A new route uses the new outcome handling right away: refusal, return for
+clarification, the result as the ticket solution. Nothing has to be switched
+on separately.
+
 | Field | Value | Why |
 |---|---|---|
 | Route name | Request with approval | seen by technicians and the requester |
-| Item type | Ticket | do not change after the first starts |
 | Entity | root | |
 | Visible in child entities | **Yes** | otherwise a rule in a child entity cannot see the route |
-| Control mode | Log | start with Log, later Warn, then Block |
-| Block resolution until the route is complete | Yes | otherwise the route is only a hint |
-| Write stage progress to the ticket timeline | Yes | the requester sees progress; needed for stage 30's report to become the result |
-| Show the route tab to the requester | Yes | |
-| Requester may withdraw the ticket | Yes | |
-| Working calendar | optional | for the stage deadline |
-| Outcome handling | **Previous handling** for now | we switch in step 4 |
-| Route is active | Yes | an inactive route is assigned by the rule but never starts |
+| Working calendar | optional | stage deadlines in working days are counted on it |
+| Route enabled | Yes | a disabled route does not start on new tickets |
+| Description | optional | seen by administrators only |
 
-Save.
+Everything else is under the collapsed **"More"**; its summary line shows the
+values without expanding it. The defaults are fine to start with: for
+tickets; if someone acts outside their stage — "Log"; solve the ticket only
+after all stages; stage progress is written to the timeline (needed for stage
+30's report to become the result); the route tab for the requester and
+withdrawal of the ticket are on.
 
-![Route form (screenshot of 1.6–1.7, fictional data; 1.8.0 fields not shown)](img/ui-route-form.png)
+Save. A route without stages saves; the readiness line at the top says
+"Not ready to start — missing: 1" with the item "No stages."
+
+![Route form: the readiness line, six fields and the collapsed "More" (fictional data)](img/ui-route-form.png)
 
 ### Step 3. Stages
 
-The **"Stages"** tab → "Add stage". The **"Department outcome and new attempt"**
-block at the bottom of the form applies only with the new handling, but can be
-filled in right away.
+The **"Stages"** tab → "Add stage". The stage form shows only the fields of
+the selected mode — switch **"How it is done"** and the form rearranges
+itself. The stage number is filled in as the next ten, and "this stage" is
+already ticked as a return point.
 
 **Stage 10 — Manager approval**
 
-| Field | Value |
-|---|---|
-| Stage name | Manager approval |
-| Order | 10 |
-| Execution mode | Approval |
-| Item status at this stage | Approval |
-| Who approves | Named during processing |
-| Approval threshold, % | 100 |
-| Instructions | what the approver should check |
-| Negative outcome | Abort after refusal |
+| Block | Field | Value |
+|---|---|---|
+| What to do | Stage name | Manager approval |
+| | How it is done | Approval |
+| | Instructions | what the approver should check |
+| Who | Who approves | Chosen during the run |
+| Deadline | Stage deadline | 1 working day |
+| On refusal | What to do on refusal | Answer the requester with a refusal and end the route (default) |
+| | Where it can be returned for clarification | 10 — this stage (ticked automatically) |
 
-Leave group and person empty: the ticket's assignee names the approver.
+Leave group and person empty: with "Chosen during the run" the form does not
+show them — the ticket's assignee names the approver.
 
 **Stage 20 — Department work**
 
-| Field | Value |
-|---|---|
-| Stage name | Department work |
-| Order | 20 |
-| Execution mode | Child ticket |
-| Responsible group | Service department |
-| Item status at this stage | Pending |
-| Where the stage runs | Fixed entity → "Service department" |
-| Child ticket category | Route stage |
-| Child ticket SLA | optional |
-| Instructions | what to do and what to write as the result |
-| Outcome source | Explicit answer by the assigned technician |
-| Negative outcome | Abort after refusal |
+| Block | Field | Value |
+|---|---|---|
+| What to do | Stage name | Department work |
+| | How it is done | Child ticket |
+| | Department ticket category | Route stage |
+| | Instructions | what to do and what to write as the result |
+| Who | Department (group) | Service department |
+| | Where to create the department ticket | In the chosen entity → "Service department" |
+| | How the department reports the result | Assignee marks the result (default) |
+| Deadline | Stage deadline | 3 working days |
+| On refusal | What to do on refusal | Answer the requester with a refusal and end the route |
+| | Where it can be returned for clarification | 10 and 20 |
 
 **Stage 30 — Answer to the requester**
 
-| Field | Value |
-|---|---|
-| Stage name | Answer to the requester |
-| Order | 30 |
-| Execution mode | Task in the ticket |
-| Responsible group | First line |
-| Where the stage runs | Parent ticket's entity |
-| Completion report | Ask, mandatory |
-| Instructions | write the answer for the requester |
-| Negative outcome | Stop after refusal |
+| Block | Field | Value |
+|---|---|---|
+| What to do | Stage name | Answer to the requester |
+| | How it is done | Task in the ticket |
+| | Report on completion | Mandatory |
+| | Instructions | write the answer for the requester |
+| Who | Assignee group | First line |
 
-With the new handling "Negative outcome" is mandatory on every stage, even
-where refusals never happen.
+A task has no "On refusal" block: refusals do not happen on it, and the
+plugin sets the value itself.
 
-**Return points.** A stage can be chosen as a return point only after it has
-been saved once. Open stage 10 and select "Manager approval" in "Allowed
-return points"; open stage 20 and select both 10 and 20. Stage 30 has no
-return points — a task in the ticket cannot return.
+**"More"** on a stage holds the order, the ticket status at the stage (by
+default by mode: approval — "Approval", child ticket — "Pending", task —
+"Processing"), the planned duration and "can be skipped" for a task, the SLA
+for a child ticket, and how many approvals are needed for an approval.
 
-![Stage form (screenshot of 1.6–1.7, fictional data; the "Department outcome and new attempt" block is not shown)](img/ui-stage-form.png)
+![Child-ticket stage form: the "What to do", "Who", "Deadline" and "On refusal" blocks (fictional data)](img/ui-stage-form.png)
 
-### Step 4. New outcome handling
+When the stages are ready, the readiness line above the stage table says
+"Ready to start". If something is missing, it names the stage and what to
+choose, with a link to the stage.
 
-Open the route and set **"Outcome handling" → "Explicit outcomes and new
-attempts"**. If a stage lacks an outcome source or a negative outcome, or its
-return points are invalid, the route will not save and says what to fill in.
+![The "Stages" tab: the readiness line, who, deadline and what happens on refusal (fictional data)](img/ui-stages-list.png)
 
-The new handling applies to starts after the save. Tickets already running
-finish the previous way.
-
-### Step 5. Start by a rule
+### Step 4. Start by a rule
 
 **Administration → Rules → Business rules for tickets → Add**
 
@@ -166,7 +167,8 @@ finish the previous way.
 ![Route start chain](img/start-chain.en.svg)
 
 If the list of routes in the rule action is empty, the route lives in another
-entity and is not flagged "Visible in child entities". Mind the rule order and
+entity and is not flagged "Visible in child entities". The route's readiness
+line shows this too: "Rule … will not see the route". Mind the rule order and
 "Stop processing": a rule higher up may take the ticket first.
 
 A route can also be started by hand: the ticket's **"Stage route"** tab → pick
@@ -177,7 +179,7 @@ in its destination, set the category "Request with approval" as a specific
 value — the requester cannot pick the wrong category. In GLPI 11 the catalogue
 is at `/ServiceCatalog`, a form at `/Form/Render/<form id>`.
 
-### Step 6. Check
+### Step 5. Check
 
 Walk the route as each participant, not as an administrator: as an
 administrator you see neither visibility limits nor missing rights.
@@ -230,34 +232,40 @@ administrator you see neither visibility limits nor missing rights.
 
 ## Example 2. Work inside one department
 
-All stages are tasks in one ticket, previous outcome handling. Suits an
-internal procedure of one unit.
+All stages are tasks in one ticket. Suits an internal procedure of one unit.
 
-| # | Stage | Mode | Group | Notes |
+| # | Stage | How it is done | Group | Notes |
 |---|---|---|---|---|
 | 10 | Triage | Task in the ticket | First line | optional report |
-| 20 | Do the work | Task in the ticket | Service department | stage deadline 480 minutes |
-| 30 | Check the result | Task in the ticket | First line | **optional stage**, mandatory report |
+| 20 | Do the work | Task in the ticket | Service department | deadline 1 working day |
+| 30 | Check the result | Task in the ticket | First line | can be skipped, mandatory report |
 
 1. **Groups.** Both groups are visible in the tickets' entity ("visible in
    child entities" from a parent entity): the task lives in the ticket itself,
    and for the duration of the stage the plugin adds the group to its
    assignees.
-2. **Route.** As in example 1, "Outcome handling" — "Previous handling", with
-   your own category and rule.
-3. **Stages.** Mode "Task in the ticket", "Where the stage runs" — "Parent
-   ticket's entity". Stage 20 has "Stage deadline, minutes" = 480 and the route
-   has a working calendar: `itilflow_deadlines` marks it overdue. Stage 30 has
-   "Optional stage" = Yes.
+2. **Route.** As in example 1, with your own category and rule.
+3. **Stages.** "How it is done" — "Task in the ticket". Stage 20 has "Stage
+   deadline" — 1 working day, and the route has a working calendar:
+   `itilflow_deadlines` marks it overdue. Stage 30 has "Stage can be skipped:
+   Yes" under "More".
 4. **Walk-through.** Each stage's assignee clicks "Complete stage" in the stage
    row or in **Answer → Complete stage**. Stage 30 also offers "Skip" — the
    reason is mandatory and goes to the timeline.
-5. **End.** After stage 30 the solution block is lifted, and the assignee
-   writes the ticket solution the stock way.
+5. **End.** After stage 30 the ticket is solved automatically, and that
+   stage's report is the result for the requester.
 
-To move such a route to the new handling, fill in "Negative outcome" on every
-stage and choose "Explicit outcomes and new attempts": at the end the ticket
-will be solved automatically with the last stage's report as the result.
+### A route created before 1.9.0
+
+A route on the previous outcome handling shows a **"The route uses the
+previous order"** banner («Маршрут работает по прежнему порядку») on its page
+and the **"Convert to the new order"** button («Перевести на новый порядок»).
+Before converting, a dialog lists what will be filled in: "abort" → "answer
+the requester with a refusal", "stop" → "stop", "return to stage N" → "stop"
+plus return point N; child tickets get "assignee marks the result", tasks
+need no choice. Only empty fields are filled. Tickets already started finish
+on the previous handling, new ones follow the new one. The form offers no way
+back.
 
 ---
 

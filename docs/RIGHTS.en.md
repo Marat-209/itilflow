@@ -31,7 +31,7 @@ button on the tab is shown only to those the server will allow.
 | Complete or skip a "Task in the ticket" stage | the stage's responsible person or group member | update right on the ticket; central interface; skip — optional stages only, with a reason |
 | Name the approver | the ticket's assignee (personally or via a group) or a process administrator | the stage is waiting; approvers cannot be swapped once approvals exist |
 | Answer an approval | the assigned approver | stock GLPI check: addressee, their groups, substitution; no special right needed, works from self-service |
-| Record a department result (new handling) | the child ticket's assignee (personally or via a group) | outcome source "Explicit answer by the assigned technician"; update right on the child ticket |
+| Record a department result (new handling) | the child ticket's assignee (personally or via a group) | "How the department reports the result" is "Assignee marks the result"; update right on the child ticket |
 | Return for clarification (new handling) | the department's technician or the current stage's approver | the stage has return points |
 | Continue after clarification | the main ticket's assignee or a process administrator | the route is waiting for clarification |
 | Explain to the requester | the outcome's author or the department's current assignee | the outcome is waiting for a public explanation |
@@ -42,7 +42,7 @@ button on the tab is shown only to those the server will allow.
 | Abort or resume the route | a process administrator | update right on the ticket |
 | Start a route manually | a process administrator | update right on the ticket; the route is active and fits the ticket's type and entity |
 | Withdraw the ticket | the original requester | the route allows withdrawal; it is running or halted; the ticket is not solved; works from self-service |
-| See the route tab | everyone who sees the ticket | the requester — if "Show the route tab to the requester" is on |
+| See the route tab | everyone who sees the ticket | the requester — if "Route tab for the requester" is on |
 | See the out-of-order log | a process administrator | |
 
 ## The profile's entity

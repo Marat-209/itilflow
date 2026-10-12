@@ -6,7 +6,7 @@ English · **[Русский](INSTALL.md)**
 
 | What | Requirement |
 |---|---|
-| GLPI | 11.0.x. Declared 11.0.0–11.99.99; release 1.8.0 tested on 11.0.8 |
+| GLPI | 11.0.x. Declared 11.0.0–11.99.99; release 1.9.0 tested on 11.0.8 |
 | Database | MariaDB (tested) or MySQL 8 (not tested); InnoDB tables |
 | PHP | whatever your GLPI 11 requires |
 | Cron | a system cron running `front/cron.php` every minute: the plugin's tasks run in CLI mode |
@@ -22,7 +22,7 @@ The plugin directory must be named `itilflow` and sit in your GLPI's
 From a release archive:
 
 ```bash
-tar -xzf itilflow-1.8.0.tar.gz -C /var/www/glpi/plugins/
+tar -xzf itilflow-1.9.0.tar.gz -C /var/www/glpi/plugins/
 chown -R www-data:www-data /var/www/glpi/plugins/itilflow
 ```
 
@@ -30,7 +30,7 @@ From the repository (the repository root is the plugin directory):
 
 ```bash
 git clone <this repository's URL> /var/www/glpi/plugins/itilflow
-cd /var/www/glpi/plugins/itilflow && git checkout v1.8.0
+cd /var/www/glpi/plugins/itilflow && git checkout v1.9.0
 ```
 
 Use your own web user (`www-data`) and GLPI path — the same as the other
@@ -41,7 +41,7 @@ permissions: after unpacking, directories may lack the `x` bit and GLPI
 answers 404 for the plugin's files. A reliable way:
 
 ```bash
-git archive --prefix=itilflow/ -o itilflow-1.8.0.tar.gz v1.8.0
+git archive --prefix=itilflow/ -o itilflow-1.9.0.tar.gz v1.9.0
 ```
 
 ### 2. Install and enable
@@ -57,6 +57,20 @@ php bin/console cache:clear
 The same is available in the interface: **Setup → Plugins** → "Install", then
 "Enable". Do not skip clearing the cache: without it GLPI may keep rendering
 old templates. Do the same after every replacement of the plugin files.
+
+Why. In production mode GLPI 11 does not reread changed templates: the
+compiled copy is looked up by the file's path, not by its contents, and
+"Update" in the plugin list does not touch it. Since 1.9.0, install and
+"Update" remove the plugin's compiled template copies themselves. But
+`cache:clear` is still needed: if the console and the web server run different
+PHP versions, the console cannot find the web server's copies. A failure of
+this step does not stop the installation — the reason is written to
+`files/_log/itilflow.log`.
+
+If OPcache on the server is configured without file timestamp checks
+(`opcache.validate_timestamps=0`), reset it too after replacing the files:
+**Setup → General → Performance** → "Reset", or restart the web server.
+Otherwise the old plugin classes stay in use.
 
 The installer creates the tables, verifies their schema and stops with
 a message on any mismatch. An incomplete schema is a reason to investigate,
@@ -94,12 +108,40 @@ Details: [RIGHTS.en.md](RIGHTS.en.md).
 
 ### 5. Check
 
-- `php bin/console plugin:list` — itilflow 1.8.0 is enabled.
+- `php bin/console plugin:list` — itilflow 1.9.0 is enabled.
 - The database has nine `glpi_plugin_itilflow_*` tables: processes, stages,
   instances, steps, violations, attempts, outcomes, outcomevalidations,
   commandreceipts.
 - `files/_log/php-errors.log` has no errors mentioning `itilflow`.
 - The **Administration** menu has **Stage routes** (requires the right).
+
+## Upgrading from 1.8.x
+
+The database schema does not change in 1.9.0: no new tables or columns, and
+the installer does not edit any rows. The route and stage settings screens
+change.
+
+1. **Backup** of `plugins/itilflow` (and, as always, of the database).
+2. **Files.** Replace the contents of `plugins/itilflow` with 1.9.0.
+3. **Install** — as above: `plugin:install`, `plugin:activate`,
+   `cache:clear`. Until `plugin:install` runs, GLPI keeps the plugin disabled
+   ("to be updated").
+
+What process administrators will see:
+
+- the route and stage forms show only what is needed, rarely used fields are
+  under the collapsed "More"; the stage deadline is in working days or hours;
+- a readiness line on the route and above the stage table;
+- a new route created from the form uses the new outcome handling right away;
+  routes on the previous handling show a banner and the "Convert to the new
+  order" button («Перевести на новый порядок»). Existing routes do not change
+  by themselves: they are converted only when the button is pressed;
+- a route created through the API without `outcome_contract` stays on the
+  previous handling by default.
+
+**Rollback** — put the 1.8.x files back and run `cache:clear`: 1.9.0 writes
+no data that 1.8 would not understand. Routes converted with the button stay
+on the new handling — 1.8 understands it too.
 
 ## Upgrading from 1.7.x
 
@@ -107,8 +149,8 @@ Details: [RIGHTS.en.md](RIGHTS.en.md).
 
 1. **Backup.** A full database dump and a copy of `plugins/itilflow`. Ideally,
    rehearse the upgrade on a copy of the production database first.
-2. **Files.** Replace the contents of `plugins/itilflow` with 1.8.0 (remove the
-   old files: some templates were dropped and some classes added in 1.8.0).
+2. **Files.** Replace the contents of `plugins/itilflow` with 1.9.0 (remove the
+   old files: some templates were dropped and some classes added since 1.8.0).
 3. **Migration.**
 
    ```bash
@@ -131,8 +173,9 @@ same path, but the tested path is from 1.7.0.
 ### What changes for existing routes
 
 - **Outcome handling does not change.** All routes stay on the previous
-  handling; "Explicit outcomes and new attempts" is enabled per route and
-  applies to new starts only.
+  handling; each one is converted to the new handling with the "Convert to
+  the new order" button on the route page, and the new handling applies to
+  new starts only.
 - **Authority is checked more strictly — in every control mode.** "Complete"
   and "Skip" no longer close an approval stage or a child-ticket stage: those
   close by the approver's answer and by the child ticket's solution (or

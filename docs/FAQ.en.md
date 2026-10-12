@@ -4,6 +4,12 @@ English · **[Русский](FAQ.md)**
 
 ## Starting a route
 
+**The route does not start — where to begin.**
+Open the route: the readiness line at the top names what is missing — the
+stage and the field, with a link. It checks the same things the plugin checks
+at start, plus a disabled route, a rule that cannot see the route, and a group
+that is not visible in the department ticket's entity.
+
 **The list of routes in the business rule action is empty.**
 The list is filtered by the rule's entity. A rule in a child entity sees
 routes of its own and parent entities — but only those with **"Visible in
@@ -12,10 +18,10 @@ in the rule's entity. A rule without a usable value still saves and silently
 does nothing — hence "the rule does not fire".
 
 **The rule fired but the route did not start.**
-Check in order: the route is active; the route's item type matches the
-ticket; the ticket's entity is the route's or a child of it with "Visible in
-child entities"; the rule is not overridden by a higher rule with "Stop
-processing".
+Check in order: the route is enabled ("Route enabled" = Yes); "Route is for"
+matches the ticket's type; the ticket's entity is the route's or a child of
+it with "Visible in child entities"; the rule is not overridden by a higher
+rule with "Stop processing".
 
 **The route halted as soon as a stage opened.**
 Almost always the responsible group is not visible in the target entity.
@@ -26,6 +32,19 @@ pick a group from the target entity.
 
 **The group is missing from the stage's list.**
 The group lacks **"Can be assigned to tickets"**.
+
+**The stage form lacks a field I need.**
+The form shows the fields of the selected mode ("How it is done") and of the
+route's outcome handling. Rarely used fields are in the collapsed "More" at
+the bottom: order, ticket status at the stage, duration and "can be skipped"
+for a task, SLA for a child ticket, how many approvals are needed. A field of
+another mode is not sent by the form, and its value in the database does not
+change.
+
+**I deleted a stage and it disappeared from other stages' return points.**
+By design since 1.9.0: a deleted stage is removed from the return points of
+the other stages of the same route, and the message names those stages.
+Before, deleting such a stage was rolled back with "Refresh the page".
 
 ## Walking the stages
 
@@ -95,7 +114,17 @@ a mismatch, puts the plugin into "to be updated". Run `plugin:install` and
 `plugin:activate` (or "Update" in the plugin list — not "Uninstall").
 
 **Old forms and tabs are shown after the upgrade.**
-Template cache: `php bin/console cache:clear`.
+Template cache. In production mode GLPI 11 does not reread a changed template:
+the compiled copy is looked up by the file's path, not by its contents, and the
+"Update" and "Clear cache" buttons in the interface do not touch it. Since
+1.9.0 the plugin removes its own copies on install and upgrade, but the
+reliable way is still the same — from the GLPI directory, as the web user:
+`php bin/console cache:clear`. With OPcache without file timestamp checks
+(`opcache.validate_timestamps=0`), reset it too: **Setup → General →
+Performance** → "Reset".
+
+A quick sign without the console: in debug mode GLPI compiles templates
+separately. If the form is new there and old in normal mode, it is the cache.
 
 **The plugin's files return 404.**
 The archive was built on Windows and the directories lack the `x` bit.

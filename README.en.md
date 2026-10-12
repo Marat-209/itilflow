@@ -56,6 +56,11 @@ manager approval → work by a department → answer to the requester
   assignee, approval addressee.
 - **One route table on the ticket (1.8.0).** Each stage's result and the action
   button sit in the stage row; on a phone the table folds into cards.
+- **Simple settings (1.9.0).** The stage form shows only the fields of its
+  mode, rarely used ones under "More"; the deadline is in working days or
+  hours; a readiness line tells whether the route is ready and what is
+  missing; a new route uses the new outcome handling right away, an old one is
+  converted with one button.
 - **Order enforcement** in Log, Warn and Block modes, with a log of
   out-of-order actions.
 - **Ticket status per stage**, stage deadline with overdue marking, stage
@@ -64,8 +69,8 @@ manager approval → work by a department → answer to the requester
 
 ## Requirements
 
-- GLPI 11.0.x (`setup.php` declares 11.0.0–11.99.99). Release 1.8.0 was
-  tested on GLPI 11.0.8 with MariaDB: fresh install and upgrade from 1.7.0.
+- GLPI 11.0.x (`setup.php` declares 11.0.0–11.99.99). Release 1.9.0 was
+  tested on GLPI 11.0.8 with MariaDB: upgrade from 1.8.0.
   It has not been tested on MySQL 8.
 - PHP — whatever your GLPI 11 requires.
 - InnoDB tables (the installer checks this).
@@ -77,7 +82,7 @@ manager approval → work by a department → answer to the requester
 
 ```bash
 # unpack the release archive into GLPI's plugins directory — you get an itilflow directory
-tar -xzf itilflow-1.8.0.tar.gz -C /var/www/glpi/plugins/
+tar -xzf itilflow-1.9.0.tar.gz -C /var/www/glpi/plugins/
 chown -R www-data:www-data /var/www/glpi/plugins/itilflow
 
 # install, enable, clear the cache (from the GLPI directory, as the web user)
@@ -90,17 +95,26 @@ Then enable the `itilflow_status_sync` automatic action (**Setup → Automatic
 actions**) and grant the rights in profiles. Details:
 [docs/INSTALL.en.md](docs/INSTALL.en.md).
 
-## Upgrading from 1.7.x
+## Upgrading
+
+**From 1.8.x.** The database schema does not change. Replace the plugin files
+with 1.9.0 and run `plugin:install`, `plugin:activate` and `cache:clear`.
+Existing routes do not change; old ones are converted to the new outcome
+handling with a button on the route page. Rollback: put the 1.8.x files back
+and run `cache:clear`.
+
+**From 1.7.x.**
 
 1. Back up the database and the plugin directory.
-2. Replace the plugin files with 1.8.0.
+2. Replace the plugin files with 1.9.0.
 3. Run `plugin:install`, `plugin:activate` and `cache:clear` as for a fresh
    install. Until `plugin:install` runs, GLPI keeps the plugin disabled
    ("to be updated").
 4. Enable `itilflow_status_sync`.
 
 Existing routes stay in the previous outcome handling and behave as before;
-the new handling is switched on per route. Putting the old files back does not
+each one is converted to the new handling with the "Convert to the new order"
+button («Перевести на новый порядок»). Putting the old files back does not
 roll the database schema back — only restoring the backup does. Details:
 [docs/INSTALL.en.md](docs/INSTALL.en.md#upgrading-from-17x).
 
@@ -109,19 +123,20 @@ roll the database schema back — only restoring the backup does. Details:
 1. **GLPI dropdowns.** Assignee groups flagged "Can be assigned to tickets";
    a ticket category that will start the route.
 2. **Route.** **Administration → Stage routes** («Маршруты этапов») **→ Add**:
-   name, item type "Ticket", entity, "Visible in child entities", control mode
-   "Log".
+   name, entity, "Visible in child entities", working calendar. Everything
+   else is under "More"; the defaults are fine to start with.
 3. **Stages.** The "Stages" tab → "Add stage", for example:
 
-   | # | Stage | Mode | Responsible |
+   | # | Stage | How it is done | Who |
    |---|---|---|---|
-   | 10 | Manager approval | Approval, approver named during processing | — |
+   | 10 | Manager approval | Approval | chosen during the run |
    | 20 | Department work | Child ticket | group "Service department" |
    | 30 | Answer to the requester | Task in the ticket | group "First line" |
 
-4. **New outcome handling (optional).** Fill "Outcome source", "Negative
-   outcome" and return points in the stages, then set the route's "Outcome
-   handling" to "Explicit outcomes and new attempts".
+   Refusal, return for clarification and the department's result are filled
+   with defaults.
+4. **Readiness.** The line above the stage table says "Ready to start" or
+   names what is missing.
 5. **Start.** **Administration → Rules → Business rules for tickets**:
    criterion "Category is …", action "Start stage route → assign → your route".
 6. **Check.** Create a ticket in that category and walk the route as each
@@ -133,16 +148,16 @@ Step by step, with fields and checks: [docs/TUTORIAL.en.md](docs/TUTORIAL.en.md)
 
 | Document | Contents |
 |---|---|
-| [Installation and upgrade](docs/INSTALL.en.md) | requirements, install, cron, upgrade from 1.7, rollback, removal |
+| [Installation and upgrade](docs/INSTALL.en.md) | requirements, install, cron, upgrade from 1.8 and 1.7, rollback, removal |
 | [Concepts](docs/CONCEPTS.en.md) | route, stage, stage modes, outcomes and attempts, answer to the requester, statuses |
 | [Setting up a route step by step](docs/TUTORIAL.en.md) | two illustrative examples from dropdowns to testing |
 | [Rights](docs/RIGHTS.en.md) | profile rights and who may perform which action |
 | [FAQ and GLPI 11 pitfalls](docs/FAQ.en.md) | symptoms, causes, fixes |
 | [Changelog](CHANGELOG.md) | all releases (in Russian) |
 
-The screenshots in `docs/img/` were taken on 1.6–1.7 with fictional data:
-the route and stage forms there lack the 1.8.0 fields, and the ticket tab has
-its previous layout.
+The screenshots of the route and stage forms and of the "Stages" tab in
+`docs/img/` were taken on 1.9.0 with fictional data; the approval sheet was
+taken on 1.6–1.7.
 
 ## Limitations
 
