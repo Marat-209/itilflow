@@ -2,370 +2,163 @@
 
 English · **[Русский](README.md)**
 
-A GLPI 11 plugin that makes a ticket follow a defined procedure: stage by stage,
-in a fixed order, across the departments that must be involved — and refuses to
-let the ticket close until the procedure is complete.
+A GLPI 11 plugin that leads a ticket through a defined procedure: stage by
+stage, in a fixed order, across the departments that must be involved — and
+refuses to let the ticket close until the procedure is complete. At the end
+of the route the requester gets an answer as the ticket solution: the result
+of the work or the reason for a refusal.
 
-> **Language notice.** The plugin's user interface is **Russian only**. Strings
-> are hardcoded and there is no translation catalogue, so no English locale
-> exists at this time. This document describes what the plugin does; the screens
-> your users will see are in Russian. See [Limitations](#limitations).
+GLPI core is not patched. Deadlines, permissions, notifications and reporting
+stay with GLPI; the plugin introduces no ticket statuses, time accounting or
+permission system of its own.
+
+> **Language notice.** The plugin's user interface is **Russian only**: strings
+> are hardcoded and there is no translation catalogue. These documents give the
+> Russian labels next to their English meaning where it helps.
 
 ---
 
-## Why this exists
+## Why
 
-GLPI has tasks, child tickets and approvals. What it does not have is **order**.
-Nothing stops a technician from resolving a ticket while skipping the security
-review; nothing reminds anyone that a new hire must be registered with HR before
-the laptop is handed over; and no built-in report answers the question "which
-stage do our tickets get stuck at, and for how long?"
+GLPI has tasks, child tickets and approvals, but no order between them.
+Nothing stops a ticket from being solved while an approval is skipped; nothing
+says that a manager's approval comes first and the department's work second;
+no stock report answers which stage tickets get stuck at, and for how long.
 
-The classic example is **provisioning a workstation for a new employee**. The
-process crosses five departments:
+A route turns the procedure into a sequence of stages. A stage's object —
+a task, a child ticket or an approval request — is created **when the stage
+is entered**, not all at once. Future stages do not physically exist, so
+there is nothing to mark as done: order is enforced by the data model, not by
+an interface check that an API call could bypass.
+
+The simplest route:
 
 ```
-budget approval → stock check → HR onboarding
-    → security clearance → setup and software → handover against a signed form
+manager approval → work by a department → answer to the requester
 ```
 
-Without a route this is either one ticket whose description lists all the steps
-and half of them get forgotten, or six separate tickets that nobody ties
-together. With a route it is one ticket that creates the right object in the
-right department at the right moment — and physically cannot skip a step.
+## Features
 
-![Route across departments](docs/img/route-lanes.en.svg)
+- **Three stage modes:** a task in the ticket itself, a child ticket in another
+  department (with its own SLA and visibility), a stock GLPI approval with
+  a threshold.
+- **The approver is set in the stage or named while the ticket is processed**,
+  including several approvers with separate approvals and a threshold.
+- **Explicit outcomes and new attempts (1.8.0).** A department answers
+  "Done", "Refused" or "Return for clarification"; after clarification the
+  route continues as a new attempt in the same ticket, earlier attempts stay
+  in the history.
+- **Answer to the requester (1.8.0).** After the last stage the ticket is
+  solved with the result, after a refusal — with the reason; accepting the
+  solution remains with the requester.
+- **Server-side authority checks (1.8.0).** Every route action is checked on
+  the server: access to the ticket and entity, current stage, current
+  assignee, approval addressee.
+- **One route table on the ticket (1.8.0).** Each stage's result and the action
+  button sit in the stage row; on a phone the table folds into cards.
+- **Order enforcement** in Log, Warn and Block modes, with a log of
+  out-of-order actions.
+- **Ticket status per stage**, stage deadline with overdue marking, stage
+  hand-over, withdrawal by the requester, approval sheet, bottleneck report.
+- **Start by a stock business rule** or manually from the ticket.
 
-*Eight stages, five departments. The columns show how one ticket crosses
-organisational boundaries seven times. A dashed outline marks the optional stage;
-the red line is the only backward transition.*
+## Requirements
 
-## What the plugin adds
-
-Exactly one thing the stock system lacks: **controlled transition between stages,
-and refusal of actions outside the current stage**.
-
-Deadlines, permissions, notifications and reporting stay with GLPI. The plugin
-introduces no ticket statuses of its own, no time accounting of its own and no
-permission system of its own — doing so would break stock reporting and the
-lifecycle configuration in profiles.
-
-GLPI core is not patched; only documented extension points are used.
-
-### The core mechanism
-
-A stage's object — a task, a child ticket or an approval request — is created
-**when the stage is entered**, not all at once when the route starts. Future
-stages therefore do not physically exist, and there is nothing to mark as done.
-That, rather than a check in the interface which an API call could bypass, is
-what enforces the order.
-
-## What it looks like
-
-Routes and their stages are configured in a dedicated administration section.
-The stage table shows the whole procedure on one screen: order, execution mode,
-owners, organisational entity, whether a completion report is required, and the
-reaction to a rejected approval.
-
-![Stage list of a route](docs/img/ui-stages-list.png)
-
-The ticket gains a "stage route" tab: the state of every stage, the object that
-was created, the control buttons, and a counter of completed stages in the tab
-header.
-
-![Route tab on a ticket](docs/img/ui-ticket-tab.png)
-
-*The interface is in Russian — see the language notice above.*
+- GLPI 11.0.x (`setup.php` declares 11.0.0–11.99.99). Release 1.8.0 was
+  tested on GLPI 11.0.8 with MariaDB: fresh install and upgrade from 1.7.0.
+  It has not been tested on MySQL 8.
+- PHP — whatever your GLPI 11 requires.
+- InnoDB tables (the installer checks this).
+- A system cron running GLPI's `front/cron.php` every minute: the plugin's
+  automatic actions run in CLI mode.
+- Nothing else: no composer, npm or external services.
 
 ## Installation
 
 ```bash
-# unpack into the GLPI plugins directory
-tar -xzf itilflow-1.7.0.tar.gz -C /var/www/glpi/plugins/
+# unpack the release archive into GLPI's plugins directory — you get an itilflow directory
+tar -xzf itilflow-1.8.0.tar.gz -C /var/www/glpi/plugins/
 chown -R www-data:www-data /var/www/glpi/plugins/itilflow
 
-# install and enable
-php /var/www/glpi/bin/console plugin:install itilflow --username=glpi
-php /var/www/glpi/bin/console plugin:activate itilflow
+# install, enable, clear the cache (from the GLPI directory, as the web user)
+php bin/console plugin:install itilflow --username=<GLPI administrator>
+php bin/console plugin:activate itilflow
+php bin/console cache:clear
 ```
 
-The same can be done through the interface: **Setup → Plugins**.
+Then enable the `itilflow_status_sync` automatic action (**Setup → Automatic
+actions**) and grant the rights in profiles. Details:
+[docs/INSTALL.en.md](docs/INSTALL.en.md).
 
-Installation creates five tables, two profile rights and a stock automatic
-action for stage deadline control. Verify under **Setup → Automatic actions** —
-the task should be listed as scheduled.
+## Upgrading from 1.7.x
 
-**Requirements:** GLPI 11.0.0 — 11.99.99, verified on 11.0.8. Nothing beyond
-GLPI itself: no composer, no npm, no external services.
+1. Back up the database and the plugin directory.
+2. Replace the plugin files with 1.8.0.
+3. Run `plugin:install`, `plugin:activate` and `cache:clear` as for a fresh
+   install. Until `plugin:install` runs, GLPI keeps the plugin disabled
+   ("to be updated").
+4. Enable `itilflow_status_sync`.
 
-## Three stage execution modes
+Existing routes stay in the previous outcome handling and behave as before;
+the new handling is switched on per route. Putting the old files back does not
+roll the database schema back — only restoring the backup does. Details:
+[docs/INSTALL.en.md](docs/INSTALL.en.md#upgrading-from-17x).
 
-One mode does not fit every case. A stage inside a single department and a stage
-that leaves for another organisational entity are fundamentally different things,
-because in GLPI visibility of a ticket comes from being an actor on it, not from
-owning a task.
+## Quick start
 
-| Mode | What is created | When to use | How it closes |
-|---|---|---|---|
-| **Task in the ticket** | a task assigned to a group inside the same ticket | the whole route stays in one department; cheapest mode | the assignee opens Answer → Complete stage |
-| **Child ticket** | a separate ticket in the target entity, linked as a child | the stage leaves for another department; gives the stage its own SLA and its own visibility scope | automatically, when the child ticket is resolved |
-| **Approval** | a stock GLPI approval request with a step and a percentage threshold | sign-off by a manager, security, a system owner, a budget holder | automatically, on the approver's decision |
+1. **GLPI dropdowns.** Assignee groups flagged "Can be assigned to tickets";
+   a ticket category that will start the route.
+2. **Route.** **Administration → Stage routes** («Маршруты этапов») **→ Add**:
+   name, item type "Ticket", entity, "Visible in child entities", control mode
+   "Log".
+3. **Stages.** The "Stages" tab → "Add stage", for example:
 
-### Completing a stage from the ticket form
+   | # | Stage | Mode | Responsible |
+   |---|---|---|---|
+   | 10 | Manager approval | Approval, approver named during processing | — |
+   | 20 | Department work | Child ticket | group "Service department" |
+   | 30 | Answer to the requester | Task in the ticket | group "First line" |
 
-There is no separate window sitting on the ticket fields. On the main form,
-at the bottom of the timeline, the **Answer** menu is the same place as
-Comment, Task, Solution and Approval. It gains **Complete stage**. Choosing
-the item opens the form: the stage title, the instruction from the stage
-setup, the "what was done" field and the button. A mandatory report cannot be
-submitted empty. An optional stage also offers Skip stage, and the reason is
-mandatory.
+4. **New outcome handling (optional).** Fill "Outcome source", "Negative
+   outcome" and return points in the stages, then set the route's "Outcome
+   handling" to "Explicit outcomes and new attempts".
+5. **Start.** **Administration → Rules → Business rules for tickets**:
+   criterion "Category is …", action "Start stage route → assign → your route".
+6. **Check.** Create a ticket in that category and walk the route as each
+   participant — not as an administrator.
 
-The item is shown to the current stage's assignee and to a process
-administrator, and only in the central interface. Self-service does not show
-it. A profile may hide the Stage route tab; the Answer item stays, and the
-form posts to the same handler as the tab.
-
-When a stage is waiting for someone to name the approver, the same menu shows
-**Name the approver** instead. An approval request that already exists, and a
-child ticket, are not given a second button: they close through GLPI's own
-Approve / Refuse and through resolving the child ticket.
-
-Marking the stage task done does not bypass a mandatory report. Closing goes
-through Complete stage, which is where the report is asked. If the report is
-optional, marking the task done still closes the stage.
-
-### Ticket status along the route
-
-A stage has a **status on this stage** field: when the stage is taken into
-work, the ticket moves to the chosen status. Without it the ticket sits in its
-initial status the whole way, and the ticket list gives no hint of which phase
-the process is in — approval, waiting for an answer, or actual work.
-
-The list of statuses comes from the route's own item type, so tickets, changes
-and problems each get their own. Terminal statuses are deliberately absent:
-closing is the whole route's business, and "block resolution until the route is
-finished" already covers it.
-
-The change is written to the timeline as "Статус: Новая → Ожидание". The default
-is *leave unchanged*, so routes configured before 1.6.0 behave exactly as before.
-
-Approval is not reinvented: GLPI already provides substitute approvers,
-collective approval with a percentage threshold, notifications and reports.
-The plugin only creates the request and waits for the outcome.
-
-### When the approver is not known in advance
-
-An approval stage has a **who approves** field. By default the approver is set
-when the stage is configured. The second value is **chosen while the ticket
-runs**: the stage opens and waits until the ticket's assignee or a process
-administrator names a specific person and gives a **reason for the choice**.
-
-This is for cases where the approver follows from the circumstances of the
-request and from a source outside GLPI. The example the feature grew from:
-access to a network folder needs its owner's sign-off, and the registry of
-resource owners is kept outside the system. The dispatcher checks the registry
-and names the owner — and the system records who chose whom, and why.
-
-A waiting route does not count as halted. The ticket timeline gets an entry
-about the wait, and another with the reason once the approver is named. The
-approval sheet shows both the choice and its justification, so the document
-remains fit for audit. The approver cannot be swapped once the request exists.
-
-**Several approvers can be named, each approving separately** — own request,
-own decision. That is how a rule like "the requester's manager signs off, and
-so does the resource owner" fits into one stage instead of two. The outcome is
-decided by the stage's own **approval threshold**: at 100% every sign-off is
-required (after the first one the timeline says how many are still awaited),
-at 50% half of them suffice. A refusal rejects the stage as soon as the
-threshold becomes unreachable.
-
-## Order enforcement
-
-GLPI checks permissions and mutates data at two different levels, and the plugin
-hooks both. This is not redundancy: the permission check is not invoked when an
-object is modified programmatically, so one level is not enough.
-
-| Level | What it does | What it covers |
-|---|---|---|
-| Permission check | withdraws rights on objects of a foreign or inactive stage | ticket form, Kanban, mass actions, REST API — the button simply is not shown |
-| Object update | cancels the operation entirely | all of the above plus any programmatic change; nothing bypasses it, it lives inside GLPI's save method |
-
-### Three rollout modes
-
-Switching enforcement on over live traffic is a mistake: you get a wave of
-complaints and still do not know where the procedure diverges from practice.
-The mode is set per route.
-
-| Mode | Behaviour | When |
-|---|---|---|
-| **Audit** | everything is allowed, violations are recorded silently | the first month — collect real statistics on deviations |
-| **Warn** | the action goes through, is recorded, and the user sees a warning | the transition period while the team adjusts |
-| **Strict** | the operation is cancelled with an explanation | once the process has settled and everyone agrees with it |
-
-A separate **route bypass** right lifts enforcement for a given profile — for the
-duty dispatcher who has to be able to clear a jam. The action still lands in the
-violation log.
-
-## How a route starts
-
-The route is started by an action on a **stock business rule**, not by a separate
-mechanism in the plugin. The administrator configures the start with the same
-criteria as everything else in GLPI, and no second condition language appears in
-the system.
-
-- **Criterion:** the ticket category equals yours.
-- **Action:** "start stage route" → assign → your route.
-
-Add a service catalogue form and fix the category in its destination settings,
-and the requester cannot pick the wrong one — the chain closes by itself:
-
-![Route start chain](docs/img/start-chain.en.svg)
-
-A route can also be started by hand: on the ticket, the stage route tab → pick a
-route → "start route". Requires the stage routes right.
-
-## Organisational entities
-
-A GLPI ticket belongs to exactly one organisational entity. A cross-department
-process is therefore not one ticket but a tree: the parent where the requester
-is, and one child per stage that leaves for another entity.
-
-Three strategies for choosing a stage's entity:
-
-- **Parent's entity** — the stage stays put. The whole process inside one branch.
-- **Fixed entity** — always the one specified. A centralised service: one
-  security team for the whole group.
-- **Group's entity** — derived from the assigned group. The assignee is decided
-  by a rule rather than hardcoded.
-
-**A trap GLPI does not warn about.** The data model does not forbid assigning a
-group from a different organisational entity — the record is created without a
-single error, only the interface dropdown filters. The result is a ticket
-assigned to a group that cannot see it, hanging forever. The plugin checks this
-itself: on a mismatch the route halts with a clear message instead of creating a
-dead ticket.
-
-## Deadlines
-
-The plugin keeps no clock of its own. A GLPI task cannot have its own SLA — that
-is a data model limitation. A stage deadline is therefore built from the **child
-ticket's stock SLA**: countdown on the form, working calendar, escalations,
-stock reports on breaches.
-
-Separately, a stage has a **deadline in minutes** field — not an effort
-estimate, but a due point for marking lateness, counted against the route's
-working calendar. An automatic action tracks it: flags the step, posts a private
-comment on the ticket, records an entry in the log. It fires once and never
-blocks work — a late stage still closes normally.
-
-Regardless of mode, the plugin records the **actual duration of every step**.
-That is what GLPI lacks entirely, and the reason the whole construction exists:
-a report on where the process is standing, and how long the security review
-really takes.
-
-## Transparency for the requester
-
-Every transition between stages is written to the ticket timeline as a public
-comment, so the requester follows progress without contacting the service desk:
-
-> **Stage 1. Stock check — completed.**
-> Performed by: S. Smirnov.
-> What was done: Lenovo T14, asset 004977, reserved.
->
-> **Stage 2. Software set definition — in progress.**
-> Responsible: Support L1. Stages completed: 1 of 5.
-
-Plus a simplified stage table on a tab in the self-service interface. Both
-channels are switched off by independent route flags, for processes whose
-internals are not shown to the requester.
-
-## Day-to-day operation
-
-- **Reassign a stage** to another performer, reason mandatory. The task moves
-  with the stage; the previous assignee loses the right to close it.
-- **Withdrawal by the requester**, reason mandatory, if the route permits it.
-- **Halt and resume** by the process administrator.
-- **Approval sheet** — a printable summary of the run, for review and audit.
-- **Bottleneck report** — per stage: runs, mean, median, maximum, breaches,
-  returns, reassignments.
-
-How to read the report: the mean is misleading. A jam shows where the maximum is
-far above the median — most tickets clear the stage quickly while a subset gets
-stuck for a long time, and that subset is what to investigate. Many returns mean
-the previous stage's requirements are poorly worded; many reassignments mean the
-wrong owner was chosen.
-
-## Versioning
-
-Every save of a route increments its version number. A ticket records the version
-at start and plays that version through to the end. Edit the procedure freely:
-tickets in flight will not change the rules mid-run, and last quarter's reports
-will not stop reconciling.
-
-## Limitations
-
-An honest list of what the plugin does not do.
-
-- **No parallel stages.** The route is strictly linear: one active stage at any
-  moment. Returns to earlier stages exist; branching does not.
-- **No conditional stages.** A stage can be skipped manually if it is marked
-  optional, but there is no automatic "skip if the amount is under N".
-- **No stage strip in the ticket's field panel.** The extension points for that
-  area are declared in GLPI 11.0.8 but are not invoked when the ticket form is
-  rendered. The current stage is completed from the Answer menu on the main
-  form. The approval sheet, reassignment and abort stay on the tab.
-- **No notifications of its own.** Stock GLPI notifications for tasks, child
-  tickets and approvals apply. No email is sent for a missed stage deadline.
-- **Child tickets are supported for the Ticket type.** For changes and problems,
-  the task and approval modes are available.
-- **Russian-only interface.** Strings are hardcoded and there is no translation
-  catalogue. No English locale exists at this time.
-
-### Deliberate non-goals
-
-No ticket statuses of its own, no time accounting replacing SLA and OLA, no
-permission system replacing profiles and entities, no notifications bypassing
-stock templates, and no hidden enforcement: everything blocked is visible in the
-log and explained to the user in words rather than an error code.
-
-## Profile rights
-
-**Administration → Profiles → [profile] → Setup**
-
-| Right | Who should get it | What it opens |
-|---|---|---|
-| Stage routes | process administrator, support lead | creating and editing routes and stages, manual start, halt and resume, the violation log |
-| Route bypass | dispatcher, duty administrator — grant deliberately | closing someone else's stage and out-of-order stages, bypassing enforcement |
-
-**About the approve-request / approve-incident right.** An approver does **not**
-need it for the route to work. In GLPI 11 the answer form is gated by
-`CommonITILValidation::canAnswer()`, which only checks whether the user is a
-target of the validation and ignores profile rights. The right filters something
-else — who is offered in GLPI's own approver picker (`dropdownValidator`) — and
-the plugin sets the approver programmatically, bypassing that picker.
-
-Verified on GLPI 11.0.8: a user on the stock Technician profile, without the
-approve flags, answered the request successfully and the route advanced. Before
-version 1.3.2 the plugin raised a warning for such a setup; that warning was a
-false alarm and has been removed.
+Step by step, with fields and checks: [docs/TUTORIAL.en.md](docs/TUTORIAL.en.md).
 
 ## Documentation
 
-- **[Tutorial](docs/TUTORIAL.en.md)** — building a route from scratch on a real
-  process. Start here.
-- **Administrator and performer manual** — the complete field-by-field reference,
-  17 pages: [docs/itilflow-manual.pdf](docs/itilflow-manual.pdf) *(Russian)*.
-  Written for 1.3.1: its section on the approve-request / approve-incident right
-  is outdated — see "Profile rights" above for the current behaviour.
-- **[Changelog](CHANGELOG.md)** *(Russian)*
+| Document | Contents |
+|---|---|
+| [Installation and upgrade](docs/INSTALL.en.md) | requirements, install, cron, upgrade from 1.7, rollback, removal |
+| [Concepts](docs/CONCEPTS.en.md) | route, stage, stage modes, outcomes and attempts, answer to the requester, statuses |
+| [Setting up a route step by step](docs/TUTORIAL.en.md) | two illustrative examples from dropdowns to testing |
+| [Rights](docs/RIGHTS.en.md) | profile rights and who may perform which action |
+| [FAQ and GLPI 11 pitfalls](docs/FAQ.en.md) | symptoms, causes, fixes |
+| [Changelog](CHANGELOG.md) | all releases (in Russian) |
+
+The screenshots in `docs/img/` were taken on 1.6–1.7 with fictional data:
+the route and stage forms there lack the 1.8.0 fields, and the ticket tab has
+its previous layout.
+
+## Limitations
+
+- A route is linear: one current stage, no branches, no parallel stages.
+  No conditional stages — only an optional stage can be skipped, manually.
+- Child tickets are supported for the "Ticket" type only; changes and problems
+  get the "Task" and "Approval" modes.
+- The plugin sends no notifications of its own: GLPI's stock notifications on
+  tasks, child tickets, approvals and solutions apply.
+- Russian-only interface.
 
 ## Licence
 
-GNU General Public License version 3 or later. Full text in
-[LICENSE](LICENSE).
+GNU General Public License version 3 or later. See [LICENSE](LICENSE).
 
 Copyright (C) 2026 itilflow contributors
 
-This program is distributed in the hope that it will be useful, but **without any
-warranty**.
+This program is distributed in the hope that it will be useful, but **without
+any warranty**.
