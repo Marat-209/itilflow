@@ -41,6 +41,7 @@ function oshibkiSessii(): array
 }
 
 $etapov = 0;
+$abzac = 0;
 $izmeneno = [];
 $sroki = [];
 foreach ((new Stage())->find([], ['plugin_itilflow_processes_id', 'ranking']) as $id => $row) {
@@ -61,6 +62,12 @@ foreach ((new Stage())->find([], ['plugin_itilflow_processes_id', 'ranking']) as
     $posle = stroka(Stage::getTable(), $id);
     $raznica = [];
     foreach ($do as $k => $v) {
+        // Инструкция — поле с редактором GLPI: простой текст он оборачивает в абзац <p>.
+        // Так было и в 1.8.0 (то же поле той же формы); смысл текста не меняется.
+        if ($k === 'content' && '<p>' . $v . '</p>' === (string) ($posle[$k] ?? '')) {
+            $abzac++;
+            continue;
+        }
         if ($k !== 'date_mod' && (string) $v !== (string) ($posle[$k] ?? '')) {
             $raznica[] = $k . ': ' . var_export($v, true) . ' → ' . var_export($posle[$k] ?? null, true);
         }
@@ -74,6 +81,7 @@ foreach ((new Stage())->find([], ['plugin_itilflow_processes_id', 'ranking']) as
 ok($etapov > 0, 'этапов в базе: ' . $etapov);
 ok($izmeneno === [], 'форма этапа сохраняется без изменений', implode(PHP_EOL . '    ', $izmeneno));
 info('сроки: ' . implode(', ', array_unique($sroki)));
+info('инструкций простым текстом, обёрнутых редактором в абзац: ' . $abzac);
 
 $marshrutov = 0;
 $izmeneno = [];

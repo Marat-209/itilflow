@@ -54,6 +54,10 @@ register_shutdown_function(static function (): void {
     }
 });
 
+// Вывод проверки копится до конца: вход под пользователем открывает сессию PHP,
+// а она требует, чтобы до неё ничего не было напечатано.
+ob_start();
+
 $GLOBALS['itilflow_proval'] = 0;
 
 function ok(bool $uslovie, string $chto, string $podrobno = ''): void

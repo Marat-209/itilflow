@@ -63,6 +63,19 @@ function vidimye(DOMXPath $x): array
     return $out;
 }
 
+/** Подписи и подсказки формы — без названий этапов и текстов, которые ввели люди. */
+function podpisi(DOMXPath $x): string
+{
+    $out = [];
+    foreach ($x->query('//label[contains(@class,"col-form-label")] | //*[contains(@class,"itilflow-hint")]'
+        . ' | //div[contains(@class,"collapse") and contains(@class,"form-text")] | //*[contains(@class,"alert")]'
+        . ' | //*[contains(@class,"card-subtitle")] | //span[contains(@class,"fw-semibold")]'
+        . ' | //span[contains(@class,"text-muted") and contains(@class,"small")]') as $n) {
+        $out[] = $n->textContent;
+    }
+    return implode(' ', $out);
+}
+
 global $DB;
 foreach (['glpi', 'process'] as $kak) {
     vojti($uid, $kak);
@@ -128,7 +141,7 @@ foreach (['glpi', 'process'] as $kak) {
                 if ($sluzh !== ($kak === 'glpi' && $novyj)) {
                     $oshibki[] = $metka . ': служебная строка ' . ($sluzh ? 'видна' : 'не видна');
                 }
-                $tekst = $x->document->textContent;
+                $tekst = podpisi($x);
                 foreach (STARYE_SLOVA as $slovo) {
                     if (mb_stripos($tekst, $slovo) !== false) {
                         $oshibki[] = $metka . ': прежнее слово «' . $slovo . '»';
@@ -223,7 +236,7 @@ foreach (['glpi', 'process'] as $kak) {
         ok($plashka === ($poryadok === 'legacy'), $kak . '/' . $poryadok . ': плашка «Перевести на новый порядок» '
             . ($poryadok === 'legacy' ? 'есть' : 'нет'));
         ok($x->query('//*[@data-itilflow-readiness]')->length === 1, $kak . '/' . $poryadok . ': строка готовности на форме');
-        $tekst = $x->document->textContent;
+        $tekst = podpisi($x);
         $slova = array_filter(['Организационная единица', 'Виден в подчинённых единицах', 'Режим контроля', 'инициатор',
             'Обработка исходов', 'Версия определения'], static fn($w) => mb_stripos($tekst, $w) !== false);
         ok($slova === [], $kak . '/' . $poryadok . ': новые подписи вместо прежних', implode(', ', $slova));
