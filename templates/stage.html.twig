@@ -1,9 +1,65 @@
 {% import 'components/form/fields_macros.html.twig' as fields %}
 
-<div class="asset">
-   {% set target = params['target'] ?? item.getFormURL() %}
+{#
+   Форма этапа 1.9: блоки «Что сделать» → «Кто» → «Срок» → «Если отказ» → «Дополнительно».
+   Видны только поля режима этапа и порядка исходов маршрута (правила — StageForm).
+   Скрытое поле отключено и не отправляется: его значение в базе не меняется.
+   Подсказка — строка под полем и «Подробнее», которое раскрывается на месте.
+#}
 
-   <form name="itilflow_stage_form" method="post" action="{{ target }}" data-submit-once>
+{% macro hint(text, more = '', more_id = '', modes = '', mode = '', service = false) %}
+   {% set hidden = modes is not empty and mode not in modes|split(' ') %}
+   <div class="form-text itilflow-hint{{ service ? ' itilflow-service' : '' }}"
+        {% if modes is not empty %}data-itilflow-m="{{ modes }}"{% endif %}
+        {% if service %}data-itilflow-service="1"{% endif %}
+        {% if hidden %}hidden{% endif %}>
+      {% if service %}<span class="badge bg-secondary-lt me-1">служебное</span>{% endif %}
+      {{ text }}
+      {% if more_id is not empty %}
+         <a class="link-secondary ms-1" data-bs-toggle="collapse" href="#{{ more_id }}" role="button"
+            aria-expanded="false" aria-controls="{{ more_id }}">Подробнее</a>
+      {% endif %}
+   </div>
+   {% if more is not empty %}
+      <div class="collapse form-text" id="{{ more_id }}">{{ more }}</div>
+   {% endif %}
+{% endmacro %}
+
+{% macro choices(name, list, value, disabled) %}
+   {% for key, c in list %}
+      <label class="form-check mb-1">
+         <input class="form-check-input" type="radio" name="{{ name }}" value="{{ key }}"
+                {% if value == key %}checked{% endif %} {% if disabled %}disabled{% endif %}>
+         <span class="form-check-label">
+            <span class="fw-semibold">{{ c[0] }}</span>
+            <span class="d-block text-muted small">{{ c[1] }}</span>
+         </span>
+      </label>
+   {% endfor %}
+{% endmacro %}
+
+{% macro targets(list, selected, disabled) %}
+   <input type="hidden" name="_structured_return_targets_present" value="1" {% if disabled %}disabled{% endif %}>
+   {% for t in list %}
+      <label class="form-check mb-1">
+         <input class="form-check-input" type="checkbox" name="_structured_return_targets[]" value="{{ t.value }}"
+                {% if t.value in selected %}checked{% endif %} {% if disabled %}disabled{% endif %}>
+         <span class="form-check-label">{{ t.label }}</span>
+      </label>
+   {% else %}
+      <span class="text-muted">Этапов, на которые можно вернуть, пока нет.</span>
+   {% endfor %}
+{% endmacro %}
+
+{% set rand = random() %}
+{% set mode = item.fields['execution_mode'] %}
+{% set target = params['target'] ?? item.getFormURL() %}
+{% set L = layout %}
+{% set process_url = path('/plugins/itilflow/front/process.form.php') ~ '?id=' ~ processes_id %}
+
+<div class="asset">
+   <form name="itilflow_stage_form" id="itilflow-stage-{{ rand }}" method="post" action="{{ target }}" data-submit-once
+         data-itilflow-structured="{{ structured ? 1 : 0 }}">
       <input type="hidden" name="_glpi_csrf_token" value="{{ csrf_token() }}">
       <input type="hidden" name="plugin_itilflow_processes_id" value="{{ processes_id }}">
       {% if not item.isNewItem() %}
@@ -11,116 +67,286 @@
       {% endif %}
 
       <div class="card-body d-flex flex-wrap">
-         <div class="col-12 col-xxl-9 flex-column">
+         <div class="col-12 col-xxl-10 flex-column">
+            <div class="d-flex flex-wrap justify-content-between align-items-center mb-2 gap-2">
+               <a href="{{ process_url }}">← Маршрут «{{ process.fields['name'] }}»</a>
+               {% if position > 0 %}
+                  <span class="text-muted">этап {{ position }} из {{ total }}</span>
+               {% endif %}
+            </div>
+            {% if readiness is defined and readiness is not null %}
+               {{ include('@itilflow/readiness.html.twig', {'r': readiness, 'stage_view': true}) }}
+            {% endif %}
+            {% if not structured %}
+               <div class="alert alert-secondary py-2">
+                  Маршрут работает по прежнему порядку. Перевести его на новый можно на странице маршрута.
+               </div>
+            {% endif %}
+
             <div class="row flex-row">
+
+               {# ---------------------------------------------------------- Что сделать #}
+               {{ fields.smallTitle('Что сделать', 'ti ti-clipboard-list') }}
 
                {{ fields.textField('name', item.fields['name'], 'Название этапа', {
                   'required': true,
-                  'helper': 'Короткая формулировка действия. Видна исполнителю и инициатору. Например: Проверка наличия на складе.'
+                  'full_width': true,
+                  'add_field_attribs': L.name.attrs,
+                  'add_field_html': _self.hint('Коротко, что делается. Видят исполнитель и заявитель.'),
                }) }}
 
-               {{ fields.numberField('ranking', item.fields['ranking'], 'Порядок', {
-                  'min': 1,
-                  'helper': 'Этапы выполняются строго по возрастанию номера. Пока не закрыт этап 1, этап 2 не существует — его физически нечем отметить. Номера удобно оставлять с промежутками (10, 20, 30), чтобы потом вставлять этапы между ними.'
-               }) }}
-
-               {{ fields.dropdownArrayField('execution_mode', item.fields['execution_mode'], modes, 'Режим исполнения', {
-                  'helper': 'Задача в заявке — работа внутри той же заявки, самый простой режим. Дочерняя заявка — этап уходит в другой отдел или организационную единицу, получает свой SLA и свою видимость. Согласование — штатное утверждение GLPI, этап закроется решением согласующего.'
-               }) }}
-
-               {{ fields.dropdownField('Group', 'groups_id', item.fields['groups_id'], 'Группа-ответственный', {
-                  'condition': {'is_assign': 1},
-                  'entity': -1,
-                  'helper': 'Кто выполняет этап. Только участники этой группы смогут его закрыть — остальным кнопка недоступна. На время этапа группа становится исполнителем заявки, иначе она её просто не увидит. Для этапа-согласования это согласующая группа.'
-               }) }}
-
-               {{ fields.dropdownField('User', 'users_id', item.fields['users_id'], 'Персональный ответственный', {
-                  'right': 'all',
-                  'helper': 'Вместо группы, когда этап закреплён за конкретным человеком — например согласование руководителем. Достаточно указать что-то одно: группу или человека.'
-               }) }}
-
-               {{ fields.dropdownTimestampField('duration', item.fields['duration'], 'Норматив этапа', {
-                  'max': 86400 * 5,
-                  'helper': 'Плановая трудоёмкость. Записывается в задачу этапа и участвует в отчётах по трудозатратам. Это не срок и не таймер: срок этапа задаётся через SLA дочерней заявки.'
-               }) }}
-
-               {{ fields.numberField('deadline_minutes', item.fields['deadline_minutes'], 'Срок этапа, минут', {
-                  'min': 0,
-                  'helper': 'Через сколько минут рабочего времени этап считается просроченным. 0 — срок не контролируется. Отсчёт идёт по рабочему календарю маршрута, поэтому ночь и выходные норматив не съедают. Просроченные этапы помечаются автоматическим действием и видны в отчёте по узким местам.'
-               }) }}
-
-               {{ fields.dropdownArrayField('ticket_status', item.fields['ticket_status'], statuses, 'Статус объекта на этапе', {
-                  'helper': 'В новом порядке исходов открытие этапа ставит запрос статуса в очередь: его применяет штатная задача itilflow_status_sync, которую администратор включает после настройки CLI cron и проверки. До подтверждения учитывается фактический статус GLPI; ошибка видна отдельно и не создаёт второй этап. Прежний порядок сохраняет синхронный вызов при открытии этапа. «Не менять» не записывает статус; собственные правила GLPI продолжают действовать. Решение и закрытие оформляются отдельно, эти статусы здесь не предлагаются.'
-               }) }}
-
-               {{ fields.smallTitle('Организационная единица', 'ti ti-building') }}
-
-               {{ fields.dropdownArrayField('entity_strategy', item.fields['entity_strategy'], strategies, 'Где исполняется этап', {
-                  'helper': 'Заявка в GLPI принадлежит ровно одной организационной единице, поэтому передать работу в другой отдел можно только дочерней заявкой. Сущность родительской — этап остаётся там же; Заданная — всегда в указанной единице (централизованная служба); Сущность группы — вычисляется от группы-исполнителя.'
-               }) }}
-
-               {{ fields.dropdownField('Entity', 'entities_id_target', item.fields['entities_id_target'], 'Целевая сущность', {
-                  'entity': -1,
-                  'helper': 'Заполняется только при стратегии «Заданная сущность». Группа-ответственный должна быть видима в этой единице — своя или рекурсивная из вышестоящей, иначе маршрут остановится с ошибкой при открытии этапа.'
-               }) }}
-
-               {{ fields.smallTitle('Дочерняя заявка', 'ti ti-git-branch') }}
-
-               {{ fields.dropdownField('ITILCategory', 'itilcategories_id', item.fields['itilcategories_id'], 'Категория дочерней заявки', {
-                  'entity': -1,
-                  'helper': 'Категория, с которой создаётся заявка этапа. Через неё работают ваши обычные бизнес-правила: назначение SLA, маршрутизация, уведомления.'
-               }) }}
-
-               {{ fields.dropdownField('SLA', 'slas_id', item.fields['slas_id'], 'SLA дочерней заявки (время до решения)', {
-                  'entity': -1,
-                  'condition': {'type': 0},
-                  'helper': 'Собственный срок этапа — обычный SLA GLPI с рабочим календарём, обратным отсчётом и эскалациями. Удобно задавать накопительно от старта: этап 4 закрыт к 230-й минуте — тогда срок не зависит от того, когда за этап взялись.'
-               }) }}
-
-               {{ fields.smallTitle('Согласование', 'ti ti-checkbox') }}
-
-               {{ fields.dropdownArrayField('approver_source', item.fields['approver_source'], approver_sources, 'Кто согласует', {
-                  'helper': 'Задан в этапе — согласующий известен заранее, укажите его группой или сотрудником выше. Указывается при прохождении — согласующий заранее неизвестен: этап откроется и будет ждать, пока исполнитель или диспетчер укажет конкретного человека с обязательным основанием выбора. Второй вариант нужен там, где согласующий определяется по внешнему источнику — например владелец сетевого ресурса числится в отдельном реестре.'
-               }) }}
-
-               {{ fields.numberField('approval_percent', item.fields['approval_percent'], 'Порог согласования, %', {
-                  'min': 0, 'max': 100,
-                  'helper': 'Сколько процентов согласующих должны утвердить, чтобы этап был пройден. 100 — нужны все; 50 — большинство. Работает через штатные ступени согласования GLPI. Отдельного права согласующему не нужно: в GLPI 11 отвечать может тот, кто назначен согласующим.'
-               }) }}
-
-               {{ fields.dropdownArrayField('on_reject', item.fields['on_reject'], rejects, 'При отклонении', {
-                  'helper': 'Что делать, если согласующий отказал. Остановить — маршрут встаёт, заявку по-прежнему нельзя закрыть, нужно решение администратора. Вернуться на этап — новый проход с указанного этапа, история прошлого сохраняется. Прервать — маршрут отменяется, заявку можно закрывать.'
-               }) }}
-
-               {{ fields.dropdownArrayField('plugin_itilflow_stages_id_reject', item.fields['plugin_itilflow_stages_id_reject'], siblings, 'Вернуть на этап', {
-                  'helper': 'Заполняется только при действии Вернуться на указанный этап. Обычно это тот этап, ошибку которого и нашёл согласующий. Число возвратов ограничено десятью — защита от бесконечного круга.'
-               }) }}
-
-               <div class="col-12 text-muted small">Следующие поля действуют только после явного включения нового порядка исходов в маршруте. Можно подготовить их заранее.</div>
-                  {{ fields.smallTitle('Исход отдела и новая попытка', 'ti ti-git-branch') }}
-                  {{ fields.dropdownArrayField('department_result_source', item.fields['department_result_source'], {'': 'Выберите для дочерней заявки', 'assignee_action': 'Явный ответ назначенного исполнителя', 'native_validation': 'Адресное штатное согласование в дочерней заявке'}, 'Источник исхода') }}
-                  {{ fields.dropdownArrayField('negative_policy', item.fields['negative_policy'], {'': 'Выберите политику', 'block': 'Остановить после отказа', 'abort': 'Прервать после отказа'}, 'Отрицательный исход') }}
-                  <div class="col-12"><label class="form-label">Допустимые точки возврата</label>
-                     <input type="hidden" name="_structured_return_targets_present" value="1">
-                     <select class="form-select" multiple name="_structured_return_targets[]">
-                     {% for id, label in return_choices %}<option value="{{ id }}" {% if id in return_selected %}selected{% endif %}>{{ label }}</option>{% endfor %}
-                     </select><div class="form-text">Только этот или предыдущие этапы; сервер проверяет порядок. Новый этап можно выбрать после его первого сохранения.</div>
+               {% set mode_html %}
+                  <div class="btn-group flex-wrap" role="group" aria-label="Как выполняется">
+                     {% for key, label in modes %}
+                        <input type="radio" class="btn-check" name="execution_mode" value="{{ key }}"
+                               id="itilflow-mode-{{ key }}-{{ rand }}" autocomplete="off"
+                               {% if mode == key %}checked{% endif %}>
+                        <label class="btn btn-outline-primary" for="itilflow-mode-{{ key }}-{{ rand }}">{{ label }}</label>
+                     {% endfor %}
                   </div>
-               {{ fields.smallTitle('Прочее', 'ti ti-dots') }}
-
-               {{ fields.dropdownYesNo('is_optional', item.fields['is_optional'], 'Этап необязательный', {
-                  'helper': 'Да — у исполнителя появляется кнопка Пропустить этап. Причина пропуска обязательна всегда и попадает в ленту заявки, чтобы инициатор понимал, почему часть регламента не выполнялась.'
+               {% endset %}
+               {% set more_mode = 'itilflow-more-mode-' ~ rand %}
+               {% set mode_hints %}
+                  {{ _self.hint('Задача исполнителю внутри этой же заявки.', '', more_mode, 'inline', mode) }}
+                  {{ _self.hint('Отдельная заявка отделу, связанная с этой. Отдел отмечает результат.', '', more_mode, 'delegated', mode) }}
+                  {{ _self.hint('Виза в этой заявке. Этап закроется ответом согласующего.', '', more_mode, 'approval', mode) }}
+                  <div class="collapse form-text" id="{{ more_mode }}">Задача — работа в той же заявке: в своём отделе или итог заявителю. Дочерняя заявка — работу делает другой отдел: у него своя заявка, своя категория и свой счёт работ, а здесь виден итог. Согласование — виза руководителя, владельца ресурса или ИБ.</div>
+               {% endset %}
+               {{ fields.field('execution_mode', mode_html, 'Как выполняется', {
+                  'full_width': true,
+                  'add_field_attribs': L.execution_mode.attrs,
+                  'add_field_html': mode_hints,
                }) }}
 
-               {{ fields.dropdownArrayField('completion_comment', item.fields['completion_comment'], completions, 'Отчёт о выполнении', {
-                  'helper': 'Требовать ли от исполнителя описание сделанного при закрытии этапа. Текст попадает в журнал и в ленту заявки — инициатор видит не только «этап выполнен», но и что именно сделано. Правило действует и при работе через API, не только в форме.'
+               {{ fields.dropdownField('ITILCategory', 'itilcategories_id', item.fields['itilcategories_id'], 'Категория заявки отдела', {
+                  'entity': -1,
+                  'disabled': not L.itilcategories_id.show,
+                  'add_field_attribs': L.itilcategories_id.attrs,
+                  'add_field_html': _self.hint('С ней создаётся заявка отдела; по ней работают ваши правила GLPI.'),
                }) }}
 
+               {{ fields.dropdownArrayField('completion_comment', item.fields['completion_comment'], completions, 'Отчёт при завершении', {
+                  'disabled': not L.completion_comment.show,
+                  'add_field_attribs': L.completion_comment.attrs,
+                  'add_field_html': _self.hint('Что исполнитель пишет, завершая этап.',
+                     'Отчёт попадает в ленту заявки. Если этап последний и ход этапов пишется в ленту, отчёт уходит заявителю итогом в решении заявки.',
+                     'itilflow-more-report-' ~ rand),
+               }) }}
+
+               {% set more_content = 'itilflow-more-content-' ~ rand %}
+               {% set content_hints %}
+                  {{ _self.hint('Что сделать. Попадёт в задачу этапа.', '', more_content, 'inline', mode) }}
+                  {{ _self.hint('Что сделать отделу. Попадёт в описание его заявки.', '', more_content, 'delegated', mode) }}
+                  {{ _self.hint('Что проверить согласующему.', '', more_content, 'approval', mode) }}
+                  <div class="collapse form-text" id="{{ more_content }}">Если ход этапов пишется в ленту заявки, заявитель тоже увидит этот текст. Пишите так, чтобы он был понятен и ему.</div>
+               {% endset %}
                {{ fields.textareaField('content', item.fields['content'], 'Инструкция исполнителю', {
                   'full_width': true,
                   'enable_richtext': true,
-                  'helper': 'Что именно нужно сделать на этапе. Показывается исполнителю в форме завершения и попадает в описание задачи. Если публичный журнал включён, инициатор тоже увидит эту формулировку.'
+                  'add_field_attribs': L.content.attrs,
+                  'add_field_html': content_hints,
                }) }}
+
+               {# ------------------------------------------------------------------ Кто #}
+               {{ fields.smallTitle('Кто', 'ti ti-users') }}
+
+               {{ fields.field('approver_source', _self.choices('approver_source', approver_choices,
+                     item.fields['approver_source'], not L.approver_source.show), 'Кто согласует', {
+                  'full_width': true,
+                  'add_field_attribs': L.approver_source.attrs,
+               }) }}
+
+               {% set group_labels = {'inline': 'Группа-исполнитель', 'delegated': 'Отдел (группа)', 'approval': 'Согласующая группа'} %}
+               {% set group_hints %}
+                  {{ _self.hint('Этап закрывают только её участники. На время этапа группа — исполнитель заявки.', '', '', 'inline', mode) }}
+                  {{ _self.hint('Исполнитель заявки отдела.', '', '', 'delegated', mode) }}
+                  {{ _self.hint('Виза уйдёт группе: ответить может любой её участник.', '', '', 'approval', mode) }}
+               {% endset %}
+               {{ fields.dropdownField('Group', 'groups_id', item.fields['groups_id'], group_labels[mode] ?? group_labels.inline, {
+                  'condition': {'is_assign': 1},
+                  'entity': -1,
+                  'disabled': not L.groups_id.show,
+                  'add_field_attribs': L.groups_id.attrs|merge({'data-itilflow-labels': group_labels|json_encode}),
+                  'add_field_html': group_hints,
+               }) }}
+
+               {% set user_labels = {'inline': 'Или сотрудник', 'delegated': 'Или сотрудник отдела', 'approval': 'Или согласующий сотрудник'} %}
+               {{ fields.dropdownField('User', 'users_id', item.fields['users_id'], user_labels[mode] ?? user_labels.inline, {
+                  'right': 'all',
+                  'disabled': not L.users_id.show,
+                  'add_field_attribs': L.users_id.attrs|merge({'data-itilflow-labels': user_labels|json_encode}),
+                  'add_field_html': _self.hint('Если этап за одним человеком. Достаточно группы или сотрудника.'),
+               }) }}
+
+               {{ fields.dropdownArrayField('entity_strategy', item.fields['entity_strategy'], strategies, 'Где создать заявку отдела', {
+                  'disabled': not L.entity_strategy.show,
+                  'add_field_attribs': L.entity_strategy.attrs,
+                  'add_field_html': _self.hint('Группа должна быть видна в этой организации, иначе маршрут остановится с сообщением.'),
+               }) }}
+
+               {{ fields.dropdownField('Entity', 'entities_id_target', item.fields['entities_id_target'], 'Организация', {
+                  'entity': -1,
+                  'disabled': not L.entities_id_target.show,
+                  'add_field_attribs': L.entities_id_target.attrs,
+                  'add_field_html': _self.hint('Например, централизованная служба.'),
+               }) }}
+
+               {% if L.department_result_source is defined %}
+                  {{ fields.field('department_result_source', _self.choices('department_result_source', result_choices,
+                        item.fields['department_result_source'], not L.department_result_source.show), 'Как отдел сообщает итог', {
+                     'full_width': true,
+                     'add_field_attribs': L.department_result_source.attrs,
+                  }) }}
+               {% endif %}
+
+               {# ----------------------------------------------------------------- Срок #}
+               {{ fields.smallTitle('Срок', 'ti ti-clock') }}
+
+               {% set dl_html %}
+                  <div class="d-flex flex-wrap gap-2 align-items-center">
+                     <input type="number" class="form-control" style="max-width:9rem" name="_deadline_value"
+                            id="itilflow-dl-{{ rand }}" value="{{ deadline.value }}" min="0" step="0.5" data-itilflow-dl>
+                     <select class="form-select" style="max-width:13rem" name="_deadline_unit" aria-label="Единица срока" data-itilflow-unit>
+                        <option value="d" {% if deadline.unit == 'd' %}selected{% endif %}>рабочих дней</option>
+                        <option value="h" {% if deadline.unit == 'h' %}selected{% endif %}>рабочих часов</option>
+                        {% if deadline.unit == 'm' %}<option value="m" selected>минут</option>{% endif %}
+                     </select>
+                     <span class="text-muted small" data-itilflow-calc></span>
+                  </div>
+               {% endset %}
+               {% set dl_hint = deadline.calendar is not empty
+                  ? 'По календарю маршрута «' ~ deadline.calendar ~ '»: рабочий день — ' ~ deadline.hours ~ ' ч. Пусто или 0 — без срока.'
+                  : 'Календарь маршрута не выбран: день — 24 ч. Пусто или 0 — без срока.' %}
+               {{ fields.field('_deadline_value', dl_html, 'Срок этапа', {
+                  'full_width': true,
+                  'id': 'itilflow-dl-' ~ rand,
+                  'add_field_attribs': L.deadline.attrs|merge({'data-itilflow-day': deadline.day}),
+                  'add_field_html': _self.hint(dl_hint,
+                     'Срок считается от начала этапа и только в рабочее время календаря маршрута. Если календарь не выбран — круглосуточно, день равен 24 ч. Просроченный этап помечается в строке этапа и в отчёте; работу это не блокирует. У заявки отдела может быть и свой срок GLPI (SLA) — он в «Дополнительно».',
+                     'itilflow-more-dl-' ~ rand),
+               }) }}
+
+               {# ----------------------------------------------------------- Если отказ #}
+               <div class="col-12" data-itilflow-m="delegated approval" {% if mode == 'inline' %}hidden{% endif %}>
+                  <div class="row">
+                     {{ fields.smallTitle('Если отказ', 'ti ti-arrow-back-up') }}
+
+                     {% if L.negative_policy is defined %}
+                        {{ fields.field('negative_policy', _self.choices('negative_policy', negative_choices,
+                              item.fields['negative_policy'], not L.negative_policy.show), 'Что делать при отказе', {
+                           'full_width': true,
+                           'add_field_attribs': L.negative_policy.attrs,
+                        }) }}
+                     {% endif %}
+
+                     {% if L.return_targets is defined %}
+                        {{ fields.field('_structured_return_targets', _self.targets(targets, targets_selected, not L.return_targets.show),
+                              'Куда можно вернуть на уточнение', {
+                           'full_width': true,
+                           'add_field_attribs': L.return_targets.attrs,
+                           'add_field_html': _self.hint('Исполнитель или согласующий вернёт заявку заявителю на уточнение; маршрут продолжится с отмеченного этапа. Ничего не отмечено — возврата нет.'),
+                        }) }}
+                     {% endif %}
+
+                     {% if L.on_reject is defined %}
+                        {% set more_rej = 'itilflow-more-rej-' ~ rand %}
+                        {% set rej_hints %}
+                           {{ _self.hint('Что делать, если согласующий отказал.', '', more_rej, 'approval', mode) }}
+                           {{ _self.hint('Что делать, если в заявке отдела отклонена виза.', '', more_rej, 'delegated', mode) }}
+                           <div class="collapse form-text" id="{{ more_rej }}">Остановить — маршрут встаёт, заявку нельзя решить, решает администратор процессов. Вернуться — новый проход с выбранного этапа, история сохраняется; не больше десяти возвратов. Прервать — маршрут отменяется, заявку можно решать.</div>
+                        {% endset %}
+                        {{ fields.dropdownArrayField('on_reject', item.fields['on_reject'], rejects, 'При отказе', {
+                           'disabled': not L.on_reject.show,
+                           'add_field_attribs': L.on_reject.attrs,
+                           'add_field_html': rej_hints,
+                        }) }}
+                     {% endif %}
+
+                     {% if L.plugin_itilflow_stages_id_reject is defined %}
+                        {{ fields.dropdownArrayField('plugin_itilflow_stages_id_reject', item.fields['plugin_itilflow_stages_id_reject'], siblings, 'Вернуть на этап', {
+                           'disabled': not L.plugin_itilflow_stages_id_reject.show,
+                           'add_field_attribs': L.plugin_itilflow_stages_id_reject.attrs,
+                           'add_field_html': _self.hint('Обычно тот этап, ошибку которого нашёл согласующий.'),
+                        }) }}
+                     {% endif %}
+                  </div>
+               </div>
+
+               {# -------------------------------------------------------- Дополнительно #}
+               <div class="col-12 mt-2">
+                  <button type="button" class="btn btn-ghost-secondary w-100 justify-content-start text-start"
+                          data-bs-toggle="collapse" data-bs-target="#itilflow-more-{{ rand }}" aria-expanded="false"
+                          aria-controls="itilflow-more-{{ rand }}" data-itilflow-more-toggle>
+                     <i class="ti ti-dots me-2"></i><span class="fw-semibold">Дополнительно</span>
+                     <span class="text-muted small ms-2 text-truncate" data-itilflow-summary></span>
+                     <i class="ti ti-chevron-down ms-auto"></i>
+                  </button>
+               </div>
+               <div class="collapse col-12" id="itilflow-more-{{ rand }}" data-itilflow-more>
+                  <div class="row">
+                     {{ fields.numberField('ranking', item.fields['ranking'], 'Порядок', {
+                        'min': 1,
+                        'add_field_attribs': L.ranking.attrs|merge({'data-itilflow-s': 'Порядок'}),
+                        'add_field_html': _self.hint('Этапы идут по возрастанию номера. Новый этап встаёт в конец.'),
+                     }) }}
+
+                     {% set status_hints %}
+                        {{ _self.hint('Какой статус получает заявка, когда начинается этап.',
+                           'Для нового этапа подставляется по режиму: согласование — «Согласование», дочерняя заявка — «Ожидание», задача — «В работе (назначена)». «Не менять» — плагин статус не трогает. Решение и закрытие здесь не выбираются: заявку решает маршрут целиком.',
+                           'itilflow-more-status-' ~ rand) }}
+                        {% if structured and glpi_admin %}
+                           {{ _self.hint('Статус ставит автоматическое действие itilflow_status_sync — системный cron раз в минуту.', '', '', '', '', true) }}
+                        {% endif %}
+                     {% endset %}
+                     {% set status_attrs = L.ticket_status.attrs|merge({'data-itilflow-s': 'Статус'}) %}
+                     {% if status_by_mode is not null %}
+                        {% set status_attrs = status_attrs|merge({'data-itilflow-status-by-mode': status_by_mode|json_encode}) %}
+                     {% endif %}
+                     {{ fields.dropdownArrayField('ticket_status', item.fields['ticket_status'], statuses, 'Статус заявки на этапе', {
+                        'add_field_attribs': status_attrs,
+                        'add_field_html': status_hints,
+                     }) }}
+
+                     {{ fields.dropdownTimestampField('duration', item.fields['duration'], 'Плановая продолжительность задачи', {
+                        'max': 86400 * 5,
+                        'disabled': not L.duration.show,
+                        'add_field_attribs': L.duration.attrs|merge({'data-itilflow-s': 'Продолжительность'}),
+                        'add_field_html': _self.hint('Запишется в задачу этапа для учёта трудозатрат. На срок не влияет.'),
+                     }) }}
+
+                     {{ fields.dropdownYesNo('is_optional', item.fields['is_optional'], 'Этап можно пропустить', {
+                        'disabled': not L.is_optional.show,
+                        'add_field_attribs': L.is_optional.attrs|merge({'data-itilflow-s': 'Пропуск'}),
+                        'add_field_html': _self.hint('Да — у исполнителя есть «Пропустить этап»; причина обязательна и видна заявителю.'),
+                     }) }}
+
+                     {% if L.return_targets_retry is defined %}
+                        {{ fields.field('_structured_return_targets_retry', _self.targets(targets, targets_selected, not L.return_targets_retry.show),
+                              'Новая попытка после завершения', {
+                           'full_width': true,
+                           'add_field_attribs': L.return_targets_retry.attrs|merge({'data-itilflow-s': 'Новая попытка'}),
+                           'add_field_html': _self.hint('С каких этапов администратор процессов может начать заново, если маршрут закончился на этом этапе.'),
+                        }) }}
+                     {% endif %}
+
+                     {% if L.slas_id is defined %}
+                        {{ fields.dropdownField('SLA', 'slas_id', item.fields['slas_id'], 'SLA заявки отдела', {
+                           'entity': -1,
+                           'condition': {'type': 0},
+                           'disabled': not L.slas_id.show,
+                           'add_field_attribs': L.slas_id.attrs|merge({'data-itilflow-s': 'SLA'}),
+                           'add_field_html': _self.hint('Свой срок GLPI с эскалациями. Обычно его ставит правило по категории.'),
+                        }) }}
+                     {% endif %}
+
+                     {{ fields.numberField('approval_percent', item.fields['approval_percent'], 'Сколько виз нужно, %', {
+                        'min': 1, 'max': 100,
+                        'disabled': not L.approval_percent.show,
+                        'add_field_attribs': L.approval_percent.attrs|merge({'data-itilflow-s': 'Виз нужно'}),
+                        'add_field_html': _self.hint('100 — нужны все согласующие, 50 — половина.'),
+                     }) }}
+                  </div>
+               </div>
 
             </div>
          </div>
@@ -139,3 +365,192 @@
       </div>
    </form>
 </div>
+
+<script>
+(function () {
+   'use strict';
+   // Видимость полей по режиму — те же правила, что у сервера (StageForm). Без глобальных имён.
+   var form = document.getElementById('itilflow-stage-{{ rand }}');
+   if (!form) {
+      return;
+   }
+   var structured = form.getAttribute('data-itilflow-structured') === '1';
+   var more = form.querySelector('[data-itilflow-more]');
+   var summary = form.querySelector('[data-itilflow-summary]');
+
+   function value(name) {
+      var el = form.querySelector('input[name="' + name + '"]:checked') || form.querySelector('select[name="' + name + '"]');
+      return el ? el.value : '';
+   }
+   function state() {
+      return {
+         mode: value('execution_mode') || 'inline',
+         approver: value('approver_source') || 'fixed',
+         where: value('entity_strategy') || 'inherit',
+         result: value('department_result_source'),
+         onrej: value('on_reject') || 'block'
+      };
+   }
+   function cond(c, s) {
+      switch (c) {
+         case 'apfixed': return s.mode !== 'approval' || s.approver === 'fixed';
+         case 'wherefixed': return s.where === 'fixed';
+         case 'back': return s.onrej === 'back';
+         case 'visa': return s.mode === 'approval' || (structured && s.mode === 'delegated' && s.result === 'native_validation');
+      }
+      return true;
+   }
+   function shows(el, s) {
+      var m = el.getAttribute('data-itilflow-m');
+      if (m && m.split(' ').indexOf(s.mode) < 0) {
+         return false;
+      }
+      var c = el.getAttribute('data-itilflow-c');
+      return !c || cond(c, s);
+   }
+   function hiddenInForm(el) {
+      for (; el && el !== form; el = el.parentElement) {
+         if (el.hidden) {
+            return true;
+         }
+      }
+      return false;
+   }
+   function shownValue(field) {
+      var boxes = field.querySelectorAll('input[type="checkbox"]');
+      if (boxes.length) {
+         var on = [];
+         boxes.forEach(function (b) {
+            if (b.checked) {
+               on.push((b.closest('label').textContent || '').trim().split('.')[0]);
+            }
+         });
+         return on.length ? on.join(', ') : '—';
+      }
+      var sel = field.querySelector('select');
+      if (sel) {
+         var opt = sel.options[sel.selectedIndex];
+         var t = opt ? opt.text.trim() : '';
+         return t === '' || t.indexOf('-----') === 0 ? '—' : t.split(' — ')[0];
+      }
+      var inp = field.querySelector('input[type="number"], input[type="text"]');
+      if (!inp) {
+         return '';
+      }
+      return (inp.value || '—') + (inp.name === 'approval_percent' && inp.value ? ' %' : '');
+   }
+   function updateSummary() {
+      if (!more || !summary) {
+         return;
+      }
+      var parts = [];
+      more.querySelectorAll('[data-itilflow-s]').forEach(function (f) {
+         if (!hiddenInForm(f)) {
+            parts.push(f.getAttribute('data-itilflow-s') + ': ' + shownValue(f));
+         }
+      });
+      summary.textContent = more.classList.contains('show') ? '' : parts.join(' · ');
+   }
+   function apply() {
+      var s = state();
+      form.querySelectorAll('[data-itilflow-m], [data-itilflow-c]').forEach(function (el) {
+         el.hidden = !shows(el, s);
+      });
+      form.querySelectorAll('[data-itilflow-field]').forEach(function (f) {
+         var off = hiddenInForm(f);
+         f.querySelectorAll('input, select, textarea').forEach(function (c) {
+            if (c.disabled !== off) {
+               c.disabled = off;
+            }
+         });
+         var labels = f.getAttribute('data-itilflow-labels');
+         if (labels) {
+            var text = JSON.parse(labels)[s.mode];
+            var lbl = f.querySelector('label.col-form-label');
+            if (text && lbl) {
+               lbl.textContent = text;
+            }
+         }
+      });
+      updateSummary();
+   }
+
+   // Срок: пересчёт при смене единицы и подсказка «= N рабочих ч».
+   var dl = form.querySelector('[data-itilflow-dl]');
+   var unit = form.querySelector('[data-itilflow-unit]');
+   var calc = form.querySelector('[data-itilflow-calc]');
+   var dayField = form.querySelector('[data-itilflow-day]');
+   var day = dayField ? parseInt(dayField.getAttribute('data-itilflow-day'), 10) || 1440 : 1440;
+   var per = {d: day, h: 60, m: 1};
+   var round2 = function (v) { return Math.round(v * 100) / 100; };
+   var lastUnit = unit ? unit.value : 'd';
+   function updateCalc() {
+      if (!dl || !unit || !calc) {
+         return;
+      }
+      var v = parseFloat(String(dl.value).replace(',', '.'));
+      if (isNaN(v) || v <= 0) {
+         calc.textContent = 'без срока';
+      } else if (unit.value === 'd') {
+         calc.textContent = '= ' + String(round2(v * day / 60)).replace('.', ',') + ' рабочих ч';
+      } else {
+         calc.textContent = '≈ ' + String(round2(v * per[unit.value] / day)).replace('.', ',') + ' рабочего дня';
+      }
+   }
+   if (dl && unit) {
+      dl.addEventListener('input', updateCalc);
+      unit.addEventListener('change', function () {
+         var v = parseFloat(String(dl.value).replace(',', '.'));
+         if (!isNaN(v)) {
+            dl.value = round2(v * per[lastUnit] / per[unit.value]);
+         }
+         lastUnit = unit.value;
+         updateCalc();
+      });
+   }
+
+   // Статус нового этапа — по режиму, пока его не выбрали руками.
+   var statusField = form.querySelector('[data-itilflow-status-by-mode]');
+   var statusTouched = false;
+   var settingStatus = false;
+   var statusSelect = statusField ? statusField.querySelector('select') : null;
+   if (statusSelect && window.jQuery) {
+      window.jQuery(statusSelect).on('change', function () {
+         if (!settingStatus) {
+            statusTouched = true;
+         }
+      });
+   }
+   function statusByMode() {
+      if (!statusSelect || statusTouched) {
+         return;
+      }
+      var map = JSON.parse(statusField.getAttribute('data-itilflow-status-by-mode'));
+      var v = String(map[state().mode] || 0);
+      settingStatus = true;
+      if (window.jQuery) {
+         window.jQuery(statusSelect).val(v).trigger('change');
+      } else {
+         statusSelect.value = v;
+      }
+      settingStatus = false;
+   }
+
+   form.addEventListener('change', function (e) {
+      if (e.target && e.target.name === 'execution_mode') {
+         statusByMode();
+      }
+      apply();
+   });
+   if (window.jQuery) {
+      // Выпадающие списки GLPI (select2) сообщают о выборе событием jQuery.
+      window.jQuery(form).on('change', 'select', function () { apply(); });
+   }
+   if (more) {
+      more.addEventListener('shown.bs.collapse', updateSummary);
+      more.addEventListener('hidden.bs.collapse', updateSummary);
+   }
+   apply();
+   updateCalc();
+})();
+</script>

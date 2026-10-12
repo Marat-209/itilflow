@@ -52,18 +52,18 @@ class Stage extends CommonDBChild
     public static function getEntityStrategyLabels(): array
     {
         return [
-            'inherit'  => 'Сущность родительской заявки',
-            'fixed'    => 'Заданная сущность',
-            'by_group' => 'Сущность группы-исполнителя',
+            'inherit'  => 'В организации основной заявки',
+            'by_group' => 'В организации группы',
+            'fixed'    => 'В указанной организации',
         ];
     }
 
     public static function getCompletionCommentLabels(): array
     {
         return [
-            'none'     => 'Не запрашивать',
-            'optional' => 'Запрашивать, заполнение по желанию',
-            'required' => 'Запрашивать, заполнение обязательно',
+            'none'     => 'Не спрашивать',
+            'optional' => 'По желанию',
+            'required' => 'Обязательно',
         ];
     }
 
@@ -107,8 +107,8 @@ class Stage extends CommonDBChild
     public static function getApproverSourceLabels(): array
     {
         return [
-            self::APPROVER_FIXED   => 'Задан в этапе (группа или сотрудник)',
-            self::APPROVER_RUNTIME => 'Указывается при прохождении этапа',
+            self::APPROVER_FIXED   => 'Указан в этапе',
+            self::APPROVER_RUNTIME => 'Выбирают при прохождении',
         ];
     }
 
@@ -116,8 +116,35 @@ class Stage extends CommonDBChild
     {
         return [
             self::REJECT_BLOCK => 'Остановить маршрут и ждать решения',
-            self::REJECT_BACK  => 'Вернуться на указанный этап',
+            self::REJECT_BACK  => 'Вернуться на этап',
             self::REJECT_ABORT => 'Прервать маршрут',
+        ];
+    }
+
+    /** Кто согласует — подпись и пояснение варианта в форме. */
+    public static function getApproverSourceChoices(): array
+    {
+        return [
+            self::APPROVER_FIXED   => ['Указан в этапе', 'Группа или сотрудник ниже.'],
+            self::APPROVER_RUNTIME => ['Выбирают при прохождении', 'Исполнитель заявки укажет согласующих и напишет, почему они.'],
+        ];
+    }
+
+    /** Как отдел сообщает итог (новый порядок исходов). */
+    public static function getResultSourceChoices(): array
+    {
+        return [
+            'assignee_action'   => ['Исполнитель отмечает результат', '«Выполнено», «Отказ» или «Вернуть на уточнение» в строке этапа.'],
+            'native_validation' => ['Визой в заявке отдела', 'Группе или сотруднику отдела уходят визы; итог — по их ответам.'],
+        ];
+    }
+
+    /** Что делать при отказе (новый порядок исходов). */
+    public static function getNegativePolicyChoices(): array
+    {
+        return [
+            self::REJECT_ABORT => ['Ответить заявителю отказом и завершить маршрут', 'Заявка решится с текстом «Отказ на этапе …» и причиной.'],
+            self::REJECT_BLOCK => ['Остановить маршрут', 'Решит администратор процессов: новая попытка или прерывание.'],
         ];
     }
 
@@ -169,30 +196,73 @@ class Stage extends CommonDBChild
         $processes_id = (int) ($options['plugin_itilflow_processes_id'] ?? 0);
         $process = new Process();
         $process->getFromDB($processes_id);
+        $structured = ($process->fields['outcome_contract'] ?? 'legacy') === DefinitionSnapshot::MODE;
+        $itemtype = (string) ($process->fields['itemtype'] ?? \Ticket::class);
+        $stages = $process->getStages();
+        $statuses = self::getStatusChoices($itemtype);
+        $status_by_mode = StageForm::statusByMode($statuses);
 
+        if ($this->isNewItem()) {
+            // Новый этап встаёт в конец: следующий десяток после последнего номера.
+            $max = 0;
+            foreach ($stages as $s) {
+                $max = max($max, (int) $s['ranking']);
+            }
+            $this->fields['ranking'] = (intdiv($max, 10) + 1) * 10;
+            $this->fields['ticket_status'] = $status_by_mode[$this->fields['execution_mode']] ?? 0;
+        }
+        $rank = (int) $this->fields['ranking'];
+
+        // Точки возврата — только этот этап и предыдущие, с номерами.
+        $targets = [];
         $siblings = [0 => '-----'];
-        foreach ($process->getStages() as $s) {
-            if ((int) $s['id'] !== (int) $this->getID()) {
+        $position = 0;
+        foreach ($stages as $i => $s) {
+            $own = (int) $s['id'] === (int) $this->getID();
+            if ($own) {
+                $position = $i + 1;
+            } else {
                 $siblings[$s['id']] = sprintf('%d. %s', $s['ranking'], $s['name']);
             }
+            if ($own || (int) $s['ranking'] <= $rank) {
+                $targets[] = ['value' => (int) $s['id'],
+                    'label' => sprintf('%d. %s', $s['ranking'], $s['name']) . ($own ? ' — этот этап' : '')];
+            }
         }
+
+        $calendars_id = (int) ($process->fields['calendars_id'] ?? 0);
+        $day = Deadline::dayMinutes($calendars_id);
+        [$dl_value, $dl_unit] = Deadline::split((int) ($this->fields['deadline_minutes'] ?? 0), $day);
 
         TemplateRenderer::getInstance()->display('@itilflow/stage.html.twig', [
             'item'         => $this,
             'params'       => $options,
             'processes_id' => $processes_id,
             'process'      => $process,
+            'structured'   => $structured,
+            'layout'       => StageForm::layout($this->fields, $structured, $itemtype),
+            'glpi_admin'   => Session::haveRight('config', UPDATE),
             'modes'        => self::getModeLabels(),
             'strategies'   => self::getEntityStrategyLabels(),
             'rejects'      => self::getRejectLabels(),
             'completions'  => self::getCompletionCommentLabels(),
-            'approver_sources' => self::getApproverSourceLabels(),
-            'statuses'     => self::getStatusChoices(
-                (string) ($process->fields['itemtype'] ?? \Ticket::class)
-            ),
+            'approver_choices' => self::getApproverSourceChoices(),
+            'result_choices'   => self::getResultSourceChoices(),
+            'negative_choices' => self::getNegativePolicyChoices(),
+            'statuses'     => $statuses,
+            'status_by_mode' => $this->isNewItem() ? $status_by_mode : null,
             'siblings'     => $siblings,
-            'return_choices' => array_column($process->getStages(), 'name', 'id'),
-            'return_selected' => DefinitionSnapshot::targets($this->fields['return_targets'] ?? '[]') ?? [],
+            'targets'      => $targets,
+            'targets_selected' => DefinitionSnapshot::targets($this->fields['return_targets'] ?? '[]') ?? [],
+            'position'     => $position,
+            'total'        => count($stages),
+            'deadline'     => [
+                'value'    => $dl_value,
+                'unit'     => $dl_unit,
+                'day'      => $day,
+                'hours'    => str_replace('.', ',', rtrim(rtrim(number_format($day / 60, 1, '.', ''), '0'), '.')),
+                'calendar' => $calendars_id > 0 ? \Dropdown::getDropdownName('glpi_calendars', $calendars_id) : '',
+            ],
         ]);
         return true;
     }

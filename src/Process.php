@@ -49,9 +49,9 @@ class Process extends CommonDBTM
     public static function getEnforcementLabels(): array
     {
         return [
-            self::ENFORCE_AUDIT  => 'Журнал — нарушения только записываются',
-            self::ENFORCE_WARN   => 'Предупреждение — действие разрешено, но фиксируется',
-            self::ENFORCE_STRICT => 'Запрет — действие вне очереди отменяется',
+            self::ENFORCE_AUDIT  => 'Журнал — разрешить и записать',
+            self::ENFORCE_WARN   => 'Предупреждение — разрешить с предупреждением',
+            self::ENFORCE_STRICT => 'Запрет — не дать сделать',
         ];
     }
 
