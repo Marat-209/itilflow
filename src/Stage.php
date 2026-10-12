@@ -183,6 +183,7 @@ class Stage extends CommonDBChild
             'modes'      => self::getModeLabels(),
             'can_edit'   => $process->canUpdateItem(),
             'new_stage'  => new self(),
+            'readiness'  => Readiness::check($process),
         ]);
     }
 
@@ -256,6 +257,8 @@ class Stage extends CommonDBChild
             'targets_selected' => DefinitionSnapshot::targets($this->fields['return_targets'] ?? '[]') ?? [],
             'position'     => $position,
             'total'        => count($stages),
+            'readiness'    => $this->isNewItem() || $processes_id <= 0 ? null
+                : ['problems' => Readiness::forStage($process, (int) $this->getID())],
             'deadline'     => [
                 'value'    => $dl_value,
                 'unit'     => $dl_unit,

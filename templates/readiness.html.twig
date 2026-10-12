@@ -1,0 +1,47 @@
+{#
+   Строка готовности маршрута (Readiness). r — результат проверки;
+   stage_view — показ на форме этапа: только недостающее этому этапу.
+#}
+{% if stage_view %}
+   {% if r.problems is not empty %}
+      <div class="alert alert-warning itilflow-readiness" data-itilflow-readiness>
+         <div class="d-flex">
+            <i class="ti ti-alert-triangle me-2 mt-1"></i>
+            <div>
+               <div class="fw-semibold">
+                  {{ r.problems|length == 1 ? 'Этому этапу не хватает одного выбора' : 'Этому этапу не хватает: ' ~ r.problems|length }}
+               </div>
+               <ul class="mb-0">
+                  {% for p in r.problems %}
+                     <li>{{ p.text }}</li>
+                  {% endfor %}
+               </ul>
+            </div>
+         </div>
+      </div>
+   {% endif %}
+{% else %}
+   <div class="alert {{ r.ready ? 'alert-success' : 'alert-warning' }} itilflow-readiness" data-itilflow-readiness>
+      <div class="d-flex">
+         <i class="ti {{ r.ready ? 'ti-circle-check' : 'ti-alert-triangle' }} me-2 mt-1"></i>
+         <div>
+            <div class="fw-semibold">{{ r.title }}</div>
+            {% if r.problems is not empty %}
+               <ul class="mb-0">
+                  {% for p in r.problems %}
+                     <li>
+                        {{ p.text }}
+                        {% if p.url %}<a href="{{ p.url }}" class="ms-1">{{ p.link }}</a>{% endif %}
+                     </li>
+                  {% endfor %}
+               </ul>
+            {% endif %}
+            {% for n in r.notes %}
+               <div class="small mt-1">
+                  {% if n.service %}<span class="badge bg-secondary-lt me-1">служебное</span>{% endif %}{{ n.text }}
+               </div>
+            {% endfor %}
+         </div>
+      </div>
+   </div>
+{% endif %}

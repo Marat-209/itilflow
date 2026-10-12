@@ -92,6 +92,7 @@ class Process extends CommonDBTM
             'enforcements' => self::getEnforcementLabels(),
             'itemtypes'    => self::getItemtypeFormLabels(),
             'structured'   => ($this->fields['outcome_contract'] ?? 'legacy') === DefinitionSnapshot::MODE,
+            'readiness'    => $this->isNewItem() ? null : Readiness::check($this),
         ]);
         return true;
     }
