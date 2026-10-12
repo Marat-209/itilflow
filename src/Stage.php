@@ -289,6 +289,12 @@ class Stage extends CommonDBChild
                     'label' => sprintf('%d. %s', $s['ranking'], $s['name']) . ($own ? ' — этот этап' : '')];
             }
         }
+        $targets_selected = DefinitionSnapshot::targets($this->fields['return_targets'] ?? '[]') ?? [];
+        if ($this->isNewItem()) {
+            // «Этот этап» можно отметить до первого сохранения: номер подставит сервер.
+            $targets[] = ['value' => 'self', 'label' => sprintf('%d. новый этап — этот этап', $rank)];
+            $targets_selected = ['self'];
+        }
 
         $calendars_id = (int) ($process->fields['calendars_id'] ?? 0);
         $day = Deadline::dayMinutes($calendars_id);
@@ -313,7 +319,7 @@ class Stage extends CommonDBChild
             'status_by_mode' => $this->isNewItem() ? $status_by_mode : null,
             'siblings'     => $siblings,
             'targets'      => $targets,
-            'targets_selected' => DefinitionSnapshot::targets($this->fields['return_targets'] ?? '[]') ?? [],
+            'targets_selected' => $targets_selected,
             'position'     => $position,
             'total'        => count($stages),
             'readiness'    => $this->isNewItem() || $processes_id <= 0 ? null
@@ -347,8 +353,12 @@ class Stage extends CommonDBChild
         $this->fields['is_optional']        = 0;
         $this->fields['deadline_minutes']   = 0;
         $this->fields['ticket_status']      = 0;
-        $this->fields['department_result_source'] = '';
-        $this->fields['negative_policy'] = '';
+        // Новый этап (решение 12.10): при отказе — ответить заявителю отказом и завершить
+        // маршрут, отдел сообщает итог отметкой исполнителя, точка возврата — этот этап
+        // (её форма отмечает сама, номер подставляет post_addItem). Поля нового порядка
+        // у маршрута прежнего порядка не выводятся и не отправляются.
+        $this->fields['department_result_source'] = 'assignee_action';
+        $this->fields['negative_policy'] = self::REJECT_ABORT;
         $this->fields['return_targets'] = '[]';
         $this->fields['duration']           = 0;
         // Целочисленные ссылки: пустая строка не проходит в строгом режиме MySQL.
@@ -404,6 +414,14 @@ class Stage extends CommonDBChild
             $values = $input['_structured_return_targets'];
             $targets = [];
             foreach (is_array($values) ? $values : [null] as $value) {
+                // «Этот этап» у нового этапа: номера ещё нет, его подставит post_addItem.
+                if ($value === 'self') {
+                    if ($this->isNewItem()) {
+                        $input['_itilflow_self_target'] = 1;
+                        continue;
+                    }
+                    $value = (string) $this->getID();
+                }
                 if ((!is_string($value) && !is_int($value)) || !preg_match('/^[1-9][0-9]*$/D', (string) $value)
                     || (string) (int) $value !== (string) $value) {
                     Session::addMessageAfterRedirect('Точки возврата заданы неверно — отметьте их заново.', false, ERROR);
@@ -434,6 +452,12 @@ class Stage extends CommonDBChild
                 && !in_array($merged['department_result_source'] ?? '', ['assignee_action', 'native_validation'], true)) {
                 Session::addMessageAfterRedirect('Выберите, как отдел сообщает итог: без этого маршрут не запустится.', false, ERROR);
                 return [];
+            }
+            // У задачи отказа не бывает, движок это поле не читает, а проверка определения
+            // требует значение у каждого этапа: пустое становится «остановить».
+            if (($merged['execution_mode'] ?? self::MODE_INLINE) === self::MODE_INLINE
+                && !in_array($merged['negative_policy'] ?? '', ['block', 'abort'], true)) {
+                $input['negative_policy'] = $merged['negative_policy'] = self::REJECT_BLOCK;
             }
             if (!in_array($merged['negative_policy'] ?? '', ['block', 'abort'], true)) {
                 Session::addMessageAfterRedirect('Выберите, что делать при отказе: без этого маршрут не запустится.', false, ERROR);
@@ -578,6 +602,23 @@ class Stage extends CommonDBChild
         // работоспособной настройке и вводила администраторов в заблуждение.
 
         return $input;
+    }
+
+    /**
+     * «Этот этап» в точках возврата нового этапа: номер появляется только при записи,
+     * поэтому подставляется здесь — в той же транзакции, что и добавление.
+     */
+    public function post_addItem()
+    {
+        global $DB;
+        parent::post_addItem();
+        if (empty($this->input['_itilflow_self_target'])) {
+            return;
+        }
+        $targets = DefinitionSnapshot::targets($this->fields['return_targets'] ?? '[]') ?? [];
+        $targets[] = (int) $this->getID();
+        $this->fields['return_targets'] = DefinitionSnapshot::encode(array_values(array_unique($targets)));
+        $DB->update(self::getTable(), ['return_targets' => $this->fields['return_targets']], ['id' => (int) $this->getID()]);
     }
 
     /** Что убрано из точек возврата других этапов при удалении этого. */

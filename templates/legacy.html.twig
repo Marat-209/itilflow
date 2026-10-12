@@ -1,0 +1,43 @@
+{#
+   Плашка старого маршрута: работает по прежнему порядку исходов, кнопка «Перевести на новый порядок»
+   и диалог — что будет заполнено. Перевод — отдельная форма (POST, ключ CSRF, право изменения).
+#}
+<div class="alert alert-secondary" data-itilflow-legacy>
+   <div class="d-flex flex-wrap gap-2 align-items-start justify-content-between">
+      <div class="flex-grow-1" style="min-width:16rem">
+         Маршрут работает по прежнему порядку: отдел закрывает этап решением своей заявки, при отказе маршрут
+         останавливается, прерывается или возвращается на этап.
+         <a class="link-secondary ms-1" data-bs-toggle="collapse" href="#itilflow-legacy-more-{{ rand }}" role="button"
+            aria-expanded="false" aria-controls="itilflow-legacy-more-{{ rand }}">Подробнее</a>
+         <div class="collapse mt-1" id="itilflow-legacy-more-{{ rand }}">
+            В новом порядке отдел явно отмечает «Выполнено», «Отказ» или «Вернуть на уточнение», заявитель получает
+            ответ и при отказе, а начатая заявка идёт по закреплённой версии маршрута. Начатые заявки доходят по прежнему порядку.
+         </div>
+      </div>
+      {% if legacy.can_convert %}
+         <button type="button" class="btn btn-outline-primary btn-sm" data-bs-toggle="collapse"
+                 data-bs-target="#itilflow-convert-{{ rand }}" aria-expanded="false" aria-controls="itilflow-convert-{{ rand }}">
+            Перевести на новый порядок
+         </button>
+      {% endif %}
+   </div>
+   {% if legacy.can_convert %}
+      <div class="collapse mt-3" id="itilflow-convert-{{ rand }}">
+         <div class="card card-body">
+            <h4 class="mb-2">Перевести «{{ item.fields['name'] }}» на новый порядок?</h4>
+            <ul class="mb-3">
+               {% for line in legacy.lines %}
+                  <li>{{ line }}</li>
+               {% endfor %}
+            </ul>
+            <form name="itilflow_convert_form" method="post" action="{{ item.getFormURL() }}" class="d-flex flex-wrap gap-2">
+               <input type="hidden" name="_glpi_csrf_token" value="{{ csrf_token() }}">
+               <input type="hidden" name="id" value="{{ item.fields['id'] }}">
+               <button type="submit" class="btn btn-primary btn-sm" name="convert" value="1">Перевести</button>
+               <button type="button" class="btn btn-outline-secondary btn-sm" data-bs-toggle="collapse"
+                       data-bs-target="#itilflow-convert-{{ rand }}">Отмена</button>
+            </form>
+         </div>
+      </div>
+   {% endif %}
+</div>

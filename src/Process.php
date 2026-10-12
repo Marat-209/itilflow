@@ -86,13 +86,19 @@ class Process extends CommonDBTM
     public function showForm($ID, array $options = [])
     {
         $this->initForm($ID, $options);
+        $structured = ($this->fields['outcome_contract'] ?? 'legacy') === DefinitionSnapshot::MODE;
         TemplateRenderer::getInstance()->display('@itilflow/process.html.twig', [
             'item'         => $this,
             'params'       => $options,
             'enforcements' => self::getEnforcementLabels(),
             'itemtypes'    => self::getItemtypeFormLabels(),
-            'structured'   => ($this->fields['outcome_contract'] ?? 'legacy') === DefinitionSnapshot::MODE,
+            'structured'   => $structured,
             'readiness'    => $this->isNewItem() ? null : Readiness::check($this),
+            'new_contract' => $this->isNewItem() ? (string) $this->fields['outcome_contract'] : '',
+            'legacy'       => $this->isNewItem() || $structured ? null : [
+                'lines'       => self::conversionLines(self::conversionPlan($this->getStages()), $this->runningCount()),
+                'can_convert' => $this->canUpdateItem(),
+            ],
         ]);
         return true;
     }
@@ -107,6 +113,10 @@ class Process extends CommonDBTM
      * неработающим. Значения совпадают со значениями по умолчанию в схеме,
      * кроме режима контроля: для первого внедрения руководство советует
      * «Журнал», поэтому форма предлагает его, а не «Запрет».
+     *
+     * С 1.9.0 новый маршрут из формы сразу в новом порядке исходов. Маршрут,
+     * созданный через API без outcome_contract, по умолчанию схемы остаётся
+     * в прежнем порядке.
      */
     public function post_getEmpty()
     {
@@ -120,7 +130,180 @@ class Process extends CommonDBTM
         $this->fields['is_recursive']     = 0;
         $this->fields['calendars_id']     = 0;
         $this->fields['version']          = 1;
-        $this->fields['outcome_contract'] = 'legacy';
+        $this->fields['outcome_contract'] = DefinitionSnapshot::MODE;
+    }
+
+    /**
+     * Что заполнит «Перевести на новый порядок» — только пустые поля этапов.
+     *
+     * «прервать» → «ответить заявителю отказом»; «остановить» → «остановить»;
+     * «вернуться на N» → «остановить» + точка возврата N; дочерняя → «исполнитель
+     * отмечает результат»; задача → «остановить», без точек. Подготовленное заранее
+     * не меняется. Возврат на более поздний или удалённый этап не переносится.
+     *
+     * @param list<array> $stages строки этапов по порядку
+     * @return list<array{id:int,ranking:int,name:string,mode:string,kind:string,from:?int,set:array<string,string>}>
+     *   kind: task, abort, block, back, back_lost (возврат не перенесён), kept (ничего не меняется)
+     */
+    public static function conversionPlan(array $stages): array
+    {
+        $by_id = [];
+        foreach ($stages as $s) {
+            $by_id[(int) $s['id']] = $s;
+        }
+        $plan = [];
+        foreach ($stages as $s) {
+            $mode = (string) $s['execution_mode'];
+            $kind = 'task';
+            $from = null;
+            $policy = Stage::REJECT_BLOCK;
+            $targets = [];
+            if ($mode !== Stage::MODE_INLINE) {
+                $kind = match ($s['on_reject']) {
+                    Stage::REJECT_ABORT => 'abort',
+                    Stage::REJECT_BACK  => 'back',
+                    default             => 'block',
+                };
+                $policy = $kind === 'abort' ? Stage::REJECT_ABORT : Stage::REJECT_BLOCK;
+                if ($kind === 'back') {
+                    $to = $by_id[(int) $s['plugin_itilflow_stages_id_reject']] ?? null;
+                    if ($to !== null && (int) $to['ranking'] <= (int) $s['ranking']) {
+                        $from = (int) $to['ranking'];
+                        $targets = [(int) $to['id']];
+                    } else {
+                        $kind = 'back_lost';
+                        $from = $to !== null ? (int) $to['ranking'] : null;
+                    }
+                }
+            }
+            $set = [];
+            if (!in_array($s['negative_policy'] ?? '', [Stage::REJECT_BLOCK, Stage::REJECT_ABORT], true)) {
+                $set['negative_policy'] = $policy;
+            }
+            if (DefinitionSnapshot::targets($s['return_targets'] ?? null) === null) {
+                $set['return_targets'] = DefinitionSnapshot::encode($targets);
+            }
+            if ($mode === Stage::MODE_DELEGATED
+                && !in_array($s['department_result_source'] ?? '', ['assignee_action', 'native_validation'], true)) {
+                $set['department_result_source'] = 'assignee_action';
+            }
+            if (!$set && $mode !== Stage::MODE_INLINE) {
+                $kind = 'kept';
+            }
+            $plan[] = ['id' => (int) $s['id'], 'ranking' => (int) $s['ranking'], 'name' => (string) $s['name'],
+                'mode' => $mode, 'kind' => $kind, 'from' => $from, 'set' => $set];
+        }
+        return $plan;
+    }
+
+    /**
+     * Строки диалога «Перевести на новый порядок»: что будет заполнено.
+     *
+     * @return list<string>
+     */
+    public static function conversionLines(array $plan, int $running): array
+    {
+        $groups = ['back' => [], 'back_lost' => [], 'abort' => [], 'block' => [], 'task' => [], 'kept' => []];
+        $delegated = [];
+        foreach ($plan as $row) {
+            $groups[$row['kind']][] = $row;
+            if (isset($row['set']['department_result_source'])) {
+                $delegated[] = $row['ranking'];
+            }
+        }
+        $ranks = static fn(array $rows): string => self::andList(array_map(static fn(array $r): string => (string) $r['ranking'], $rows));
+        $lines = [$running > 0
+            ? sprintf('Новые заявки пойдут по новому порядку. %d %s по прежнему.', $running,
+                self::plural($running, 'начатая доходит', 'начатые доходят', 'начатых доходят'))
+            : 'Новые заявки пойдут по новому порядку. Начатых заявок нет.'];
+        if ($groups['back']) {
+            $lines[] = sprintf('%s %s: при отказе — «Остановить маршрут», точка возврата — %s.',
+                count($groups['back']) === 1 ? 'Этап' : 'Этапы',
+                self::andList(array_map(static fn(array $r): string => $r['ranking'] . ' («Вернуться на этап ' . $r['from'] . '»)', $groups['back'])),
+                self::andList(array_map(static fn(array $r): string => (string) $r['from'], $groups['back'])));
+        }
+        foreach ($groups['back_lost'] as $r) {
+            $lines[] = sprintf('Этап %d: этап для возврата позже или удалён — при отказе «Остановить маршрут», точку возврата выберите в этапе.', $r['ranking']);
+        }
+        if ($groups['abort']) {
+            $lines[] = sprintf('%s %s: при отказе — «Ответить заявителю отказом и завершить маршрут».',
+                count($groups['abort']) === 1 ? 'Этап' : 'Этапы', $ranks($groups['abort']));
+        }
+        if ($groups['block']) {
+            $lines[] = sprintf('%s %s: при отказе — «Остановить маршрут».', count($groups['block']) === 1 ? 'Этап' : 'Этапы', $ranks($groups['block']));
+        }
+        if ($delegated) {
+            $lines[] = sprintf('Дочерние заявки на %s %s: отдел сообщает итог — «Исполнитель отмечает результат».',
+                count($delegated) === 1 ? 'этапе' : 'этапах', self::andList(array_map('strval', $delegated)));
+        }
+        if ($groups['task']) {
+            $lines[] = sprintf('%s %s: выбирать ничего не нужно.', count($groups['task']) === 1 ? 'Задача' : 'Задачи', $ranks($groups['task']));
+        }
+        if ($groups['kept']) {
+            $lines[] = sprintf('%s %s уже %s заранее и не меняются.', count($groups['kept']) === 1 ? 'Этап' : 'Этапы', $ranks($groups['kept']),
+                count($groups['kept']) === 1 ? 'настроен' : 'настроены');
+        }
+        $lines[] = 'Проверить и поправить можно в каждом этапе.';
+        return $lines;
+    }
+
+    /** Начатые заявки маршрута, которые доходят по прежнему порядку. */
+    public function runningCount(): int
+    {
+        return countElementsInTable(Instance::getTable(), ['plugin_itilflow_processes_id' => $this->getID(),
+            'state' => [Instance::RUNNING, Instance::HALTED]]);
+    }
+
+    /**
+     * «Перевести на новый порядок»: одна транзакция определения, версия +1, затем
+     * сводка того, что заполнено. Начатые заявки доходят по прежнему порядку.
+     *
+     * @return list<array>|null план перевода; null — маршрут уже в новом порядке или перевод не прошёл
+     */
+    public function convertToStructured(): ?array
+    {
+        if ($this->isNewItem() || ($this->fields['outcome_contract'] ?? 'legacy') === DefinitionSnapshot::MODE) {
+            return null;
+        }
+        $running = $this->runningCount();
+        $plan = null;
+        $ok = $this->definitionMutation(['id' => $this->getID()], function () use (&$plan): bool {
+            global $DB;
+            if (($this->fields['outcome_contract'] ?? 'legacy') === DefinitionSnapshot::MODE) {
+                return false;
+            }
+            $plan = self::conversionPlan($this->getStages());
+            foreach ($plan as $row) {
+                if ($row['set'] && !$DB->update(Stage::getTable(), $row['set'], ['id' => $row['id']])) {
+                    throw new \RuntimeException('Этап не обновлён.');
+                }
+            }
+            return (bool) parent::update(['id' => $this->getID(), 'outcome_contract' => DefinitionSnapshot::MODE]);
+        });
+        if (!$ok || $plan === null) {
+            return null;
+        }
+        $this->getFromDB($this->getID());
+        $lines = self::conversionLines($plan, $running);
+        Session::addMessageAfterRedirect('Маршрут переведён на новый порядок. '
+            . implode(' ', array_slice($lines, 1, -1)) . ' ' . $lines[0], false, INFO);
+        return $plan;
+    }
+
+    private static function andList(array $items): string
+    {
+        $last = array_pop($items);
+        return $items ? implode(', ', $items) . ' и ' . $last : (string) $last;
+    }
+
+    private static function plural(int $n, string $one, string $few, string $many): string
+    {
+        $n10 = $n % 10;
+        $n100 = $n % 100;
+        if ($n10 === 1 && $n100 !== 11) {
+            return $one;
+        }
+        return $n10 >= 2 && $n10 <= 4 && ($n100 < 12 || $n100 > 14) ? $few : $many;
     }
 
     public function prepareInputForAdd($input)
@@ -145,9 +328,12 @@ class Process extends CommonDBTM
             Session::addMessageAfterRedirect('Неизвестный контракт исходов.', false, ERROR);
             return [];
         }
-        if (($input['outcome_contract'] ?? $this->fields['outcome_contract'] ?? 'legacy') === DefinitionSnapshot::MODE) {
-            // Вместо общей фразы — первая причина из строки готовности, с номером этапа.
-            $reason = Readiness::firstSnapshotReason(array_replace($this->fields, $input), $this->getStages());
+        // Полнота нового порядка проверяется только у маршрута с этапами: пустой новый
+        // маршрут сохраняется, недостающее показывает строка готовности. Вместо общей
+        // фразы — первая причина из строки готовности, с номером этапа.
+        $stages = $this->isNewItem() ? [] : $this->getStages();
+        if (($input['outcome_contract'] ?? $this->fields['outcome_contract'] ?? 'legacy') === DefinitionSnapshot::MODE && $stages) {
+            $reason = Readiness::firstSnapshotReason(array_replace($this->fields, $input), $stages);
             if ($reason !== null) {
                 Session::addMessageAfterRedirect($reason, false, ERROR);
                 return [];

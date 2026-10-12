@@ -21,6 +21,11 @@ if (isset($_POST['add'])) {
     $process->check((int) $_POST['id'], PURGE);
     $process->delete($_POST, true);
     Html::redirect(Plugin::getWebDir('itilflow') . '/front/process.php');
+} elseif (isset($_POST['convert'])) {
+    // «Перевести на новый порядок»: право изменения маршрута, ключ CSRF проверяет GLPI.
+    $process->check((int) $_POST['id'], UPDATE);
+    $process->convertToStructured();
+    Html::back();
 }
 
 $id = (int) ($_GET['id'] ?? -1);
