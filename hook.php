@@ -220,6 +220,10 @@ function plugin_itilflow_install(): bool
         ]
     );
 
+    // 1.9.0: после обновления GLPI показывал старые формы плагина из кэша шаблонов.
+    // Сбой сброса не прерывает установку: причина уходит в журнал itilflow.log.
+    \GlpiPlugin\Itilflow\TemplateCache::clear();
+
     return true;
 }
 
