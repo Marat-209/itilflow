@@ -41,6 +41,9 @@
          .itilflow-form .col-12.glpi-full-width .col-form-label,
          .itilflow-form .col-12.glpi-full-width .field-container { width: 100%; }
       }
+      {# Подсказки под полями: в тёмных палитрах GLPI цвет Tabler для form-text не переопределён —
+         тёмный текст на тёмном фоне. Там — от цвета текста палитры. То же правило — в форме этапа. #}
+      [data-glpi-theme-dark="1"] .itilflow-form .form-text { color: color-mix(in srgb, var(--tblr-body-color) 90%, var(--tblr-bg-surface)); }
    </style>
    <form class="itilflow-form" name="itilflow_process_form" id="itilflow-process-{{ rand }}" method="post" action="{{ target }}" data-submit-once>
       <input type="hidden" name="_glpi_csrf_token" value="{{ csrf_token() }}">

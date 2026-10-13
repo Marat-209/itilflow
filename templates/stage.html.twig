@@ -86,6 +86,9 @@
          --tblr-btn-hover-border-color: #1d5fae;
          font-weight: 600;
       }
+      {# Подсказки под полями: в тёмных палитрах GLPI цвет Tabler для form-text не переопределён —
+         тёмный текст на тёмном фоне. Там — от цвета текста палитры. То же правило — в форме маршрута. #}
+      [data-glpi-theme-dark="1"] .itilflow-form .form-text { color: color-mix(in srgb, var(--tblr-body-color) 90%, var(--tblr-bg-surface)); }
    </style>
    <form class="itilflow-form" name="itilflow_stage_form" id="itilflow-stage-{{ rand }}" method="post" action="{{ target }}" data-submit-once
          data-itilflow-structured="{{ structured ? 1 : 0 }}">
