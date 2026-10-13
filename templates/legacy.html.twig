@@ -3,6 +3,8 @@
    и диалог — что будет заполнено. Перевод — отдельная форма (POST, ключ CSRF, право изменения).
 #}
 <div class="alert alert-secondary" data-itilflow-legacy>
+   {# Оболочка: у alert в Tabler display:flex, без неё диалог встаёт справа от текста. #}
+   <div class="w-100">
    <div class="d-flex flex-wrap gap-2 align-items-start justify-content-between">
       <div class="flex-grow-1" style="min-width:16rem">
          Маршрут работает по прежнему порядку: отдел закрывает этап решением своей заявки, при отказе маршрут
@@ -40,4 +42,5 @@
          </div>
       </div>
    {% endif %}
+   </div>
 </div>
