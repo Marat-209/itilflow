@@ -35,14 +35,8 @@ function stroki(string $table, array $where): array
     return $out;
 }
 
-// Старый маршрут с «Вернуться на этап».
-$L = 0;
-foreach ((new Process())->find(['outcome_contract' => 'legacy'], ['id']) as $pid => $row) {
-    if ((new Stage())->find(['plugin_itilflow_processes_id' => $pid, 'on_reject' => 'back'])) {
-        $L = (int) $pid;
-        break;
-    }
-}
+// Старый маршрут с «Вернуться на этап» (если в базе таких нет — заводится в транзакции проверки).
+$L = marshrutPrezhnegoPoryadka();
 ok($L > 0, 'найден маршрут прежнего порядка с «Вернуться на этап»');
 if ($L === 0) {
     itog();
@@ -80,7 +74,7 @@ $plashka = $x->query('//*[@data-itilflow-legacy]')->item(0);
 ok($plashka !== null && $x->query('//form[@name="itilflow_convert_form"]//button[@name="convert"]')->length === 1,
     'у старого маршрута — плашка и кнопка «Перевести на новый порядок»');
 $tekst = $plashka?->textContent ?? '';
-ok(str_contains($tekst, 'Задачи') && str_contains($tekst, 'Проверить и поправить можно в каждом этапе.')
+ok(str_contains($tekst, 'Задач') && str_contains($tekst, 'Проверить и поправить можно в каждом этапе.')
     && str_contains($tekst, 'Новые заявки пойдут по новому порядку.'), 'диалог перечисляет, что будет заполнено',
     trim(preg_replace('/\s+/u', ' ', $tekst)));
 

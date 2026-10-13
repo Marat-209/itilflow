@@ -35,6 +35,7 @@ const STARYE_SLOVA = ['Организационная единица', 'сущн
 $uid = adminGlpi();
 ok($uid > 0, 'найден администратор GLPI для входа');
 
+marshrutPrezhnegoPoryadka();
 $marshruty = ['new' => 0, 'legacy' => 0];
 foreach ((new Process())->find([], ['id']) as $row) {
     $k = ($row['outcome_contract'] ?? 'legacy') === DefinitionSnapshot::MODE ? 'new' : 'legacy';

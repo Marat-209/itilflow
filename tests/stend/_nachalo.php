@@ -87,6 +87,89 @@ function estKlass(string $class): bool
     return $est;
 }
 
+/**
+ * Маршрут прежнего порядка с этапами и «Вернуться на этап». Если в базе все
+ * маршруты уже переведены на новый порядок, заводит такой в транзакции проверки
+ * (она откатывается): копию маршрута нового порядка, где больше всего режимов,
+ * с исходами прежнего порядка — «прервать» вместо «ответить отказом», «вернуться
+ * на этап» вместо точки возврата, иначе «остановить». Если возврата не вышло,
+ * первый этап не-задача возвращает на предыдущий.
+ */
+function marshrutPrezhnegoPoryadka(): int
+{
+    global $DB;
+    $P = 'glpi_plugin_itilflow_processes';
+    $S = 'glpi_plugin_itilflow_stages';
+    foreach ($DB->request(['SELECT' => ['p.id'], 'DISTINCT' => true, 'FROM' => $P . ' AS p',
+        'INNER JOIN' => [$S . ' AS s' => ['ON' => ['s' => 'plugin_itilflow_processes_id', 'p' => 'id']]],
+        'WHERE' => ['p.outcome_contract' => 'legacy', 's.on_reject' => 'back'], 'ORDER' => 'p.id', 'LIMIT' => 1]) as $row) {
+        return (int) $row['id'];
+    }
+    $src = null;
+    $best = -1;
+    foreach ($DB->request(['FROM' => $P, 'WHERE' => ['outcome_contract' => 'structured_v1'], 'ORDER' => 'id']) as $p) {
+        $modes = [];
+        foreach ($DB->request(['SELECT' => ['execution_mode'], 'FROM' => $S, 'WHERE' => ['plugin_itilflow_processes_id' => $p['id']]]) as $s) {
+            $modes[$s['execution_mode']] = true;
+        }
+        if (count($modes) > $best && (count($modes) > 1 || isset($modes['approval']) || isset($modes['delegated']))) {
+            $best = count($modes);
+            $src = $p;
+        }
+    }
+    if ($src === null) {
+        return 0;
+    }
+    $etapy = iterator_to_array($DB->request(['FROM' => $S, 'WHERE' => ['plugin_itilflow_processes_id' => $src['id']],
+        'ORDER' => ['ranking', 'id']]));
+    $p = $src;
+    unset($p['id']);
+    $p['name'] = '[проверка] маршрут прежнего порядка';
+    $p['outcome_contract'] = 'legacy';
+    $DB->insert($P, $p);
+    $L = (int) $DB->insertId();
+    $karta = [];
+    $rang = [];
+    foreach ($etapy as $s) {
+        $old = (int) $s['id'];
+        $rang[$old] = (int) $s['ranking'];
+        unset($s['id']);
+        $s['plugin_itilflow_processes_id'] = $L;
+        $s['negative_policy'] = '';
+        $s['return_targets'] = null;
+        $s['department_result_source'] = '';
+        $s['on_reject'] = 'block';
+        $s['plugin_itilflow_stages_id_reject'] = 0;
+        $DB->insert($S, $s);
+        $karta[$old] = (int) $DB->insertId();
+    }
+    $vozvrat = false;
+    $prev = null;
+    foreach ($etapy as $s) {
+        $old = (int) $s['id'];
+        if ($s['execution_mode'] !== 'inline') {
+            $cel = 0;
+            foreach (json_decode((string) ($s['return_targets'] ?? '[]'), true) ?: [] as $t) {
+                if (isset($karta[(int) $t]) && $rang[(int) $t] < (int) $s['ranking']) {
+                    $cel = $karta[(int) $t];
+                    break;
+                }
+            }
+            $set = $cel > 0 ? ['on_reject' => 'back', 'plugin_itilflow_stages_id_reject' => $cel]
+                : ['on_reject' => $s['negative_policy'] === 'abort' ? 'abort' : 'block'];
+            if ($cel === 0 && !$vozvrat && $prev !== null) {
+                $set = ['on_reject' => 'back', 'plugin_itilflow_stages_id_reject' => $karta[$prev]];
+            }
+            $vozvrat = $vozvrat || $set['on_reject'] === 'back';
+            $DB->update($S, $set, ['id' => $karta[$old]]);
+        }
+        $prev = $old;
+    }
+    info('маршрутов прежнего порядка с возвратом в базе нет — в транзакции проверки заведён копией маршрута '
+        . $src['id'] . ': ' . $L);
+    return $L;
+}
+
 /** Первый активный пользователь с правом «Настройка: изменение» — администратор GLPI. */
 function adminGlpi(): int
 {

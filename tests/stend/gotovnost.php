@@ -54,6 +54,7 @@ function teksty(array $r): array
 }
 
 // 1. Маршруты базы: «готов» ⇔ valid (новый порядок).
+marshrutPrezhnegoPoryadka();
 $novye = [];
 $starye = [];
 foreach ((new Process())->find([], ['id']) as $id => $row) {
