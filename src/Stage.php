@@ -510,7 +510,10 @@ class Stage extends CommonDBChild
         // Статус, выставляемый при открытии этапа. 0 — не менять.
         if (array_key_exists('ticket_status', $input)) {
             $status = (int) $input['ticket_status'];
-            $itemtype = (string) ($input['_itemtype'] ?? $this->getItemtype());
+            // Тип объекта — у маршрута из ввода: у нового этапа поля объекта ещё пусты
+            // (prepareInputForAdd), и getItemtype() не видит маршрут.
+            $itemtype = (string) ($input['_itemtype']
+                ?? ($process->isNewItem() ? $this->getItemtype() : $process->fields['itemtype']));
             if (!array_key_exists($status, self::getStatusChoices($itemtype))) {
                 Session::addMessageAfterRedirect(
                     'Этот статус нельзя выставить на этапе: он либо не подходит '
