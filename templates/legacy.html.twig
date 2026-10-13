@@ -2,6 +2,24 @@
    Плашка старого маршрута: работает по прежнему порядку исходов, кнопка «Перевести на новый порядок»
    и диалог — что будет заполнено. Перевод — отдельная форма (POST, ключ CSRF, право изменения).
 #}
+{#
+   «Перевести на новый порядок» и «Отмена» — нейтральные: текст и фон формы, рамка вторичным цветом
+   палитры. Не основным цветом палитры GLPI: в светлых палитрах он почти белый на светлом фоне
+   предупреждения. «Перевести» в диалоге — основная кнопка GLPI, как «Сохранить».
+#}
+<style>
+   .btn.itilflow-neutral-btn {
+      --tblr-btn-color: var(--tblr-body-color);
+      --tblr-btn-bg: var(--tblr-bg-surface);
+      --tblr-btn-border-color: var(--tblr-secondary);
+      --tblr-btn-hover-color: var(--tblr-body-color);
+      --tblr-btn-hover-bg: var(--tblr-bg-surface);
+      --tblr-btn-hover-border-color: var(--tblr-body-color);
+      --tblr-btn-active-color: var(--tblr-body-color);
+      --tblr-btn-active-bg: var(--tblr-bg-surface);
+      --tblr-btn-active-border-color: var(--tblr-body-color);
+   }
+</style>
 <div class="alert alert-secondary" data-itilflow-legacy>
    {# Оболочка: у alert в Tabler display:flex, без неё диалог встаёт справа от текста. #}
    <div class="w-100">
@@ -17,7 +35,7 @@
          </div>
       </div>
       {% if legacy.can_convert %}
-         <button type="button" class="btn btn-outline-primary btn-sm text-wrap" data-bs-toggle="collapse"
+         <button type="button" class="btn itilflow-neutral-btn btn-sm text-wrap" data-bs-toggle="collapse"
                  data-bs-target="#itilflow-convert-{{ rand }}" aria-expanded="false" aria-controls="itilflow-convert-{{ rand }}">
             Перевести на новый порядок
          </button>
@@ -36,7 +54,7 @@
                <input type="hidden" name="_glpi_csrf_token" value="{{ csrf_token() }}">
                <input type="hidden" name="id" value="{{ item.fields['id'] }}">
                <button type="submit" class="btn btn-primary btn-sm" name="convert" value="1">Перевести</button>
-               <button type="button" class="btn btn-outline-secondary btn-sm" data-bs-toggle="collapse"
+               <button type="button" class="btn itilflow-neutral-btn btn-sm" data-bs-toggle="collapse"
                        data-bs-target="#itilflow-convert-{{ rand }}">Отмена</button>
             </form>
          </div>

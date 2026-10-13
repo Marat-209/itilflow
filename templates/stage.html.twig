@@ -64,6 +64,28 @@
          .itilflow-form .col-12.glpi-full-width .col-form-label,
          .itilflow-form .col-12.glpi-full-width .field-container { width: 100%; }
       }
+      /* Кнопки режима — нейтральные, не основным цветом палитры GLPI: в светлых палитрах он
+         почти белый, и невыбранная кнопка выглядела отключённой. Невыбранная — текст и фон
+         формы, рамка вторичным цветом палитры; выбранная — тёмно-синий на голубом с полосой снизу. */
+      .itilflow-form .btn.itilflow-mode-btn {
+         --tblr-btn-color: var(--tblr-body-color);
+         --tblr-btn-bg: var(--tblr-bg-surface);
+         --tblr-btn-border-color: var(--tblr-secondary);
+         --tblr-btn-hover-color: var(--tblr-body-color);
+         --tblr-btn-hover-bg: var(--tblr-bg-surface);
+         --tblr-btn-hover-border-color: var(--tblr-body-color);
+         --tblr-btn-active-color: #1d4f91;
+         --tblr-btn-active-bg: #e8f0fb;
+         --tblr-btn-active-border-color: #1d5fae;
+         --tblr-btn-active-shadow: inset 0 -2px 0 #1d5fae;
+      }
+      /* GLPI красит выбранную кнопку цветом наведения (color: var(--tblr-btn-hover-color) !important). */
+      .itilflow-form .btn-check:checked + .btn.itilflow-mode-btn {
+         --tblr-btn-hover-color: #1d4f91;
+         --tblr-btn-hover-bg: #e8f0fb;
+         --tblr-btn-hover-border-color: #1d5fae;
+         font-weight: 600;
+      }
    </style>
    <form class="itilflow-form" name="itilflow_stage_form" id="itilflow-stage-{{ rand }}" method="post" action="{{ target }}" data-submit-once
          data-itilflow-structured="{{ structured ? 1 : 0 }}">
@@ -108,7 +130,7 @@
                         <input type="radio" class="btn-check" name="execution_mode" value="{{ key }}"
                                id="itilflow-mode-{{ key }}-{{ rand }}" autocomplete="off"
                                {% if mode == key %}checked{% endif %}>
-                        <label class="btn btn-outline-primary" for="itilflow-mode-{{ key }}-{{ rand }}">{{ label }}</label>
+                        <label class="btn itilflow-mode-btn" for="itilflow-mode-{{ key }}-{{ rand }}">{{ label }}</label>
                      {% endfor %}
                   </div>
                {% endset %}
