@@ -282,6 +282,18 @@ ok($x->query('//select[@name="outcome_contract"]')->length === 0, 'у новог
 ok($x->query('//*[@data-itilflow-field="version"]')->length === 0, 'у нового маршрута версии нет');
 ok($x->query('//*[@data-itilflow-legacy]')->length === 0, 'у нового маршрута плашки нет');
 
+// Подсказки под полями в тёмных палитрах GLPI: цвет Tabler для form-text там не переопределён
+// (тёмный текст на тёмном фоне) — формы маршрута и этапа задают его от цвета текста палитры.
+// Контраст во всех палитрах меряется в браузере.
+$pravilo = '[data-glpi-theme-dark="1"] .itilflow-form .form-text';
+$stil = static fn(DOMXPath $x): string => implode("\n", array_map(static fn(DOMNode $n): string => $n->textContent,
+    iterator_to_array($x->query('//style'))));
+$etap = new Stage();
+$etap->getEmpty();
+ok(str_contains($stil($x), $pravilo), 'форма маршрута: подсказки в тёмных палитрах — цветом текста палитры');
+ok(str_contains($stil(dom(vyvod(static fn() => $etap->showForm(-1, ['plugin_itilflow_processes_id' => $marshruty['new']])))), $pravilo),
+    'форма этапа: подсказки в тёмных палитрах — цветом текста палитры');
+
 // Режим контроля: новые подписи видны и на вкладке заявки администратору.
 ok(Process::getEnforcementLabels() === [
     'audit' => 'Журнал — разрешить и записать',
