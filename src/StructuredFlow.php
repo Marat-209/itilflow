@@ -607,7 +607,7 @@ trait StructuredFlow
             throw new \RuntimeException('Объект отдела не подтверждён.');
         }
         if ((int) $stage->fields['users_id'] > 0 && !Authorizer::userFitsItem((int) $stage->fields['users_id'], $child)) {
-            throw new \RuntimeException('Исполнитель недоступен в сущности отдела.');
+            throw new \RuntimeException('Исполнитель недоступен в организации отдела.');
         }
         $link = \CommonITILObject_CommonITILObject::getLinkClass($type, $type);
         if ($link === null) { throw new \RuntimeException('Связь отдела не поддерживается.'); }

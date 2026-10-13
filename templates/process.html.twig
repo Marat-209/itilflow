@@ -65,14 +65,14 @@
 
                {{ fields.dropdownField('Entity', 'entities_id', item.fields['entities_id'], 'Организация', {
                   'add_field_attribs': {'data-itilflow-field': 'entities_id'},
-                  'add_field_html': _self.hint('Маршрут запускается на заявках этой организации.',
-                     'Правило запуска видит маршруты своей организации и вышестоящих, если у них включено «Виден в подчинённых организациях». Если правило описано там, где маршрут не виден, строка готовности об этом скажет.',
+                  'add_field_html': _self.hint('Маршрут применяется к заявкам этой организации.',
+                     'Бизнес-правило, которое запускает маршрут, видит маршруты своей организации и вышестоящих, если у них включено «Виден в подчинённых организациях». Если правило описано там, где маршрут не виден, строка готовности об этом скажет.',
                      'itilflow-more-org-' ~ rand),
                }) }}
 
                {{ fields.dropdownYesNo('is_recursive', item.fields['is_recursive'], 'Виден в подчинённых организациях', {
                   'add_field_attribs': {'data-itilflow-field': 'is_recursive', 'id': 'itilflow-recursive'},
-                  'add_field_html': _self.hint('Да — маршрут запускается и на заявках подчинённых организаций.'),
+                  'add_field_html': _self.hint('Да — маршрут применяется и к заявкам подчинённых организаций.'),
                }) }}
 
                {{ fields.dropdownField('Calendar', 'calendars_id', item.fields['calendars_id'], 'Рабочий календарь', {
@@ -83,7 +83,7 @@
 
                {{ fields.dropdownYesNo('is_active', item.fields['is_active'], 'Маршрут включён', {
                   'add_field_attribs': {'data-itilflow-field': 'is_active', 'id': 'itilflow-active'},
-                  'add_field_html': _self.hint('Выключенный не запускается на новых заявках. Начатые доходят до конца.'),
+                  'add_field_html': _self.hint('Выключенный маршрут к новым заявкам не применяется. Начатые доходят до конца.'),
                }) }}
 
                {{ fields.textareaField('comment', item.fields['comment'], 'Описание', {
@@ -111,7 +111,7 @@
 
                      {{ fields.dropdownArrayField('enforcement', item.fields['enforcement'], enforcements, 'Если действуют не в свой этап', {
                         'add_field_attribs': {'data-itilflow-field': 'enforcement', 'data-itilflow-s': 'Чужой этап'},
-                        'add_field_html': _self.hint('Касается только очереди этапов; права на заявку проверяются всегда.',
+                        'add_field_html': _self.hint('Касается только порядка этапов; права на заявку проверяются всегда.',
                            'Пример: исполнитель этапа 40 закрывает свою задачу, пока идёт этап 20. «Журнал» — действие проходит, запись видит администратор процессов под таблицей маршрута в заявке. «Предупреждение» — проходит, человек видит предупреждение. «Запрет» — действие отменяется с объяснением. Начинайте с «Журнала».',
                            'itilflow-more-enf-' ~ rand),
                      }) }}

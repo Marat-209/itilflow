@@ -116,8 +116,8 @@
                {% set mode_hints %}
                   {{ _self.hint('Задача исполнителю внутри этой же заявки.', '', more_mode, 'inline', mode) }}
                   {{ _self.hint('Отдельная заявка отделу, связанная с этой. Отдел отмечает результат.', '', more_mode, 'delegated', mode) }}
-                  {{ _self.hint('Виза в этой заявке. Этап закроется ответом согласующего.', '', more_mode, 'approval', mode) }}
-                  <div class="collapse form-text" id="{{ more_mode }}">Задача — работа в той же заявке: в своём отделе или итог заявителю. Дочерняя заявка — работу делает другой отдел: у него своя заявка, своя категория и свой счёт работ, а здесь виден итог. Согласование — виза руководителя, владельца ресурса или ИБ.</div>
+                  {{ _self.hint('Запрос на согласование в этой же заявке. Этап закроется ответом согласующего.', '', more_mode, 'approval', mode) }}
+                  <div class="collapse form-text" id="{{ more_mode }}">Задача — работа в той же заявке: в своём отделе или итог заявителю. Дочерняя заявка — работу делает другой отдел: у него своя заявка, своя категория и свой счёт работ, а здесь виден итог. Согласование — одобрение руководителя, владельца ресурса или службы ИБ.</div>
                {% endset %}
                {{ fields.field('execution_mode', mode_html, 'Как выполняется', {
                   'full_width': true,
@@ -129,7 +129,7 @@
                   'entity': -1,
                   'disabled': not L.itilcategories_id.show,
                   'add_field_attribs': L.itilcategories_id.attrs,
-                  'add_field_html': _self.hint('С ней создаётся заявка отдела; по ней работают ваши правила GLPI.'),
+                  'add_field_html': _self.hint('С ней создаётся заявка отдела; по ней работают бизнес-правила для заявок.'),
                }) }}
 
                {{ fields.dropdownArrayField('completion_comment', item.fields['completion_comment'], completions, 'Отчёт при завершении', {
@@ -165,9 +165,9 @@
 
                {% set group_labels = {'inline': 'Группа-исполнитель', 'delegated': 'Отдел (группа)', 'approval': 'Согласующая группа'} %}
                {% set group_hints %}
-                  {{ _self.hint('Этап закрывают только её участники. На время этапа группа — исполнитель заявки.', '', '', 'inline', mode) }}
+                  {{ _self.hint('Этап закрывают только её участники. На время этапа группа назначается исполнителем заявки.', '', '', 'inline', mode) }}
                   {{ _self.hint('Исполнитель заявки отдела.', '', '', 'delegated', mode) }}
-                  {{ _self.hint('Виза уйдёт группе: ответить может любой её участник.', '', '', 'approval', mode) }}
+                  {{ _self.hint('Запрос на согласование уйдёт группе: ответить может любой её участник.', '', '', 'approval', mode) }}
                {% endset %}
                {{ fields.dropdownField('Group', 'groups_id', item.fields['groups_id'], group_labels[mode] ?? group_labels.inline, {
                   'condition': {'is_assign': 1},
@@ -229,7 +229,7 @@
                   'id': 'itilflow-dl-' ~ rand,
                   'add_field_attribs': L.deadline.attrs|merge({'data-itilflow-day': deadline.day}),
                   'add_field_html': _self.hint(dl_hint,
-                     'Срок считается от начала этапа и только в рабочее время календаря маршрута. Если календарь не выбран — круглосуточно, день равен 24 ч. Просроченный этап помечается в строке этапа и в отчёте; работу это не блокирует. У заявки отдела может быть и свой срок GLPI (SLA) — он в «Дополнительно».',
+                     'Срок считается от начала этапа и только в рабочее время календаря маршрута. Если календарь не выбран — круглосуточно, день равен 24 ч. Просроченный этап помечается в строке этапа и в отчёте; работу это не блокирует. У заявки отдела может быть и штатное «Время до решения» GLPI (SLA) — оно в «Дополнительно».',
                      'itilflow-more-dl-' ~ rand),
                }) }}
 
@@ -259,8 +259,8 @@
                         {% set more_rej = 'itilflow-more-rej-' ~ rand %}
                         {% set rej_hints %}
                            {{ _self.hint('Что делать, если согласующий отказал.', '', more_rej, 'approval', mode) }}
-                           {{ _self.hint('Что делать, если в заявке отдела отклонена виза.', '', more_rej, 'delegated', mode) }}
-                           <div class="collapse form-text" id="{{ more_rej }}">Остановить — маршрут встаёт, заявку нельзя решить, решает администратор процессов. Вернуться — новый проход с выбранного этапа, история сохраняется; не больше десяти возвратов. Прервать — маршрут отменяется, заявку можно решать.</div>
+                           {{ _self.hint('Что делать, если в заявке отдела отказали в согласовании.', '', more_rej, 'delegated', mode) }}
+                           <div class="collapse form-text" id="{{ more_rej }}">Остановить — маршрут останавливается, заявку нельзя решить, решает администратор процессов. Вернуться — новый проход с выбранного этапа, история сохраняется; не больше десяти возвратов. Прервать — маршрут отменяется, заявку можно решать.</div>
                         {% endset %}
                         {{ fields.dropdownArrayField('on_reject', item.fields['on_reject'], rejects, 'При отказе', {
                            'disabled': not L.on_reject.show,
@@ -294,7 +294,7 @@
                      {{ fields.numberField('ranking', item.fields['ranking'], 'Порядок', {
                         'min': 1,
                         'add_field_attribs': L.ranking.attrs|merge({'data-itilflow-s': 'Порядок'}),
-                        'add_field_html': _self.hint('Этапы идут по возрастанию номера. Новый этап встаёт в конец.'),
+                        'add_field_html': _self.hint('Этапы идут по возрастанию номера. Новый этап добавляется в конец.'),
                      }) }}
 
                      {% set status_hints %}
@@ -342,14 +342,14 @@
                            'condition': {'type': 0},
                            'disabled': not L.slas_id.show,
                            'add_field_attribs': L.slas_id.attrs|merge({'data-itilflow-s': 'SLA'}),
-                           'add_field_html': _self.hint('Свой срок GLPI с эскалациями. Обычно его ставит правило по категории.'),
+                           'add_field_html': _self.hint('Штатное «Время до решения» GLPI с уровнями эскалации. Обычно его ставит бизнес-правило по категории.'),
                         }) }}
                      {% endif %}
 
-                     {{ fields.numberField('approval_percent', item.fields['approval_percent'], 'Сколько виз нужно, %', {
+                     {{ fields.numberField('approval_percent', item.fields['approval_percent'], 'Сколько одобрений нужно, %', {
                         'min': 1, 'max': 100,
                         'disabled': not L.approval_percent.show,
-                        'add_field_attribs': L.approval_percent.attrs|merge({'data-itilflow-s': 'Виз нужно'}),
+                        'add_field_attribs': L.approval_percent.attrs|merge({'data-itilflow-s': 'Одобрений нужно'}),
                         'add_field_html': _self.hint('100 — нужны все согласующие, 50 — половина.'),
                      }) }}
                   </div>

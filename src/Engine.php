@@ -444,7 +444,7 @@ final class Engine
             }
             // Решённая дочерняя с отклонённой визой — отказ отдела, а не «выполнено».
             if ((int) ($child->fields['global_validation'] ?? 0) === CommonITILValidation::REFUSED) {
-                self::rejectStepInternal($step, 'В связанной заявке отдел отказал (виза отклонена).');
+                self::rejectStepInternal($step, 'В связанной заявке отдел отказал (согласование отклонено).');
                 return self::auditAction($instance, $step, 'delegated_refused', false);
             }
             return self::completeStepInternal($step, 'Связанная заявка решена.')
@@ -982,7 +982,7 @@ final class Engine
             $e = new \Entity();
             $e->getFromDB($target_entity);
             return sprintf(
-                'Группа «%s» не принадлежит сущности «%s» и не видна в ней. Исправьте настройку этапа.',
+                'Группа «%s» не принадлежит организации «%s» и не видна в ней. Исправьте настройку этапа.',
                 $g->fields['name'] ?? '?',
                 $e->fields['completename'] ?? $target_entity
             );
@@ -1021,7 +1021,7 @@ final class Engine
 
         $cid = $child->add($input);
         if (!$cid) {
-            return 'Не удалось создать дочернюю заявку этапа в сущности #' . $target_entity . '.';
+            return 'Не удалось создать дочернюю заявку этапа в организации #' . $target_entity . '.';
         }
 
         $linkclass = CommonITILObject_CommonITILObject::getLinkClass($class, $class);

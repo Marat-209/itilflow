@@ -12,7 +12,7 @@ use Session;
  * запуске нет: правило запуска не видит маршрут, группа не видна в организации,
  * маршрут выключен. Строка про этап несёт
  * ссылку на этап. Служебная строка про автоматическое действие — только
- * администратору GLPI (право «Настройка: изменение»), остальным — следствие
+ * администратору GLPI (право «Общие настройки» — «Обновление»), остальным — следствие
  * простыми словами.
  *
  * Каждая проблема: text, url, link, stage (id этапа или null) и snapshot —
@@ -149,7 +149,7 @@ final class Readiness
                     $stage = new Stage();
                     $stage->fields = $s;
                     if (!$stage->groupFitsEntity($entity)) {
-                        $out[] = self::problem(sprintf('%s — группа «%s» не видна в организации «%s»: заявка отдела встанет.',
+                        $out[] = self::problem(sprintf('%s — группа «%s» не видна в организации «%s»: маршрут остановится на этом этапе.',
                             $name, $group->fields['name'], \Dropdown::getDropdownName('glpi_entities', $entity)), $id, false);
                     }
                 }
@@ -180,7 +180,7 @@ final class Readiness
                 if (($mode === Stage::MODE_APPROVAL
                         || ($mode === Stage::MODE_DELEGATED && ($s['department_result_source'] ?? '') === 'native_validation'))
                     && ((int) ($s['approval_percent'] ?? 0) < 1 || (int) $s['approval_percent'] > 100)) {
-                    $out[] = self::problem($name . ' — сколько виз нужно: укажите от 1 до 100 %.', $id, true);
+                    $out[] = self::problem($name . ' — сколько одобрений нужно: укажите от 1 до 100 %.', $id, true);
                 }
             } elseif ($mode !== Stage::MODE_INLINE && ($s['on_reject'] ?? '') === Stage::REJECT_BACK
                 && !isset($ids[(int) ($s['plugin_itilflow_stages_id_reject'] ?? 0)])) {
@@ -245,7 +245,7 @@ final class Readiness
             return [];
         }
         return Session::haveRight('config', UPDATE)
-            ? [['text' => 'Автоматическое действие itilflow_status_sync выключено — статус заявки по этапам не меняется. Включить: Настройка → Автоматические действия.',
+            ? [['text' => 'Автоматическое действие itilflow_status_sync выключено — статус заявки по этапам не меняется. Включить: Настройки → Автоматические действия.',
                 'service' => true]]
             : [['text' => 'Статус заявки по этапам сейчас не меняется — сообщите администратору GLPI.', 'service' => false]];
     }

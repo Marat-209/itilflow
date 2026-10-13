@@ -135,7 +135,7 @@ class Stage extends CommonDBChild
     {
         return [
             'assignee_action'   => ['Исполнитель отмечает результат', '«Выполнено», «Отказ» или «Вернуть на уточнение» в строке этапа.'],
-            'native_validation' => ['Визой в заявке отдела', 'Группе или сотруднику отдела уходят визы; итог — по их ответам.'],
+            'native_validation' => ['Согласованием в заявке отдела', 'Группе или сотруднику отдела уходит запрос на согласование; итог — по их ответам.'],
         ];
     }
 
@@ -454,7 +454,7 @@ class Stage extends CommonDBChild
             }
             if (($merged['execution_mode'] ?? self::MODE_INLINE) === self::MODE_DELEGATED
                 && !in_array($merged['department_result_source'] ?? '', ['assignee_action', 'native_validation'], true)) {
-                Session::addMessageAfterRedirect('Выберите, как отдел сообщает итог: без этого маршрут не запустится.', false, ERROR);
+                Session::addMessageAfterRedirect('Выберите, как отдел сообщает итог: без этого маршрут нельзя запустить.', false, ERROR);
                 return [];
             }
             // У задачи отказа не бывает, движок это поле не читает, а проверка определения
@@ -464,7 +464,7 @@ class Stage extends CommonDBChild
                 $input['negative_policy'] = $merged['negative_policy'] = self::REJECT_BLOCK;
             }
             if (!in_array($merged['negative_policy'] ?? '', ['block', 'abort'], true)) {
-                Session::addMessageAfterRedirect('Выберите, что делать при отказе: без этого маршрут не запустится.', false, ERROR);
+                Session::addMessageAfterRedirect('Выберите, что делать при отказе: без этого маршрут нельзя запустить.', false, ERROR);
                 return [];
             }
             foreach ($targets as $target) {
@@ -492,7 +492,7 @@ class Stage extends CommonDBChild
         }
         $mode = $input['execution_mode'] ?? $this->fields['execution_mode'] ?? self::MODE_INLINE;
         if (!array_key_exists($mode, self::getModeLabels())) {
-            Session::addMessageAfterRedirect('Неизвестный режим исполнения этапа.', false, ERROR);
+            Session::addMessageAfterRedirect('Неизвестное значение «Как выполняется».', false, ERROR);
             return [];
         }
 
@@ -502,7 +502,7 @@ class Stage extends CommonDBChild
             ?? self::APPROVER_FIXED);
 
         if (!array_key_exists($src, self::getApproverSourceLabels())) {
-            Session::addMessageAfterRedirect('Неизвестный источник согласующего.', false, ERROR);
+            Session::addMessageAfterRedirect('Неизвестное значение «Кто согласует».', false, ERROR);
             return [];
         }
 
@@ -533,7 +533,7 @@ class Stage extends CommonDBChild
 
         if ($groups_id === 0 && $users_id === 0 && !$approver_known_later) {
             Session::addMessageAfterRedirect(
-                'У этапа должен быть ответственный: группа или пользователь.',
+                'Выберите исполнителя этапа: группу или сотрудника.',
                 false,
                 ERROR
             );
@@ -541,8 +541,8 @@ class Stage extends CommonDBChild
         }
         if ($approver_known_later && ($groups_id > 0 || $users_id > 0)) {
             Session::addMessageAfterRedirect(
-                'Для выбранного источника согласующего группа и сотрудник в этапе не нужны — '
-                . 'они будут определены при прохождении заявки. Поля очищены.',
+                'Согласующих выбирают при прохождении: группа и сотрудник в этапе не нужны. '
+                . 'Поля очищены.',
                 false,
                 WARNING
             );
@@ -584,12 +584,12 @@ class Stage extends CommonDBChild
 
         $strategy = $input['entity_strategy'] ?? $this->fields['entity_strategy'] ?? 'inherit';
         if ($strategy === 'fixed' && (int) ($input['entities_id_target'] ?? $this->fields['entities_id_target'] ?? 0) < 0) {
-            Session::addMessageAfterRedirect('Укажите целевую сущность.', false, ERROR);
+            Session::addMessageAfterRedirect('Где создать заявку отдела — «В указанной организации»: выберите организацию.', false, ERROR);
             return [];
         }
         if ($mode === self::MODE_DELEGATED && $strategy === 'by_group' && $groups_id === 0) {
             Session::addMessageAfterRedirect(
-                'Стратегия «сущность группы» требует указать группу.',
+                'Где создать заявку отдела — «В организации группы»: выберите отдел (группу).',
                 false,
                 ERROR
             );
