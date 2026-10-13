@@ -590,10 +590,17 @@ trait StructuredFlow
         if ($attempt === null || !$stage->groupFitsEntity($entity)) { return 'Состав исполнителей недоступен.'; }
         $type = $parent->getType();
         $child = new $type();
+        // Описание — HTML. Инструкция этапа из редактора уже HTML: идёт как есть, GLPI очищает
+        // её при выводе; простой текст (через API) — абзацем, экранированным. Краткое содержание
+        // основной заявки — текст из её HTML без тегов: сущности раскодируются и экранируются
+        // один раз, иначе в описании видны «&lt;p&gt;» и «&amp;».
+        $instruction = (string) $stage->fields['content'];
+        $instruction = \Glpi\RichText\RichText::isRichTextHtmlContent($instruction)
+            ? $instruction : '<p>' . nl2br(htmlescape($instruction)) . '</p>';
+        $summary = html_entity_decode((string) $attempt->fields['subject_summary'], ENT_QUOTES | ENT_HTML5, 'UTF-8');
         $input = ['name' => sprintf('[Этап %d, попытка %d] %s', (int) $step->fields['ranking'],
             (int) $attempt->fields['number'], mb_substr((string) $stage->fields['name'], 0, 100)),
-            'content' => '<p>' . htmlescape((string) $stage->fields['content']) . '</p><p>'
-                . nl2br(htmlescape((string) $attempt->fields['subject_summary'])) . '</p>',
+            'content' => $instruction . '<p>' . nl2br(htmlescape($summary)) . '</p>',
             'entities_id' => $entity];
         foreach (['groups_id' => '_groups_id_assign', 'users_id' => '_users_id_assign',
             'itilcategories_id' => 'itilcategories_id'] as $from => $to) {
