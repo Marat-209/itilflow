@@ -10,6 +10,8 @@
  * - Вместо одной фразы на три поля — три сообщения словами формы.
  * - Если сохранение этапа ломает другой этап маршрута, называется причина,
  *   а не «Изменение определения не подтверждено».
+ * - Название этапа в сообщении — текстом: GLPI выводит сообщения после перехода
+ *   как HTML, и тег в названии не должен стать разметкой.
  * Всё — в транзакции проверки, откатывается.
  */
 
@@ -89,7 +91,7 @@ $st = new Stage();
 $res = $st->update(['id' => $first['id'], '_structured_return_targets_present' => 1,
     '_structured_return_targets' => [(string) $last['id']]]);
 $m = soobshcheniya();
-ok($res === false && est($m, sprintf('Точка возврата «%d. %s» стоит позже этого этапа (%d)', $last['ranking'], $last['name'], $first['ranking']), ERROR),
+ok($res === false && est($m, sprintf('Точка возврата «%d. %s» стоит позже этого этапа (%d)', $last['ranking'], htmlescape($last['name']), $first['ranking']), ERROR),
     'точка возврата позже этапа — сообщение с номерами', json_encode($m, JSON_UNESCAPED_UNICODE));
 $DB->rollBack();
 
@@ -166,7 +168,8 @@ foreach ((new Stage())->find(['plugin_itilflow_processes_id' => $P->getID()]) as
 }
 ok((bool) $res && !obshchaya($m), 'этап — точка возврата удаляется без «Обновите страницу»', json_encode($m, JSON_UNESCAPED_UNICODE));
 ok($ostalos === [], 'удалённый этап убран из точек возврата других', implode(',', $ostalos));
-ok(est($m, sprintf('Этап %d «%s» удалён и убран из точек возврата этапов %s.', $cel['ranking'], $cel['name'], implode(', ', $ssylayutsya))),
+ok(est($m, sprintf('Этап %d «%s» удалён и убран из точек возврата %s %s.', $cel['ranking'], htmlescape($cel['name']),
+    count($ssylayutsya) === 1 ? 'этапа' : 'этапов', implode(', ', $ssylayutsya))),
     'сообщение называет этапы, у которых он был точкой возврата', json_encode($m, JSON_UNESCAPED_UNICODE));
 $p2 = new Process();
 $p2->getFromDB($P->getID());
@@ -187,9 +190,50 @@ if ($ssylka !== null) {
     $res = $st->update(['id' => $t['id'], 'ranking' => (int) $last['ranking'] + 100]);
     $m = soobshcheniya();
     ok($res === false && !obshchaya($m) && est($m, sprintf('Этап %d «%s» — точка возврата «%d. %s» стоит позже этапа или удалена.',
-        $s['ranking'], $s['name'], (int) $last['ranking'] + 100, $t['name'])),
+        $s['ranking'], htmlescape($s['name']), (int) $last['ranking'] + 100, htmlescape($t['name']))),
         'перенос этапа, на который ссылаются, — причина с номерами', json_encode($m, JSON_UNESCAPED_UNICODE));
 }
+$DB->rollBack();
+
+// 6. Название этапа с тегом — в сообщениях после сохранения текстом. Сообщения рисует
+// всплывающее окно GLPI: там они вставляются как HTML.
+$zlo = '<img src=x onerror=alert(1)>';
+$tost = static function (): string {
+    return \Glpi\Application\View\TemplateRenderer::getInstance()->render('components/messages_after_redirect_toasts.html.twig');
+};
+$tekstom = static fn(string $html): bool => !str_contains($html, $zlo) && str_contains($html, htmlescape($zlo));
+
+// Точка возврата позже этапа — название поздней точки.
+$DB->beginTransaction();
+$_SESSION['MESSAGE_AFTER_REDIRECT'] = [];
+$DB->update(Stage::getTable(), ['name' => $zlo], ['id' => $last['id']]);
+$st = new Stage();
+$st->update(['id' => $first['id'], '_structured_return_targets_present' => 1, '_structured_return_targets' => [(string) $last['id']]]);
+$html = $tost();
+ok($tekstom($html), 'тег в названии точки возврата — текстом в сообщении «стоит позже»', mb_substr(trim(strip_tags($html)), 0, 300));
+$DB->rollBack();
+
+// Удаление этапа — точки возврата других: название удалённого.
+$DB->beginTransaction();
+$_SESSION['MESSAGE_AFTER_REDIRECT'] = [];
+$DB->update(Stage::getTable(), ['name' => $zlo], ['id' => $cel['id']]);
+$st = new Stage();
+$st->delete(['id' => $cel['id']], true);
+$html = $tost();
+ok($tekstom($html), 'тег в названии удалённого этапа — текстом в сообщении об удалении', mb_substr(trim(strip_tags($html)), 0, 300));
+$DB->rollBack();
+
+// Сохранение маршрута с этапом, который не пройдёт проверку запуска: причина с названием этапа.
+$DB->beginTransaction();
+$_SESSION['MESSAGE_AFTER_REDIRECT'] = [];
+$ne_zadacha = array_values(array_filter($etapy, static fn($s) => $s['execution_mode'] !== 'inline'))[0] ?? $first;
+$DB->update(Stage::getTable(), ['name' => $zlo, 'negative_policy' => ''], ['id' => $ne_zadacha['id']]);
+$pr = new Process();
+$pr->getFromDB($P->getID());
+$res = $pr->update(['id' => $P->getID(), 'comment' => (string) $pr->fields['comment']]);
+$html = $tost();
+ok($res === false && $tekstom($html), 'тег в названии этапа — текстом в причине при сохранении маршрута',
+    mb_substr(trim(strip_tags($html)), 0, 300));
 $DB->rollBack();
 
 itog();
