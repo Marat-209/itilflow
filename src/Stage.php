@@ -477,9 +477,10 @@ class Stage extends CommonDBChild
                     return [];
                 }
                 if ((int) $stage->fields['ranking'] > (int) ($merged['ranking'] ?? 0)) {
+                    // Сообщения после перехода GLPI выводит как HTML: название — текстом.
                     Session::addMessageAfterRedirect(sprintf(
                         'Точка возврата «%d. %s» стоит позже этого этапа (%d): отметьте этот этап или предыдущие.',
-                        $stage->fields['ranking'], $stage->fields['name'], (int) ($merged['ranking'] ?? 0)
+                        $stage->fields['ranking'], htmlescape($stage->fields['name']), (int) ($merged['ranking'] ?? 0)
                     ), false, ERROR);
                     return [];
                 }
@@ -661,7 +662,7 @@ class Stage extends CommonDBChild
         if ($this->unlinkedTargets !== null) {
             $u = $this->unlinkedTargets;
             Session::addMessageAfterRedirect(sprintf('Этап %d «%s» удалён и убран из точек возврата %s %s.',
-                $u['ranking'], $u['name'], count($u['ranks']) === 1 ? 'этапа' : 'этапов', implode(', ', $u['ranks'])), false, INFO);
+                $u['ranking'], htmlescape($u['name']), count($u['ranks']) === 1 ? 'этапа' : 'этапов', implode(', ', $u['ranks'])), false, INFO);
         }
     }
 

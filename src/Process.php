@@ -314,8 +314,8 @@ class Process extends CommonDBTM
         }
         $this->getFromDB($this->getID());
         $lines = self::conversionLines($plan, $running);
-        Session::addMessageAfterRedirect('Маршрут переведён на новый порядок. '
-            . implode(' ', array_slice($lines, 1, -1)) . ' ' . $lines[0], false, INFO);
+        Session::addMessageAfterRedirect(htmlescape('Маршрут переведён на новый порядок. '
+            . implode(' ', array_slice($lines, 1, -1)) . ' ' . $lines[0]), false, INFO);
         return $plan;
     }
 
@@ -364,7 +364,9 @@ class Process extends CommonDBTM
         if (($input['outcome_contract'] ?? $this->fields['outcome_contract'] ?? 'legacy') === DefinitionSnapshot::MODE && $stages) {
             $reason = Readiness::firstSnapshotReason(array_replace($this->fields, $input), $stages);
             if ($reason !== null) {
-                Session::addMessageAfterRedirect($reason, false, ERROR);
+                // Текст строки готовности — с названиями этапов, а сообщения после перехода
+                // GLPI выводит как HTML: экранируется здесь, шаблоны экранируют сами.
+                Session::addMessageAfterRedirect(htmlescape($reason), false, ERROR);
                 return [];
             }
         }
