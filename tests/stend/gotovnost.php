@@ -182,9 +182,9 @@ porcha('точка возврата удалена', $P, static function () use 
     $DB->update($T, ['return_targets' => '[2147483000]'], ['id' => $first['id']]);
 }, $nazv($first) . ' — точка возврата «удалённый этап» стоит позже этапа или удалена.', (int) $first['id'], true);
 
-porcha('сколько виз', $P, static function () use ($DB, $T, $app): void {
+porcha('сколько одобрений', $P, static function () use ($DB, $T, $app): void {
     $DB->update($T, ['approval_percent' => 0], ['id' => $app['id']]);
-}, $nazv($app) . ' — сколько виз нужно: укажите от 1 до 100 %.', (int) $app['id'], true);
+}, $nazv($app) . ' — сколько одобрений нужно: укажите от 1 до 100 %.', (int) $app['id'], true);
 
 porcha('одинаковый порядок', $P, static function () use ($DB, $T, $etapy): void {
     $DB->update($T, ['ranking' => (int) $etapy[0]['ranking']], ['id' => $etapy[1]['id']]);
@@ -256,6 +256,9 @@ if ($zadacha->getFromDBbyName('GlpiPlugin\\Itilflow\\Cron', 'itilflow_status_syn
     $s = array_values(array_filter($r['notes'], static fn($n) => $n['service']));
     ok($r['ready'] && count($s) === 1 && str_starts_with($s[0]['text'], 'Автоматическое действие itilflow_status_sync выключено'),
         'администратор GLPI видит служебную строку, маршрут готов', json_encode($r['notes'], JSON_UNESCAPED_UNICODE));
+    // Путь в меню — словами русского перевода GLPI: «Настройки» (Setup), а не «Настройка».
+    ok(count($s) === 1 && str_contains($s[0]['text'], 'Настройки → Автоматические действия'),
+        'служебная строка называет меню GLPI: «Настройки → Автоматические действия»', $s[0]['text'] ?? '');
     vojti($uid, 'process');
     $r = gotovnost($P);
     $txt = implode(' ', array_column($r['notes'], 'text'));

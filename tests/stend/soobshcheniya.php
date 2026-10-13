@@ -108,7 +108,7 @@ if ($del !== null) {
     $st = new Stage();
     $res = $st->update(['id' => $del['id'], 'department_result_source' => '']);
     $m = soobshcheniya();
-    ok($res === false && est($m, 'Выберите, как отдел сообщает итог: без этого маршрут не запустится.', ERROR) && !obshchaya($m),
+    ok($res === false && est($m, 'Выберите, как отдел сообщает итог: без этого маршрут нельзя запустить.', ERROR) && !obshchaya($m),
         'итог отдела не выбран — своё сообщение', json_encode($m, JSON_UNESCAPED_UNICODE));
     $DB->rollBack();
 }
@@ -117,8 +117,26 @@ if ($app !== null) {
     $st = new Stage();
     $res = $st->update(['id' => $app['id'], 'negative_policy' => '']);
     $m = soobshcheniya();
-    ok($res === false && est($m, 'Выберите, что делать при отказе: без этого маршрут не запустится.', ERROR) && !obshchaya($m),
+    ok($res === false && est($m, 'Выберите, что делать при отказе: без этого маршрут нельзя запустить.', ERROR) && !obshchaya($m),
         'отказ не выбран — своё сообщение', json_encode($m, JSON_UNESCAPED_UNICODE));
+    $DB->rollBack();
+}
+
+// Сообщения формы — словами формы и русского перевода GLPI: исполнитель, сотрудник, организация.
+$DB->beginTransaction();
+$st = new Stage();
+$res = $st->update(['id' => $first['id'], 'execution_mode' => 'inline', 'groups_id' => 0, 'users_id' => 0]);
+$m = soobshcheniya();
+ok($res === false && est($m, 'Выберите исполнителя этапа: группу или сотрудника.', ERROR),
+    'нет исполнителя — словами формы', json_encode($m, JSON_UNESCAPED_UNICODE));
+$DB->rollBack();
+if ($del !== null) {
+    $DB->beginTransaction();
+    $st = new Stage();
+    $res = $st->update(['id' => $del['id'], 'entity_strategy' => 'by_group', 'groups_id' => 0, 'users_id' => adminGlpi()]);
+    $m = soobshcheniya();
+    ok($res === false && est($m, 'Где создать заявку отдела — «В организации группы»: выберите отдел (группу).', ERROR),
+        '«В организации группы» без группы — словами формы, без «сущности»', json_encode($m, JSON_UNESCAPED_UNICODE));
     $DB->rollBack();
 }
 $DB->beginTransaction();
