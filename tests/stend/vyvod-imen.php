@@ -97,4 +97,41 @@ $viza = $DB->request(['FROM' => 'glpi_ticketvalidations', 'WHERE' => ['tickets_i
 ok($viza !== null && $tekstom((string) $viza['comment_submission'], $zlo . ' согласование'),
     'запрос на согласование: название этапа — текстом', (string) ($viza['comment_submission'] ?? 'запроса нет'));
 
+// 3. Новый порядок: описание заявки отдела. Инструкция этапа — HTML из редактора: в описании
+// она должна остаться разметкой (без видимых «<p>»), а сценарий в ней GLPI вычищает при выводе.
+// Текст основной заявки в описании — один раз экранированный: «A & B», а не «A &amp; B».
+$g = $DB->request(['SELECT' => ['id', 'entities_id'], 'FROM' => 'glpi_groups', 'WHERE' => ['is_assign' => 1],
+    'ORDER' => 'id', 'LIMIT' => 1])->current();
+ok($g !== null, 'есть группа-исполнитель');
+if ($g !== null) {
+    $E = (int) $g['entities_id'];
+    $DB->insert(Process::getTable(), ['name' => '[проверка] маршрут нового порядка', 'entities_id' => $E, 'is_recursive' => 1,
+        'is_active' => 1, 'itemtype' => 'Ticket', 'enforcement' => Process::ENFORCE_AUDIT, 'version' => 1,
+        'block_resolution' => 1, 'public_log' => 0, 'helpdesk_tab' => 1, 'allow_withdraw' => 1, 'calendars_id' => 0,
+        'outcome_contract' => 'structured_v1']);
+    $pn = (int) $DB->insertId();
+    $DB->insert(Stage::getTable(), ['plugin_itilflow_processes_id' => $pn, 'name' => 'Работа отдела', 'ranking' => 10,
+        'execution_mode' => Stage::MODE_DELEGATED, 'groups_id' => (int) $g['id'], 'entity_strategy' => 'inherit',
+        'department_result_source' => 'assignee_action', 'negative_policy' => Stage::REJECT_ABORT, 'return_targets' => '[]',
+        'approval_percent' => 100, 'content' => '<p>Выполните работу.</p><p><img src=x onerror=alert(3)></p>']);
+    $t2 = new \Ticket();
+    $tid2 = (int) $t2->add(['name' => '[проверка] заявка нового порядка', 'content' => '<p>Нужно: A &amp; B.</p>',
+        'entities_id' => $E, '_users_id_requester' => $admin, '_skip_rules' => true]);
+    $t2->getFromDB($tid2);
+    $i2 = $tid2 > 0 ? Engine::start($t2, $pn) : null;
+    $sh = $i2 === null ? null : $DB->request(['FROM' => 'glpi_plugin_itilflow_steps',
+        'WHERE' => ['plugin_itilflow_instances_id' => $i2->getID()], 'ORDER' => 'id DESC', 'LIMIT' => 1])->current();
+    $dochernyaya = $sh !== null && (int) $sh['artifact_items_id'] > 0
+        ? $DB->request(['FROM' => 'glpi_tickets', 'WHERE' => ['id' => (int) $sh['artifact_items_id']]])->current() : null;
+    ok($dochernyaya !== null, 'новый порядок: заявка отдела создана', json_encode($sh, JSON_UNESCAPED_UNICODE));
+    $opis = (string) ($dochernyaya['content'] ?? '');
+    ok(str_contains($opis, '<p>Выполните работу.</p>') && !str_contains($opis, '&lt;p&gt;'),
+        'описание заявки отдела: инструкция — разметкой, теги не видны', $opis);
+    $pokaz = \Glpi\RichText\RichText::getEnhancedHtml($opis);
+    ok(!preg_match('/<[a-z][^>]*\sonerror\s*=/i', $pokaz) && str_contains($pokaz, 'Выполните работу.'),
+        'описание заявки отдела в GLPI: без сценария', $pokaz);
+    ok(str_contains($opis, 'A &amp; B') && !str_contains($opis, '&amp;amp;'),
+        'описание заявки отдела: текст основной заявки экранирован один раз', $opis);
+}
+
 itog();
