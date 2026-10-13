@@ -141,9 +141,17 @@ class Process extends CommonDBTM
      * отмечает результат»; задача → «остановить», без точек. Подготовленное заранее
      * не меняется. Возврат на более поздний или удалённый этап не переносится.
      *
+     * Пустой список точек возврата («[]») — «не задано», как NULL: форма 1.8.0
+     * отправляла этот список у этапа любого маршрута, и у старого маршрута, хоть раз
+     * сохранённого ею, он пустой, хотя точку возврата никто не выбирал.
+     *
+     * policy и to — то, что будет в этапе после перевода: заполненное плюс
+     * сохранённое. По ним строятся диалог и сообщение после перевода.
+     *
      * @param list<array> $stages строки этапов по порядку
-     * @return list<array{id:int,ranking:int,name:string,mode:string,kind:string,from:?int,set:array<string,string>}>
-     *   kind: task, abort, block, back, back_lost (возврат не перенесён), kept (ничего не меняется)
+     * @return list<array{id:int,ranking:int,name:string,mode:string,kind:string,from:?int,set:array<string,string>,policy:string,to:list<int>}>
+     *   kind: task, abort, block, back (есть точки возврата), back_lost (возврат не перенесён),
+     *   kept (ничего не меняется); from — номер этапа из «Вернуться на этап», to — номера точек возврата
      */
     public static function conversionPlan(array $stages): array
     {
@@ -154,50 +162,59 @@ class Process extends CommonDBTM
         $plan = [];
         foreach ($stages as $s) {
             $mode = (string) $s['execution_mode'];
-            $kind = 'task';
             $from = null;
+            $lost = false;
             $policy = Stage::REJECT_BLOCK;
             $targets = [];
             if ($mode !== Stage::MODE_INLINE) {
-                $kind = match ($s['on_reject']) {
-                    Stage::REJECT_ABORT => 'abort',
-                    Stage::REJECT_BACK  => 'back',
-                    default             => 'block',
-                };
-                $policy = $kind === 'abort' ? Stage::REJECT_ABORT : Stage::REJECT_BLOCK;
-                if ($kind === 'back') {
+                $policy = $s['on_reject'] === Stage::REJECT_ABORT ? Stage::REJECT_ABORT : Stage::REJECT_BLOCK;
+                if ($s['on_reject'] === Stage::REJECT_BACK) {
                     $to = $by_id[(int) $s['plugin_itilflow_stages_id_reject']] ?? null;
+                    $from = $to !== null ? (int) $to['ranking'] : null;
                     if ($to !== null && (int) $to['ranking'] <= (int) $s['ranking']) {
-                        $from = (int) $to['ranking'];
                         $targets = [(int) $to['id']];
                     } else {
-                        $kind = 'back_lost';
-                        $from = $to !== null ? (int) $to['ranking'] : null;
+                        $lost = true;
                     }
                 }
             }
             $set = [];
-            if (!in_array($s['negative_policy'] ?? '', [Stage::REJECT_BLOCK, Stage::REJECT_ABORT], true)) {
+            $stored_policy = (string) ($s['negative_policy'] ?? '');
+            if (!in_array($stored_policy, [Stage::REJECT_BLOCK, Stage::REJECT_ABORT], true)) {
                 $set['negative_policy'] = $policy;
             }
-            if (DefinitionSnapshot::targets($s['return_targets'] ?? null) === null) {
+            $stored_targets = DefinitionSnapshot::targets($s['return_targets'] ?? null);
+            if ($stored_targets === null || ($stored_targets === [] && $targets !== [])) {
                 $set['return_targets'] = DefinitionSnapshot::encode($targets);
             }
             if ($mode === Stage::MODE_DELEGATED
                 && !in_array($s['department_result_source'] ?? '', ['assignee_action', 'native_validation'], true)) {
                 $set['department_result_source'] = 'assignee_action';
             }
-            if (!$set && $mode !== Stage::MODE_INLINE) {
+            $final_policy = $set['negative_policy'] ?? $stored_policy;
+            $final_targets = isset($set['return_targets']) ? $targets : $stored_targets;
+            $to_ranks = array_map(static fn(int $t): int => (int) ($by_id[$t]['ranking'] ?? 0), $final_targets);
+            if ($mode === Stage::MODE_INLINE) {
+                $kind = 'task';
+            } elseif (!$set) {
                 $kind = 'kept';
+            } elseif ($to_ranks) {
+                $kind = 'back';
+            } elseif ($lost) {
+                $kind = 'back_lost';
+            } else {
+                $kind = $final_policy === Stage::REJECT_ABORT ? 'abort' : 'block';
             }
             $plan[] = ['id' => (int) $s['id'], 'ranking' => (int) $s['ranking'], 'name' => (string) $s['name'],
-                'mode' => $mode, 'kind' => $kind, 'from' => $from, 'set' => $set];
+                'mode' => $mode, 'kind' => $kind, 'from' => $from, 'set' => $set,
+                'policy' => $final_policy, 'to' => $to_ranks];
         }
         return $plan;
     }
 
     /**
-     * Строки диалога «Перевести на новый порядок»: что будет заполнено.
+     * Строки диалога «Перевести на новый порядок» и сообщения после него: что будет
+     * в этапах — заполненное плюс сохранённое (policy и to плана), а не прежний исход.
      *
      * @return list<string>
      */
@@ -212,25 +229,37 @@ class Process extends CommonDBTM
             }
         }
         $ranks = static fn(array $rows): string => self::andList(array_map(static fn(array $r): string => (string) $r['ranking'], $rows));
+        $labels = array_map(static fn(array $c): string => $c[0], Stage::getNegativePolicyChoices());
+        $policy = static fn(array $r): string => $labels[$r['policy']] ?? $labels[Stage::REJECT_BLOCK];
         $lines = [$running > 0
             ? sprintf('Новые заявки пойдут по новому порядку. %d %s по прежнему.', $running,
                 self::plural($running, 'начатая доходит', 'начатые доходят', 'начатых доходят'))
             : 'Новые заявки пойдут по новому порядку. Начатых заявок нет.'];
-        if ($groups['back']) {
-            $lines[] = sprintf('%s %s: при отказе — «Остановить маршрут», точка возврата — %s.',
-                count($groups['back']) === 1 ? 'Этап' : 'Этапы',
-                self::andList(array_map(static fn(array $r): string => $r['ranking'] . ' («Вернуться на этап ' . $r['from'] . '»)', $groups['back'])),
-                self::andList(array_map(static fn(array $r): string => (string) $r['from'], $groups['back'])));
+        // Этапы с точками возврата: одной строкой те, у кого одинаковые «при отказе» и точки.
+        $back = [];
+        foreach ($groups['back'] as $r) {
+            $back[$r['policy'] . '|' . implode(',', $r['to'])][] = $r;
+        }
+        foreach ($back as $rows) {
+            $lines[] = sprintf('%s %s: при отказе — «%s», %s — %s.',
+                count($rows) === 1 ? 'Этап' : 'Этапы',
+                self::andList(array_map(static fn(array $r): string => $r['ranking']
+                    . ($r['from'] !== null ? ' («Вернуться на этап ' . $r['from'] . '»)' : ''), $rows)),
+                $policy($rows[0]),
+                count($rows[0]['to']) === 1 ? 'точка возврата' : 'точки возврата',
+                self::andList(array_map('strval', $rows[0]['to'])));
         }
         foreach ($groups['back_lost'] as $r) {
-            $lines[] = sprintf('Этап %d: этап для возврата позже или удалён — при отказе «Остановить маршрут», точку возврата выберите в этапе.', $r['ranking']);
+            $lines[] = sprintf('Этап %d: этап для возврата позже или удалён — при отказе «%s», точку возврата выберите в этапе.',
+                $r['ranking'], $policy($r));
         }
         if ($groups['abort']) {
-            $lines[] = sprintf('%s %s: при отказе — «Ответить заявителю отказом и завершить маршрут».',
-                count($groups['abort']) === 1 ? 'Этап' : 'Этапы', $ranks($groups['abort']));
+            $lines[] = sprintf('%s %s: при отказе — «%s».',
+                count($groups['abort']) === 1 ? 'Этап' : 'Этапы', $ranks($groups['abort']), $labels[Stage::REJECT_ABORT]);
         }
         if ($groups['block']) {
-            $lines[] = sprintf('%s %s: при отказе — «Остановить маршрут».', count($groups['block']) === 1 ? 'Этап' : 'Этапы', $ranks($groups['block']));
+            $lines[] = sprintf('%s %s: при отказе — «%s».', count($groups['block']) === 1 ? 'Этап' : 'Этапы', $ranks($groups['block']),
+                $labels[Stage::REJECT_BLOCK]);
         }
         if ($delegated) {
             $lines[] = sprintf('Дочерние заявки на %s %s: отдел сообщает итог — «Исполнитель отмечает результат».',
