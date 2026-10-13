@@ -11,7 +11,9 @@
  * - «виза» — в GLPI это «Согласование», «Запрос на согласование», «Одобрить»;
  * - «плашка», «маршрут запускается», «очередь этапов» (о порядке) — жаргон и кальки;
  * - «Настройка → …» — пункт меню GLPI называется «Настройки»;
- * - «инициатор» в шаблонах — в плагине роль называется «заявитель».
+ * - «инициатор» в шаблонах — в плагине роль называется «заявитель»;
+ * - кнопка ответа согласующего на вкладке маршрута — «Одобрить», как кнопка GLPI
+ *   (`"Approve"` → «Одобрить»); процесс по-прежнему называется «согласование».
  */
 
 require __DIR__ . '/_nachalo.php';
@@ -75,5 +77,15 @@ foreach (array_merge(glob($koren . '/src/*.php'), glob($koren . '/front/*.php'))
 
 ok($fajlov > 30, 'проверено файлов: ' . $fajlov);
 ok($nashli === [], 'тексты плагина — словами GLPI и ITSM, без жаргона', PHP_EOL . '    ' . implode(PHP_EOL . '    ', $nashli));
+
+// Кнопка ответа согласующего — как кнопка GLPI в ленте («Одобрить» / «Отказать»).
+$dejstvie = (string) file_get_contents($koren . '/templates/flow_action.html.twig');
+$knopki = [];
+foreach (['approve', 'refuse'] as $v) {
+    $knopki[$v] = preg_match('/<button[^>]*name="approval_action"[^>]*value="' . $v . '"[^>]*>(.*?)<\/button>/su', $dejstvie, $m)
+        ? trim(strip_tags($m[1])) : null;
+}
+ok($knopki === ['approve' => 'Одобрить', 'refuse' => 'Отказать'], 'ответ согласующего на вкладке маршрута: «Одобрить» / «Отказать», как в GLPI',
+    json_encode($knopki, JSON_UNESCAPED_UNICODE));
 
 itog();
