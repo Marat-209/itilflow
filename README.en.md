@@ -101,7 +101,11 @@ actions**) and grant the rights in profiles. Details:
 with 1.9.0 and run `plugin:install`, `plugin:activate` and `cache:clear`.
 Existing routes do not change; old ones are converted to the new outcome
 handling with a button on the route page. Rollback: put the 1.8.x files back
-and run `cache:clear`.
+and run `cache:clear`, `plugin:install` and `plugin:activate`: when the
+version number changes, GLPI keeps the plugin disabled until `plugin:install`
+runs. If PHP does not check files for changes (`opcache.validate_timestamps=0`),
+restart PHP-FPM or the web server. Details:
+[docs/INSTALL.en.md](docs/INSTALL.en.md#upgrading-from-18x).
 
 **From 1.7.x.**
 

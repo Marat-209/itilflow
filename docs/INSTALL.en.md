@@ -139,9 +139,24 @@ What process administrators will see:
 - a route created through the API without `outcome_contract` stays on the
   previous handling by default.
 
-**Rollback** — put the 1.8.x files back and run `cache:clear`: 1.9.0 writes
-no data that 1.8 would not understand. Routes converted with the button stay
-on the new handling — 1.8 understands it too.
+**Rollback.** 1.9.0 writes no data that 1.8 would not understand. Routes
+converted with the button stay on the new handling — 1.8 understands it too.
+
+1. **Files.** Put the 1.8.x files back into `plugins/itilflow`.
+2. **Install** — from the GLPI directory, as the web server user:
+
+   ```bash
+   php bin/console cache:clear
+   php bin/console plugin:install itilflow --username=<GLPI administrator>
+   php bin/console plugin:activate itilflow
+   ```
+
+   The version number in the files again differs from the database, and GLPI
+   keeps the plugin disabled ("to be updated") until `plugin:install` runs.
+   Without these commands routes disappear from tickets.
+3. **OPcache.** If PHP does not check files for changes
+   (`opcache.validate_timestamps=0`), restart PHP-FPM or the web server;
+   otherwise it keeps running the 1.9.0 files.
 
 ## Upgrading from 1.7.x
 
