@@ -261,6 +261,10 @@ foreach (['glpi', 'process'] as $kak) {
             $cls = ' ' . ($b?->getAttribute('class') ?? '') . ' ';
             ok(str_contains($cls, ' itilflow-neutral-btn ') && !str_contains($cls, ' btn-outline-primary '),
                 $kak . ': «Перевести на новый порядок» — нейтральная кнопка, не цветом палитры', $cls);
+            // В диалоге «Перевести» — основная кнопка GLPI, «Отмена» — нейтральная.
+            $b = $x->query('//form[@name="itilflow_convert_form"]//button[@type="button"]')->item(0);
+            $cls = ' ' . ($b?->getAttribute('class') ?? '') . ' ';
+            ok(str_contains($cls, ' itilflow-neutral-btn '), $kak . ': «Отмена» в диалоге — нейтральная кнопка', $cls);
         }
         ok($x->query('//*[@data-itilflow-readiness]')->length === 1, $kak . '/' . $poryadok . ': строка готовности на форме');
         $tekst = podpisi($x);
