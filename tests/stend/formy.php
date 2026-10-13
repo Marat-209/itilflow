@@ -128,6 +128,15 @@ foreach (['glpi', 'process'] as $kak) {
                 if ($knopki->length !== 3 || $vybran->length !== 1 || $vybran->item(0)->getAttribute('value') !== $mode) {
                     $oshibki[] = $metka . ': режим не тремя кнопками';
                 }
+                // Кнопки режима — нейтральные: не цветом палитры GLPI (в светлых
+                // палитрах он почти белый, и невыбранная кнопка выглядит отключённой).
+                foreach ($knopki as $r) {
+                    $l = $x->query('//label[@for="' . $r->getAttribute('id') . '"]')->item(0);
+                    $cls = ' ' . ($l?->getAttribute('class') ?? '') . ' ';
+                    if (!str_contains($cls, ' itilflow-mode-btn ') || str_contains($cls, ' btn-outline-primary ')) {
+                        $oshibki[] = $metka . ': кнопка режима ' . $r->getAttribute('value') . ' — классы' . $cls;
+                    }
+                }
                 // Точки возврата — этот и предыдущие.
                 foreach ($x->query('//input[@name="_structured_return_targets[]"]') as $cb) {
                     $t = new Stage();
@@ -247,6 +256,11 @@ foreach (['glpi', 'process'] as $kak) {
             ok($deti->length === 1 && $x->query('//*[@data-itilflow-legacy]/div/form[@name="itilflow_convert_form"]'
                 . ' | //*[@data-itilflow-legacy]/div//div[contains(@class,"collapse")]//form[@name="itilflow_convert_form"]')->length === 1,
                 $kak . ': содержимое плашки — одним блоком, диалог под текстом', (string) $deti->length);
+            // «Перевести на новый порядок» — нейтральная кнопка с тёмным текстом и рамкой.
+            $b = $x->query('//*[@data-itilflow-legacy]//button[starts-with(@data-bs-target,"#itilflow-convert-")]')->item(0);
+            $cls = ' ' . ($b?->getAttribute('class') ?? '') . ' ';
+            ok(str_contains($cls, ' itilflow-neutral-btn ') && !str_contains($cls, ' btn-outline-primary '),
+                $kak . ': «Перевести на новый порядок» — нейтральная кнопка, не цветом палитры', $cls);
         }
         ok($x->query('//*[@data-itilflow-readiness]')->length === 1, $kak . '/' . $poryadok . ': строка готовности на форме');
         $tekst = podpisi($x);
