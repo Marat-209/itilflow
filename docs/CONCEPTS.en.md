@@ -58,7 +58,7 @@ The stage's **"Who approves"** field («Кто согласует»):
   the stage row and in the ticket timeline's **Answer** menu.
 
 Several approvers can be named — each gets a separate approval. How many are
-needed is set by **"Approvals needed, %"** («Сколько виз нужно, %») under
+needed is set by **"Approvals needed, %"** («Сколько одобрений нужно, %») under
 "More": 100 — all, 50 — half. A refusal
 rejects the stage as soon as the threshold becomes unreachable. Approvers
 cannot be swapped once the approvals exist. Who named whom and why is shown in
@@ -108,7 +108,7 @@ A child-ticket stage has a **"How the department reports the result"** field
   child ticket's assignee (personally or through a group) clicks "Record
   result" and writes the result the requester will see. An internal comment
   is optional. This is the default for a new stage.
-- **By approval in the department ticket** («Визой в заявке отдела») —
+- **By approval in the department ticket** («Согласованием в заявке отдела») —
   approvals are created in the child ticket for the stage's responsible group
   and/or person; their answers decide the outcome by "Approvals needed, %".
 

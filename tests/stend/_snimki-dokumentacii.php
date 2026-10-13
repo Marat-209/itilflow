@@ -46,7 +46,7 @@ $P = $vstavit(Process::getTable(), ['name' => 'Запрос с согласов�
     'is_active' => 1, 'itemtype' => 'Ticket', 'enforcement' => 'audit', 'version' => 7, 'block_resolution' => 1,
     'public_log' => 1, 'helpdesk_tab' => 1, 'allow_withdraw' => 1, 'calendars_id' => $cal,
     'outcome_contract' => 'structured_v1',
-    'comment' => 'Запрос с визой руководителя: согласование, работа отдела, итог заявителю.']);
+    'comment' => 'Запрос с согласованием руководителя: согласование, работа отдела, итог заявителю.']);
 $s1 = $vstavit(Stage::getTable(), ['plugin_itilflow_processes_id' => $P, 'name' => 'Согласование руководителя', 'ranking' => 10,
     'execution_mode' => 'approval', 'approver_source' => 'runtime', 'deadline_minutes' => 540, 'ticket_status' => 10,
     'negative_policy' => 'abort', 'return_targets' => '[]', 'content' => 'Проверьте, что запрос обоснован.']);
