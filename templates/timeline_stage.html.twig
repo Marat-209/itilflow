@@ -25,7 +25,8 @@
 
    {% if action.kind == 'complete' %}
       {% if action.instruction|striptags|trim != '' %}
-         <div class="alert alert-info py-2">{{ action.instruction|raw }}</div>
+         {# Инструкция — HTML из редактора: очищается штатным фильтром GLPI, как лента заявки. #}
+         <div class="alert alert-info py-2">{{ action.instruction|safe_html }}</div>
       {% endif %}
 
       {% if action.comment != 'none' %}

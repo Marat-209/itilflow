@@ -65,9 +65,14 @@ final class Engine
         return $_SESSION['glpi_currenttime'] ?? date('Y-m-d H:i:s');
     }
 
+    /**
+     * Сообщение после перехода. Текст — простой, с названиями маршрутов, этапов,
+     * групп и причинами, а GLPI 11 выводит такие сообщения как HTML: экранирует
+     * тот, кто пишет. Поэтому здесь, для всех сообщений движка сразу.
+     */
     private static function msg(string $text, int $level = INFO): void
     {
-        Session::addMessageAfterRedirect($text, false, $level);
+        Session::addMessageAfterRedirect(htmlescape($text), false, $level);
     }
 
     /**
@@ -899,14 +904,15 @@ final class Engine
         }
         $fk = $item::getForeignKeyField();
         $task = new $taskclass();
+        // Содержимое задачи — HTML: инструкция этапа (из редактора) как есть, название — текстом.
         $content = trim((string) $stage->fields['content']) !== ''
             ? $stage->fields['content']
-            : $stage->fields['name'];
+            : htmlescape((string) $stage->fields['name']);
 
         $tid = $task->add([
             $fk               => $item->getID(),
             'content'         => sprintf('<p><strong>Этап %d. %s</strong></p>%s',
-                (int) $step->fields['ranking'], $stage->fields['name'], $content),
+                (int) $step->fields['ranking'], htmlescape((string) $stage->fields['name']), $content),
             'state'           => Planning::TODO,
             'groups_id_tech'  => (int) $stage->fields['groups_id'],
             'users_id_tech'   => (int) $stage->fields['users_id'],
@@ -1122,10 +1128,13 @@ final class Engine
             'entities_id'        => (int) $item->fields['entities_id'],
             'itemtype_target'    => $target_type,
             'items_id_target'    => $target_id,
+            // Комментарий запроса GLPI выводит как HTML: название — текстом; инструкция
+            // без тегов уже безопасна (символы в ней хранятся сущностями редактора).
+            // Абзац — чтобы GLPI принял текст за HTML и не раскодировал сущности.
             'comment_submission' => sprintf(
-                'Согласование этапа %d «%s».%s',
+                '<p>Согласование этапа %d «%s».%s</p>',
                 (int) $step->fields['ranking'],
-                $stage->fields['name'],
+                htmlescape((string) $stage->fields['name']),
                 trim((string) $stage->fields['content']) !== ''
                     ? ' ' . strip_tags((string) $stage->fields['content']) : ''
             ),

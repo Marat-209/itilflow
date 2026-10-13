@@ -96,7 +96,7 @@ final class Hook
         if ($error !== null) {
             Violation::record($instance, $task->getType(), $task->getID(),
                 'action_task_complete', true, $error);
-            Session::addMessageAfterRedirect($error, false, ERROR);
+            Session::addMessageAfterRedirect(htmlescape($error), false, ERROR);
             $task->input = false;
             return;
         }
