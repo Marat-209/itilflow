@@ -235,6 +235,14 @@ foreach (['glpi', 'process'] as $kak) {
             && $x->query('//form[@name="itilflow_convert_form"]//button[@name="convert"]')->length === 1;
         ok($plashka === ($poryadok === 'legacy'), $kak . '/' . $poryadok . ': плашка «Перевести на новый порядок» '
             . ($poryadok === 'legacy' ? 'есть' : 'нет'));
+        if ($poryadok === 'legacy') {
+            // У alert в Tabler display:flex: всё содержимое плашки — в одной оболочке,
+            // иначе раскрытый диалог встаёт справа от текста, а не под ним.
+            $deti = $x->query('//*[@data-itilflow-legacy]/*');
+            ok($deti->length === 1 && $x->query('//*[@data-itilflow-legacy]/div/form[@name="itilflow_convert_form"]'
+                . ' | //*[@data-itilflow-legacy]/div//div[contains(@class,"collapse")]//form[@name="itilflow_convert_form"]')->length === 1,
+                $kak . ': содержимое плашки — одним блоком, диалог под текстом', (string) $deti->length);
+        }
         ok($x->query('//*[@data-itilflow-readiness]')->length === 1, $kak . '/' . $poryadok . ': строка готовности на форме');
         $tekst = podpisi($x);
         $slova = array_filter(['Организационная единица', 'Виден в подчинённых единицах', 'Режим контроля', 'инициатор',
