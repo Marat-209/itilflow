@@ -1,0 +1,67 @@
+{# Импорт маршрутов, шаг 4 — результат. Как templates/pages/admin/form/import/step4_execute.html.twig GLPI 11.
+   Импорт — одна транзакция: при ошибке не записано ничего, и это сказано над таблицей. #}
+{% extends "layout/page_without_tabs.html.twig" %}
+
+{% set container_size = "narrow" %}
+
+{% block content_title %}
+    Импорт маршрутов
+{% endblock content_title %}
+
+{% block content_body %}
+    {% if not result.ok %}
+        <div class="alert alert-danger" role="alert">
+            Ничего не импортировано, изменения отменены. {{ result.error }}
+        </div>
+    {% endif %}
+    <div class="card">
+        <div class="card-header py-3 px-4">
+            <h3 class="card-title">Результат импорта</h3>
+        </div>
+        <table class="table table-card mb-0">
+            <thead>
+                <tr>
+                    <th class="w-70 px-4">Маршрут</th>
+                    <th class="w-30 px-4">Статус</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for row in result.rows %}
+                    <tr>
+                        <td class="w-70 px-4">
+                            {% if row.url %}
+                                <a href="{{ row.url }}">{{ row.name }}</a>
+                            {% else %}
+                                {{ row.name }}
+                            {% endif %}
+                        </td>
+                        <td class="w-30 px-4">
+                            <div class="d-flex align-items-start">
+                                {% if row.status == 'imported' %}
+                                    <i class="ti ti-check text-success me-2 mt-1" aria-hidden="true"></i>
+                                    <div><span>Импортировано</span>
+                                {% else %}
+                                    <i class="ti ti-x text-danger me-2 mt-1" aria-hidden="true"></i>
+                                    <div><span>Не импортируется</span>
+                                {% endif %}
+                                {% for d in row.details %}
+                                    <div class="small">{{ d }}</div>
+                                {% endfor %}
+                                </div>
+                            </div>
+                        </td>
+                    </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+
+    <div class="row mt-3">
+        <div class="col">
+            <div class="justify-content-end d-flex gap-2">
+                <a href="{{ list }}" class="btn btn-outline-secondary">Маршруты этапов</a>
+                <a href="{{ action }}" class="btn btn-outline-secondary">Импортируйте другой файл</a>
+            </div>
+        </div>
+    </div>
+{% endblock content_body %}

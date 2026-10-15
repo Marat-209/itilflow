@@ -1,0 +1,13 @@
+{# Скрытые поля шагов импорта: файл, убранные маршруты, копии, выбранные замены. Ключ CSRF — отдельно в каждой форме. #}
+<input type="hidden" name="json" value="{{ json }}" />
+{% for id in skipped %}
+    <input type="hidden" name="skipped_routes[]" value="{{ id }}" />
+{% endfor %}
+{% for id in copies %}
+    <input type="hidden" name="copy_routes[]" value="{{ id }}" />
+{% endfor %}
+{% for r in replacements %}
+    <input type="hidden" name="replacements[{{ loop.index0 }}][itemtype]" value="{{ r.itemtype }}" />
+    <input type="hidden" name="replacements[{{ loop.index0 }}][original_id]" value="{{ r.original_id }}" />
+    <input type="hidden" name="replacements[{{ loop.index0 }}][replacement_id]" value="{{ r.replacement_id }}" />
+{% endfor %}

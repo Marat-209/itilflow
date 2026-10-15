@@ -36,6 +36,46 @@ class Process extends CommonDBTM
         return 'Маршруты этапов';
     }
 
+    /**
+     * Кнопки над списком маршрутов — как «Импорт форм» у форм GLPI 11: импорт файла
+     * и экспорт всех видимых маршрутов. Выбранные выгружает массовое действие «Экспорт».
+     */
+    public static function getAdditionalMenuLinks()
+    {
+        $links = [];
+        if (self::canView()) {
+            $links['<i class="ti ti-file-arrow-right me-1"></i>Экспорт всех'] = '/plugins/itilflow/front/export.php';
+        }
+        if (self::canCreate() && self::canUpdate()) {
+            $links['<i class="ti ti-file-arrow-left me-1"></i>Импорт маршрутов'] = '/plugins/itilflow/front/import.php';
+        }
+        return $links ?: false;
+    }
+
+    public function getSpecificMassiveActions($checkitem = null)
+    {
+        $actions = parent::getSpecificMassiveActions($checkitem);
+        if (self::canView()) {
+            $actions[self::class . \MassiveAction::CLASS_ACTION_SEPARATOR . 'export']
+                = '<i class="ti ti-file-arrow-right"></i>' . htmlescape('Экспорт');
+        }
+        return $actions;
+    }
+
+    /** «Экспорт» выбранных — как у форм GLPI 11: ссылка на файл и сразу переход к ней. */
+    public static function showMassiveActionsSubForm(\MassiveAction $ma)
+    {
+        global $CFG_GLPI;
+        if ($ma->getAction() !== 'export') {
+            return parent::showMassiveActionsSubForm($ma);
+        }
+        $ids = array_values(array_map('intval', $ma->getItems()[self::class] ?? []));
+        $url = $CFG_GLPI['root_doc'] . '/plugins/itilflow/front/export.php?' . http_build_query(['ids' => $ids]);
+        echo '<a href="' . htmlescape($url) . '">' . htmlescape('Нажмите здесь, чтобы загрузить экспортированные маршруты...') . '</a>';
+        echo \Html::scriptBlock("window.location.href = '" . \jsescape($url) . "';");
+        return true;
+    }
+
     public function isEntityAssign()
     {
         return true;

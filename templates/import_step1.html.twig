@@ -1,0 +1,42 @@
+{# Импорт маршрутов, шаг 1 — выбор файла. Как templates/pages/admin/form/import/step1_index.html.twig GLPI 11. #}
+{% extends "layout/page_without_tabs.html.twig" %}
+
+{% set container_size = "narrow" %}
+
+{% block content_title %}
+    Импорт маршрутов
+{% endblock content_title %}
+
+{% block content_body %}
+    <form method="POST" action="{{ action }}?step=preview" enctype="multipart/form-data">
+        <div class="card">
+            <div class="card-body py-3 px-3">
+                <h3 id="itilflow-import-file" class="card-title mb-3 mt-0">Выберите свой файл</h3>
+                <input
+                    accept=".json,application/json"
+                    aria-labelledby="itilflow-import-file"
+                    aria-describedby="itilflow-import-file-help"
+                    class="form-control"
+                    type="file"
+                    name="import_file"
+                    required
+                >
+                <p id="itilflow-import-file-help" class="mt-2 mb-0 small">
+                    Файл JSON до 2 МБ — его выгружает «Экспорт» в списке маршрутов.
+                    Маршруты создаются выключенными, существующие маршруты импорт не меняет.
+                </p>
+            </div>
+        </div>
+
+        <div class="row mt-3">
+            <div class="col">
+                <div class="justify-content-end d-flex gap-2">
+                    <a href="{{ list }}" class="btn btn-outline-secondary">Отмена</a>
+                    <button type="submit" class="btn btn-primary">Предварительный просмотр импорта</button>
+                </div>
+            </div>
+        </div>
+
+        <input type="hidden" name="_glpi_csrf_token" value="{{ csrf_token() }}" />
+    </form>
+{% endblock content_body %}

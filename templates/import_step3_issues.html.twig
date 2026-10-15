@@ -1,0 +1,108 @@
+{# Импорт маршрутов, шаг 3 — «Устранять проблемы». Как templates/pages/admin/form/import/step3_resolve_issues.html.twig
+   GLPI 11: тип, исходное значение, замена из списка GLPI. Сверх того — где ссылка в маршруте, найденные
+   несколько — списком найденных, найденное по номеру — на проверку. «-----» — оставить пустым. #}
+{% extends "layout/page_without_tabs.html.twig" %}
+{% import 'components/form/fields_macros.html.twig' as fields %}
+
+{% set container_size = "narrow" %}
+
+{% block content_title %}
+    Импорт маршрутов
+{% endblock content_title %}
+
+{% block content_body %}
+    {% set states = {
+        'missing':  'Не найдено в этой базе.',
+        'several':  'Найдено несколько — выберите один.',
+        'by_id':    'Найдено по номеру и имени — проверьте, тот ли это объект.',
+        'replaced': 'Выбрано вручную.',
+    } %}
+    <form method="POST" action="{{ action }}?step=preview">
+        <div class="card">
+            <div class="card-header py-3 px-4">
+                <h3 class="card-title">Устранять проблемы — {{ route.name }}</h3>
+            </div>
+            {% if issues is empty %}
+                <div class="card-body py-3 px-4">
+                    Все объекты GLPI найдены. Если маршрут не может быть импортирован, причина — в самом маршруте:
+                    исправьте его в исходной базе и выгрузите заново.
+                </div>
+            {% else %}
+                <table class="table table-card mb-0">
+                    <thead>
+                        <tr>
+                            <th class="w-25 px-4">Тип элемента</th>
+                            <th class="w-25 px-4">Оригинальное значение</th>
+                            <th class="w-50 px-4">Заменить на</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% set offset = replacements|length %}
+                        {% for issue in issues %}
+                            {% set index = offset + loop.index0 %}
+                            {% set field = 'replacements[' ~ index ~ '][replacement_id]' %}
+                            <tr>
+                                <td class="px-4 align-middle">
+                                    <div class="d-flex align-items-center">
+                                        <i class="me-2 {{ issue.itemtype|itemtype_icon }}" aria-hidden="true"></i>
+                                        <span>{{ issue.itemtype|itemtype_name }}</span>
+                                    </div>
+                                </td>
+                                <td class="px-4 align-middle">
+                                    <div>{{ issue.label }}</div>
+                                    <div class="small">{{ issue.state == 'replaced' and issue.id == 0 ? 'Оставлено пустым.' : states[issue.state] }}</div>
+                                    {% for use in issue.uses %}
+                                        <div class="small">{{ use }}</div>
+                                    {% endfor %}
+                                </td>
+                                <td class="px-4">
+                                    <input type="hidden" name="replacements[{{ index }}][itemtype]" value="{{ issue.itemtype }}" />
+                                    <input type="hidden" name="replacements[{{ index }}][original_id]" value="{{ issue.original_id }}" />
+                                    {% if issue.state == 'several' %}
+                                        <select class="form-select" name="{{ field }}"
+                                                aria-label="Заменить на — {{ issue.label }}">
+                                            {% if issue.itemtype != 'Entity' %}
+                                                <option value="0">-----</option>
+                                            {% endif %}
+                                            {% for id, label in issue.candidates %}
+                                                <option value="{{ id }}">{{ label }}</option>
+                                            {% endfor %}
+                                        </select>
+                                    {% else %}
+                                        {{ fields.dropdownField(
+                                            issue.itemtype,
+                                            field,
+                                            issue.id > 0 or issue.state == 'replaced' ? issue.id : (issue.itemtype == 'Entity' ? active_entity : 0),
+                                            '',
+                                            {
+                                                'field_class': 'col-12',
+                                                'aria_label' : 'Заменить на — ' ~ issue.label,
+                                                'no_label'   : true,
+                                                'right'      : 'all',
+                                                'mb'         : '',
+                                            }
+                                        ) }}
+                                    {% endif %}
+                                </td>
+                            </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+                <div class="card-body py-2 px-4">
+                    «-----» — оставить пустым. Этапу без группы и сотрудника нужен исполнитель, иначе маршрут не импортируется.
+                </div>
+            {% endif %}
+        </div>
+
+        <div class="row mt-3">
+            <div class="col">
+                <div class="justify-content-end d-flex">
+                    <button type="submit" class="btn btn-primary">Предварительный просмотр импорта</button>
+                </div>
+            </div>
+        </div>
+
+        <input type="hidden" name="_glpi_csrf_token" value="{{ csrf_token() }}" />
+        {{ include('@itilflow/_import_hidden.html.twig') }}
+    </form>
+{% endblock content_body %}

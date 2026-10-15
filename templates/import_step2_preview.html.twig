@@ -1,0 +1,106 @@
+{# Импорт маршрутов, шаг 2 — предпросмотр. Как templates/pages/admin/form/import/step2_preview.html.twig GLPI 11:
+   «Готов к импорту» / «Не может быть импортирован», «Устранять проблемы», корзина — убрать из списка.
+   Сверх того — маршрут с занятым именем: по умолчанию пропуск, по выбору копия. #}
+{% extends "layout/page_without_tabs.html.twig" %}
+
+{% set container_size = "narrow" %}
+
+{% block content_title %}
+    Импорт маршрутов
+{% endblock content_title %}
+
+{% block content_body %}
+    <form method="POST" action="{{ action }}?step=execute" data-submit-once>
+        <div class="card">
+            <div class="card-header py-3 px-4">
+                <h3 class="card-title">Предпросмотр импорта</h3>
+            </div>
+            <div class="card-body py-2 px-4">
+                Маршруты создаются выключенными — включите их после проверки. Существующие маршруты импорт не меняет.
+            </div>
+            <table class="table table-card mb-0">
+                <thead>
+                    <tr>
+                        <th class="w-50 px-4">Маршрут</th>
+                        <th class="w-25 px-4">Статус</th>
+                        <th class="w-25 px-4">Действия</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for r in rows %}
+                        {% if r.status == 'ready' %}
+                            {% set icon = 'ti-check text-success' %}
+                            {% set status = 'Готов к импорту' %}
+                        {% elseif r.status == 'exists' %}
+                            {% set icon = 'ti-player-skip-forward' %}
+                            {% set status = 'Маршрут с таким именем уже есть — будет пропущен' %}
+                        {% else %}
+                            {% set icon = 'ti-x text-danger' %}
+                            {% set status = 'Не может быть импортирован' %}
+                        {% endif %}
+                        <tr>
+                            <td class="px-4 align-middle">{{ r.name }}</td>
+                            <td class="px-4 align-middle">
+                                <div class="d-flex align-items-start">
+                                    <i class="ti {{ icon }} me-2 mt-1" aria-hidden="true"></i>
+                                    <div>
+                                        <span>{{ status }}</span>
+                                        {% for d in r.details %}
+                                            <div class="small">{{ d }}</div>
+                                        {% endfor %}
+                                    </div>
+                                </div>
+                            </td>
+                            <td class="px-4 align-middle">
+                                <div class="d-flex flex-row-reverse flex-wrap align-items-center justify-content-start gap-2">
+                                    {% if r.copy is same as(false) %}
+                                        <button type="submit" class="btn btn-link p-0" name="copy_routes[]" value="{{ r.id }}"
+                                                formaction="{{ action }}?step=preview">
+                                            Создать копией
+                                        </button>
+                                    {% else %}
+                                        <button type="submit" class="btn btn-link p-0 text-danger" name="skipped_routes[]" value="{{ r.id }}"
+                                                formaction="{{ action }}?step=preview"
+                                                title="Удалите этот маршрут из списка импорта"
+                                                aria-label="Удалить маршрут «{{ r.name }}» из списка импорта">
+                                            <i class="ti ti-trash" aria-hidden="true"></i>
+                                        </button>
+                                    {% endif %}
+                                    {% if r.copy is same as(true) %}
+                                        <span class="vr"></span>
+                                        <button type="submit" class="btn btn-link p-0" name="uncopy" value="{{ r.id }}"
+                                                formaction="{{ action }}?step=preview">
+                                            Не создавать копию
+                                        </button>
+                                    {% endif %}
+                                    {% if r.resolve %}
+                                        <span class="vr"></span>
+                                        <button type="submit" class="btn btn-link p-0" name="route_id" value="{{ r.id }}"
+                                                formaction="{{ action }}?step=resolve">
+                                            Устранять проблемы
+                                        </button>
+                                    {% endif %}
+                                </div>
+                            </td>
+                        </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+
+        <div class="row mt-3">
+            <div class="col">
+                <div class="justify-content-end align-items-center d-flex gap-2">
+                    {% if ready == 0 %}
+                        <span class="me-auto">Нечего импортировать: нет маршрутов «Готов к импорту».</span>
+                    {% endif %}
+                    <a href="{{ list }}" class="btn btn-outline-secondary">Отмена</a>
+                    <button type="submit" class="btn btn-primary" {{ ready == 0 ? 'disabled' : '' }}>Импорт</button>
+                </div>
+            </div>
+        </div>
+
+        <input type="hidden" name="_glpi_csrf_token" value="{{ csrf_token() }}" />
+        {{ include('@itilflow/_import_hidden.html.twig') }}
+    </form>
+{% endblock content_body %}
