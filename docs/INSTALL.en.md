@@ -6,7 +6,7 @@ English · **[Русский](INSTALL.md)**
 
 | What | Requirement |
 |---|---|
-| GLPI | 11.0.x. Declared 11.0.0–11.99.99; release 1.9.0 tested on 11.0.8 |
+| GLPI | 11.0.x. Declared 11.0.0–11.99.99; release 1.10.0 tested on 11.0.8 |
 | Database | MariaDB (tested) or MySQL 8 (not tested); InnoDB tables |
 | PHP | whatever your GLPI 11 requires |
 | Cron | a system cron running `front/cron.php` every minute: the plugin's tasks run in CLI mode |
@@ -22,7 +22,7 @@ The plugin directory must be named `itilflow` and sit in your GLPI's
 From a release archive:
 
 ```bash
-tar -xzf itilflow-1.9.0.tar.gz -C /var/www/glpi/plugins/
+tar -xzf itilflow-1.10.0.tar.gz -C /var/www/glpi/plugins/
 chown -R www-data:www-data /var/www/glpi/plugins/itilflow
 ```
 
@@ -30,7 +30,7 @@ From the repository (the repository root is the plugin directory):
 
 ```bash
 git clone <this repository's URL> /var/www/glpi/plugins/itilflow
-cd /var/www/glpi/plugins/itilflow && git checkout v1.9.0
+cd /var/www/glpi/plugins/itilflow && git checkout v1.10.0
 ```
 
 Use your own web user (`www-data`) and GLPI path — the same as the other
@@ -41,7 +41,7 @@ permissions: after unpacking, directories may lack the `x` bit and GLPI
 answers 404 for the plugin's files. A reliable way:
 
 ```bash
-git archive --prefix=itilflow/ -o itilflow-1.9.0.tar.gz v1.9.0
+git archive --prefix=itilflow/ -o itilflow-1.10.0.tar.gz v1.10.0
 ```
 
 ### 2. Install and enable
@@ -108,21 +108,42 @@ Details: [RIGHTS.en.md](RIGHTS.en.md).
 
 ### 5. Check
 
-- `php bin/console plugin:list` — itilflow 1.9.0 is enabled.
+- `php bin/console plugin:list` — itilflow 1.10.0 is enabled.
 - The database has nine `glpi_plugin_itilflow_*` tables: processes, stages,
   instances, steps, violations, attempts, outcomes, outcomevalidations,
   commandreceipts.
 - `files/_log/php-errors.log` has no errors mentioning `itilflow`.
 - The **Administration** menu has **Stage routes** (requires the right).
 
-## Upgrading from 1.8.x
+## Upgrading from 1.9.x
 
-The database schema does not change in 1.9.0: no new tables or columns, and
-the installer does not edit any rows. The route and stage settings screens
-change.
+The database schema does not change in 1.10.0: no new tables or columns, and
+the installer does not edit any rows. Route export and import are added
+([TUTORIAL.en.md](TUTORIAL.en.md#moving-routes-to-another-glpi)).
 
 1. **Backup** of `plugins/itilflow` (and, as always, of the database).
-2. **Files.** Replace the contents of `plugins/itilflow` with 1.9.0.
+2. **Files.** Replace the contents of `plugins/itilflow` with 1.10.0.
+3. **Install** — as above: `plugin:install`, `plugin:activate`,
+   `cache:clear`. In the UI — **Setup → Plugins** → "Upgrade", then
+   "Enable"; run `cache:clear` anyway.
+
+GLPI shows the "Экспорт всех" and "Импорт маршрутов" buttons above the route
+list from the menu cached in the session: if they are missing, log out and
+back in.
+
+**Rollback.** 1.10.0 writes no data that 1.9 would not understand; routes
+created by import are ordinary routes. Put the 1.9.x files back and run
+`cache:clear`, `plugin:install`, `plugin:activate` — as in the 1.9.0 rollback
+below.
+
+## Upgrading from 1.8.x
+
+The database schema does not change in 1.9.0 and 1.10.0: no new tables or
+columns, and the installer does not edit any rows. The route and stage
+settings screens change (1.9.0); route export and import are added (1.10.0).
+
+1. **Backup** of `plugins/itilflow` (and, as always, of the database).
+2. **Files.** Replace the contents of `plugins/itilflow` with 1.10.0.
 3. **Install** — as above: `plugin:install`, `plugin:activate`,
    `cache:clear`. Until `plugin:install` runs, GLPI keeps the plugin disabled
    ("to be updated").
@@ -139,7 +160,7 @@ What process administrators will see:
 - a route created through the API without `outcome_contract` stays on the
   previous handling by default.
 
-**Rollback.** 1.9.0 writes no data that 1.8 would not understand. Routes
+**Rollback.** 1.9.0 and 1.10.0 write no data that 1.8 would not understand. Routes
 converted with the button stay on the new handling — 1.8 understands it too.
 
 1. **Files.** Put the 1.8.x files back into `plugins/itilflow`.
@@ -156,7 +177,7 @@ converted with the button stay on the new handling — 1.8 understands it too.
    Without these commands routes disappear from tickets.
 3. **OPcache.** If PHP does not check files for changes
    (`opcache.validate_timestamps=0`), restart PHP-FPM or the web server;
-   otherwise it keeps running the 1.9.0 files.
+   otherwise it keeps running the new files.
 
 ## Upgrading from 1.7.x
 
@@ -164,7 +185,7 @@ converted with the button stay on the new handling — 1.8 understands it too.
 
 1. **Backup.** A full database dump and a copy of `plugins/itilflow`. Ideally,
    rehearse the upgrade on a copy of the production database first.
-2. **Files.** Replace the contents of `plugins/itilflow` with 1.9.0 (remove the
+2. **Files.** Replace the contents of `plugins/itilflow` with 1.10.0 (remove the
    old files: some templates were dropped and some classes added since 1.8.0).
 3. **Migration.**
 

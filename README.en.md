@@ -61,6 +61,9 @@ manager approval → work by a department → answer to the requester
   hours; a readiness line tells whether the route is ready and what is
   missing; a new route uses the new outcome handling right away, an old one is
   converted with one button.
+- **Moving routes (1.10.0).** Export to a JSON file and import — like GLPI 11
+  forms: preview, "Resolve issues" with replacements picked from GLPI lists,
+  routes are created disabled in one transaction, existing ones never change.
 - **Order enforcement** in Log, Warn and Block modes, with a log of
   out-of-order actions.
 - **Ticket status per stage**, stage deadline with overdue marking, stage
@@ -69,8 +72,8 @@ manager approval → work by a department → answer to the requester
 
 ## Requirements
 
-- GLPI 11.0.x (`setup.php` declares 11.0.0–11.99.99). Release 1.9.0 was
-  tested on GLPI 11.0.8 with MariaDB: upgrade from 1.8.0.
+- GLPI 11.0.x (`setup.php` declares 11.0.0–11.99.99). Release 1.10.0 was
+  tested on GLPI 11.0.8 with MariaDB: upgrade from 1.9.0.
   It has not been tested on MySQL 8.
 - PHP — whatever your GLPI 11 requires.
 - InnoDB tables (the installer checks this).
@@ -82,7 +85,7 @@ manager approval → work by a department → answer to the requester
 
 ```bash
 # unpack the release archive into GLPI's plugins directory — you get an itilflow directory
-tar -xzf itilflow-1.9.0.tar.gz -C /var/www/glpi/plugins/
+tar -xzf itilflow-1.10.0.tar.gz -C /var/www/glpi/plugins/
 chown -R www-data:www-data /var/www/glpi/plugins/itilflow
 
 # install, enable, clear the cache (from the GLPI directory, as the web user)
@@ -97,8 +100,14 @@ actions**) and grant the rights in profiles. Details:
 
 ## Upgrading
 
+**From 1.9.x.** The database schema does not change. Replace the plugin files
+with 1.10.0 and run `plugin:install`, `plugin:activate` and `cache:clear` (in the
+UI — "Upgrade" and "Enable" in the plugin list). Rollback: put the 1.9.x files
+back and run the same three commands. Details:
+[docs/INSTALL.en.md](docs/INSTALL.en.md#upgrading-from-19x).
+
 **From 1.8.x.** The database schema does not change. Replace the plugin files
-with 1.9.0 and run `plugin:install`, `plugin:activate` and `cache:clear`.
+with 1.10.0 and run `plugin:install`, `plugin:activate` and `cache:clear`.
 Existing routes do not change; old ones are converted to the new outcome
 handling with a button on the route page. Rollback: put the 1.8.x files back
 and run `cache:clear`, `plugin:install` and `plugin:activate`: when the
@@ -110,7 +119,7 @@ restart PHP-FPM or the web server. Details:
 **From 1.7.x.**
 
 1. Back up the database and the plugin directory.
-2. Replace the plugin files with 1.9.0.
+2. Replace the plugin files with 1.10.0.
 3. Run `plugin:install`, `plugin:activate` and `cache:clear` as for a fresh
    install. Until `plugin:install` runs, GLPI keeps the plugin disabled
    ("to be updated").
@@ -152,9 +161,9 @@ Step by step, with fields and checks: [docs/TUTORIAL.en.md](docs/TUTORIAL.en.md)
 
 | Document | Contents |
 |---|---|
-| [Installation and upgrade](docs/INSTALL.en.md) | requirements, install, cron, upgrade from 1.8 and 1.7, rollback, removal |
+| [Installation and upgrade](docs/INSTALL.en.md) | requirements, install, cron, upgrade from 1.9, 1.8 and 1.7, rollback, removal |
 | [Concepts](docs/CONCEPTS.en.md) | route, stage, stage modes, outcomes and attempts, answer to the requester, statuses |
-| [Setting up a route step by step](docs/TUTORIAL.en.md) | two illustrative examples from dropdowns to testing |
+| [Setting up a route step by step](docs/TUTORIAL.en.md) | two illustrative examples from dropdowns to testing; moving routes to another GLPI |
 | [Rights](docs/RIGHTS.en.md) | profile rights and who may perform which action |
 | [FAQ and GLPI 11 pitfalls](docs/FAQ.en.md) | symptoms, causes, fixes |
 | [Changelog](CHANGELOG.md) | all releases (in Russian) |

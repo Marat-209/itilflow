@@ -269,6 +269,47 @@ back.
 
 ---
 
+## Moving routes to another GLPI
+
+Since 1.10.0 routes move as a file — the same way as GLPI 11 forms ("Import
+forms"). Both the source and the target GLPI need itilflow 1.10.0.
+
+**Export.** **Administration → Stage routes**: "Экспорт всех" (export all)
+above the list, or select routes and use the "Экспорт" massive action. You
+get a JSON file: routes with stages and the GLPI objects they refer to —
+entities, groups, categories (by complete name), calendar and time to resolve
+(by name), users (by login). Tickets, route progress and passwords are not
+in the file.
+
+**Import.** "Импорт маршрутов" above the list (requires create and update on
+routes) → file → preview («Предварительный просмотр импорта»):
+
+- **"Ready to be imported"** («Готов к импорту») — everything is found;
+- **"Can't be imported"** («Не может быть импортирован») — something is not
+  found, found more than once, or a stage lacks an assignee. "Resolve
+  issues" («Устранять проблемы») → pick a replacement from the GLPI list for
+  each object, or "-----" (leave empty) → preview again;
+- **"A route with this name already exists — it will be skipped"** — by
+  default the route is not created; «Создать копией» creates it as
+  "… (копия)";
+- the bin icon removes the route from the list.
+
+Objects are looked up the same way as in the GLPI form import: by complete
+name (or name) in your active entities, exactly one must match. Otherwise an
+object with the same ID is used if its name is the same; such matches are
+flagged «Найдено по номеру, проверьте» (found by ID, please check).
+
+"Import" creates the routes **disabled**, in one transaction: if anything
+fails, nothing is written. Existing routes are never changed. Then check each
+route — the readiness line and the Stages tab — and enable it.
+
+Business rules that start a route are not in the file: move them with the
+standard GLPI rule export and import (**Administration → Rules → Business
+rules for tickets**) — GLPI finds the "Start stage route" action value by the
+route name. Or create the rule again, as in step 4.
+
+---
+
 ## Rollout
 
 1. A month in **Log** mode: out-of-order actions are logged, authority is
