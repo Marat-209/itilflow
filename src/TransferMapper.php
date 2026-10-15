@@ -14,7 +14,8 @@ namespace GlpiPlugin\Itilflow;
  * - замену от администратора можно оставить пустой (0); замена принимается, только если
  *   объект есть и виден в активных организациях.
  * Сам класс GLPI не подходит: он не различает «нет» и «несколько», не знает номеров
- * и при неизвестной ссылке бросает исключение. Удалённые пользователи не ищутся.
+ * и при неизвестной ссылке бросает исключение. Пользователь ищется среди активных, с профилем
+ * в активных организациях.
  */
 final class TransferMapper
 {
@@ -34,7 +35,8 @@ final class TransferMapper
     public const MISSING  = 'missing';  // не найден
     public const SEVERAL  = 'several';  // найдено несколько
 
-    private const CANDIDATES = 20;
+    /** Сколько найденных показывать списком; больше — выбор из общего списка GLPI. */
+    public const CANDIDATES = 20;
 
     /** @var list<int> */
     private array $entities;
@@ -147,7 +149,15 @@ final class TransferMapper
             $criteria[$table . '.' . $field] = $value;
         }
         if ($type === 'User') {
+            // У пользователя организации нет (isEntityAssign — false): видимость — профиль
+            // в активных организациях, как в списке пользователей GLPI; удалённые и выключенные — нет.
             $criteria[$table . '.is_deleted'] = 0;
+            $criteria[$table . '.is_active'] = 1;
+            $criteria[] = [$table . '.id' => new \Glpi\DBAL\QuerySubQuery([
+                'SELECT' => 'users_id',
+                'FROM'   => 'glpi_profiles_users',
+                'WHERE'  => getEntitiesRestrictCriteria('glpi_profiles_users', '', $this->entities, true),
+            ])];
         }
         if ($type === 'Entity') {
             $criteria[] = getEntitiesRestrictCriteria($table, '', $this->entities, false);

@@ -102,7 +102,9 @@ final class Transfer
             $need('Calendar', (int) $p['calendars_id']);
         }
         $stages = [];
-        foreach ($process->getStages() as $s) {
+        $all = $process->getStages();
+        $own = array_flip(array_map(static fn(array $s): int => (int) $s['id'], $all));
+        foreach ($all as $s) {
             $row = [
                 'id'                 => (int) $s['id'],
                 'name'               => (string) $s['name'],
@@ -123,9 +125,21 @@ final class Transfer
             foreach (self::STAGE_INTS as $field) {
                 $row[$field] = (int) $s[$field];
             }
+            // Удалённый этап остаётся в «Вернуться на этап» (удаление этапа чистит только точки
+            // возврата) — ссылка в никуда в файл не идёт, как и точки возврата на чужие этапы.
+            if (!isset($own[$row['plugin_itilflow_stages_id_reject']])) {
+                $row['plugin_itilflow_stages_id_reject'] = 0;
+            }
+            if ($row['return_targets'] !== null) {
+                $row['return_targets'] = array_values(array_filter($row['return_targets'], static fn(int $t): bool => isset($own[$t])));
+            }
+            // Поля, которые этап этого режима не читает (остаются после смены режима), — нулём:
+            // в другой базе их номера ничего не значат, сопоставлять их незачем.
             foreach (self::STAGE_REFS as $field => $type) {
                 if (self::isRef($field, $row)) {
                     $need($type, $row[$field]);
+                } else {
+                    $row[$field] = 0;
                 }
             }
             $stages[] = array_merge(array_flip(self::STAGE_KEYS), $row);
@@ -166,13 +180,22 @@ final class Transfer
         return $req;
     }
 
-    /** Поле этапа — ссылка на объект: ненулевой номер; организация отдела — при «В указанной организации», и нуль тоже. */
+    /**
+     * Поле этапа — ссылка на объект, которую этап читает: ненулевой номер; группа и сотрудник —
+     * кроме согласования «при прохождении» (форма их очищает); категория и время до решения —
+     * у дочерней заявки; организация отдела — у дочерней заявки «В указанной организации»,
+     * и нуль (корневая) тоже.
+     */
     private static function isRef(string $field, array $stage): bool
     {
-        if ($field === 'entities_id_target') {
-            return $stage['entity_strategy'] === 'fixed';
-        }
-        return (int) $stage[$field] > 0;
+        $delegated = $stage['execution_mode'] === Stage::MODE_DELEGATED;
+        return match ($field) {
+            'entities_id_target' => $delegated && $stage['entity_strategy'] === 'fixed',
+            'itilcategories_id', 'slas_id' => $delegated && (int) $stage[$field] > 0,
+            'groups_id', 'users_id' => (int) $stage[$field] > 0
+                && !($stage['execution_mode'] === Stage::MODE_APPROVAL && $stage['approver_source'] !== Stage::APPROVER_FIXED),
+            default => (int) $stage[$field] > 0,
+        };
     }
 
     /* ================================================================ файл */
@@ -311,16 +334,25 @@ final class Transfer
         if (!is_array($route['stages']) || !array_is_list($route['stages']) || count($route['stages']) > self::MAX_STAGES) {
             throw new TransferError($where . ': список этапов записан неверно.');
         }
+        // Ошибки смысла одного маршрута (порядок, статус, ссылки между этапами) — не отказ всему
+        // файлу, а «Не может быть импортирован» у этого маршрута: остальные переносятся.
+        $problems = [];
+        $statuses = Stage::getStatusChoices((string) $route['itemtype']);
         $stages = [];
         $ranks = [];
         foreach ($route['stages'] as $i => $stage) {
-            $stage = self::parseStage($stage, $where . ', этап ' . ($i + 1), (string) $route['itemtype']);
-            $label = $where . ', этап ' . $stage['ranking'];
+            $stage = self::parseStage($stage, $where . ', этап ' . ($i + 1));
+            $label = sprintf('Этап %d «%s»', $stage['ranking'], $stage['name']);
             if (isset($stage_ids[$stage['id']])) {
-                throw new TransferError($label . ': номер этапа ' . $stage['id'] . ' в файле повторяется.');
+                throw new TransferError($where . ', этап «' . $stage['name'] . '»: номер этапа ' . $stage['id'] . ' в файле повторяется.');
             }
-            if (isset($ranks[$stage['ranking']])) {
-                throw new TransferError($label . ': два этапа с одинаковым порядком.');
+            if ($stage['ranking'] <= 0) {
+                $problems[] = $label . ' — порядок должен быть больше нуля.';
+            } elseif (isset($ranks[$stage['ranking']])) {
+                $problems[] = sprintf('Два этапа с порядком %d.', $stage['ranking']);
+            }
+            if (!isset($statuses[$stage['ticket_status']])) {
+                $problems[] = $label . ' — статус, который выставляет этап, не подходит типу маршрута.';
             }
             $stage_ids[$stage['id']] = true;
             $ranks[$stage['ranking']] = true;
@@ -328,13 +360,14 @@ final class Transfer
         }
         // Внутренние ссылки — только на этапы этого же маршрута.
         foreach ($stages as $stage) {
-            $label = $where . ', этап ' . $stage['ranking'];
+            $label = sprintf('Этап %d «%s»', $stage['ranking'], $stage['name']);
             if ($stage['plugin_itilflow_stages_id_reject'] > 0 && !isset($stages[$stage['plugin_itilflow_stages_id_reject']])) {
-                throw new TransferError($label . ': «Вернуться на этап» — этапа нет в этом маршруте.');
+                $problems[] = $label . ' — «Вернуться на этап»: этапа нет в этом маршруте.';
             }
             foreach ($stage['return_targets'] ?? [] as $target) {
                 if (!isset($stages[$target])) {
-                    throw new TransferError($label . ': точка возврата — этапа нет в этом маршруте.');
+                    $problems[] = $label . ' — точка возврата: этапа нет в этом маршруте.';
+                    break;
                 }
             }
         }
@@ -362,12 +395,13 @@ final class Transfer
         // Требования без ссылок не нужны: сопоставлять их не просим.
         $route['data_requirements'] = array_intersect_key($requirements, $uses);
         $route['uses'] = $uses;
+        $route['problems'] = array_values(array_unique($problems));
         uasort($stages, static fn(array $a, array $b): int => $a['ranking'] <=> $b['ranking']);
         $route['stages'] = array_values($stages);
         return $route;
     }
 
-    private static function parseStage(mixed $stage, string $where, string $itemtype): array
+    private static function parseStage(mixed $stage, string $where): array
     {
         if (!is_array($stage) || ($stage !== [] && array_is_list($stage))) {
             throw new TransferError($where . ': ожидается объект.');
@@ -376,7 +410,7 @@ final class Transfer
         self::string($stage, 'name', $where, 255);
         $where .= ' «' . $stage['name'] . '»';
         self::int($stage, 'id', $where, 1);
-        self::int($stage, 'ranking', $where, 1);
+        self::int($stage, 'ranking', $where, -self::INT_MAX);
         foreach (self::STAGE_INTS as $field) {
             self::int($stage, $field, $where, 0);
         }
@@ -386,7 +420,6 @@ final class Transfer
         self::oneOf($stage, 'completion_comment', $where, array_keys(Stage::getCompletionCommentLabels()));
         self::int($stage, 'approval_percent', $where, 0, 100);
         self::oneOf($stage, 'approver_source', $where, array_keys(Stage::getApproverSourceLabels()));
-        self::oneOf($stage, 'ticket_status', $where, array_keys(Stage::getStatusChoices($itemtype)));
         self::oneOf($stage, 'on_reject', $where, array_keys(Stage::getRejectLabels()));
         self::text($stage, 'content', $where);
         self::oneOf($stage, 'department_result_source', $where, ['', 'assignee_action', 'native_validation']);
@@ -466,6 +499,14 @@ final class Transfer
      */
     public static function requestReplacements(mixed $value): array
     {
+        if (is_string($value)) {
+            // Прежние замены — одним скрытым полем JSON.
+            try {
+                $value = strlen($value) <= self::MAX_BYTES ? json_decode($value, true, 4, JSON_THROW_ON_ERROR) : null;
+            } catch (\JsonException $e) {
+                $value = null;
+            }
+        }
         $out = [];
         foreach (is_array($value) ? array_slice($value, 0, self::MAX_REQUIREMENTS * 2) : [] as $r) {
             if (!is_array($r) || !is_string($r['itemtype'] ?? null) || !isset(TransferMapper::TYPES[$r['itemtype']])) {
@@ -512,6 +553,13 @@ final class Transfer
                 $row['new_name'] = self::copyName($route['name'], $taken);
                 $row['details'][] = sprintf('Будет создан копией: «%s».', $row['new_name']);
             }
+            if ($route['problems'] !== []) {
+                // Исправляется только в исходной базе: сопоставление тут не поможет.
+                $row['status'] = self::INVALID;
+                array_push($row['details'], ...$route['problems']);
+                $rows[] = $row;
+                continue;
+            }
             $count = [TransferMapper::MISSING => 0, TransferMapper::SEVERAL => 0, TransferMapper::BY_ID => 0, 'chosen' => 0, 'empty' => 0];
             $map = [];
             foreach ($route['data_requirements'] as $key => $req) {
@@ -554,7 +602,7 @@ final class Transfer
                 $row['resolve'] = true;
             }
             if ($row['status'] === self::READY) {
-                $taken[mb_strtolower($row['new_name'])] = true;
+                $taken[self::nameKey($row['new_name'])] = true;
             }
             $rows[] = $row;
         }
@@ -565,7 +613,8 @@ final class Transfer
      * Ссылки маршрута, которые не сопоставились сами, — для шага «Устранять проблемы».
      * Как FormSerializer::listIssues, плюс найденные по номеру и выбранные ранее: их можно поменять.
      *
-     * @return list<array{itemtype:string,original_id:int,label:string,state:string,id:int,candidates:array<int,string>,uses:list<string>}>
+     * @return list<array{itemtype:string,original_id:int,label:string,state:string,id:int,candidates:array<int,string>,more:bool,uses:list<string>}>
+     *   more — найденных не меньше TransferMapper::CANDIDATES: выбор из общего списка GLPI
      */
     public static function issues(array $route, TransferMapper $mapper): array
     {
@@ -583,6 +632,7 @@ final class Transfer
                 'state'       => $r['state'],
                 'id'          => $r['id'],
                 'candidates'  => $r['candidates'],
+                'more'        => count($r['candidates']) >= TransferMapper::CANDIDATES,
                 'uses'        => $route['uses'][$key] ?? [],
             ];
         }
@@ -600,10 +650,20 @@ final class Transfer
         return null;
     }
 
-    /** Имя занято — в этой базе (без учёта регистра, как сравнивает база) или маршрутом этого же импорта. */
+    /**
+     * Имя занято — в этой базе (сравнивает база: без регистра, «ё» = «е», без хвостовых пробелов)
+     * или маршрутом этого же импорта. Считаются все маршруты базы, и в чужих организациях:
+     * импорт правил GLPI ищет маршрут по имени во всей базе.
+     */
     private static function nameTaken(string $name, array $taken): bool
     {
-        return isset($taken[mb_strtolower($name)]) || countElementsInTable(Process::getTable(), ['name' => $name]) > 0;
+        return isset($taken[self::nameKey($name)]) || countElementsInTable(Process::getTable(), ['name' => $name]) > 0;
+    }
+
+    /** Ключ имени для повторов внутри файла — близко к тому, как сравнивает база. */
+    private static function nameKey(string $name): string
+    {
+        return mb_strtolower(rtrim(str_replace(['ё', 'Ё'], ['е', 'Е'], $name)));
     }
 
     /** «Имя (копия)», «Имя (копия 2)» … — первое свободное. */
@@ -810,6 +870,10 @@ final class Transfer
     {
         $list = array_slice($_SESSION['MESSAGE_AFTER_REDIRECT'][ERROR] ?? [], $before);
         $text = $list ? trim(html_entity_decode(strip_tags((string) end($list)), ENT_QUOTES | ENT_HTML5, 'UTF-8')) : '';
-        return $text !== '' ? $text : 'причина не названа.';
+        // Общая фраза формы «…Обновите страницу» на шаге импорта сбивает: причина — в журнале.
+        if ($text === '' || str_starts_with($text, 'Изменение определения не подтверждено')) {
+            return 'ошибка записи в базу — подробности в журнале itilflow.log.';
+        }
+        return $text;
     }
 }

@@ -47,6 +47,9 @@ trait DefinitionMutation
         } catch (\Throwable $e) {
             if ($scope !== null) { try { $scope->rollback(); } catch (\Throwable $ignored) {} }
             if (count($_SESSION['MESSAGE_AFTER_REDIRECT'][ERROR] ?? []) <= $errors) {
+                // Причины нет на экране — она в журнале: ошибку SQL GLPI 11 бросает, но сам не пишет.
+                \Toolbox::logInFile('itilflow', sprintf("Изменение определения не подтверждено: %s: %s\n",
+                    get_class($e), $e->getMessage()), true, false);
                 \Session::addMessageAfterRedirect('Изменение определения не подтверждено. Обновите страницу.', false, ERROR);
             }
             return false;

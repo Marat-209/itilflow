@@ -18,6 +18,7 @@
         'replaced': 'Выбрано вручную.',
     } %}
     <form method="POST" action="{{ action }}?step=preview">
+        <input type="hidden" name="_glpi_csrf_token" value="{{ csrf_token() }}" />
         <div class="card">
             <div class="card-header py-3 px-4">
                 <h3 class="card-title">Устранять проблемы — {{ route.name }}</h3>
@@ -37,9 +38,8 @@
                         </tr>
                     </thead>
                     <tbody>
-                        {% set offset = replacements|length %}
                         {% for issue in issues %}
-                            {% set index = offset + loop.index0 %}
+                            {% set index = loop.index0 %}
                             {% set field = 'replacements[' ~ index ~ '][replacement_id]' %}
                             <tr>
                                 <td class="px-4 align-middle">
@@ -50,7 +50,7 @@
                                 </td>
                                 <td class="px-4 align-middle">
                                     <div>{{ issue.label }}</div>
-                                    <div class="small">{{ issue.state == 'replaced' and issue.id == 0 ? 'Оставлено пустым.' : states[issue.state] }}</div>
+                                    <div class="small">{{ issue.state == 'replaced' and issue.id == 0 and issue.itemtype != 'Entity' ? 'Оставлено пустым.' : states[issue.state] }}</div>
                                     {% for use in issue.uses %}
                                         <div class="small">{{ use }}</div>
                                     {% endfor %}
@@ -58,7 +58,7 @@
                                 <td class="px-4">
                                     <input type="hidden" name="replacements[{{ index }}][itemtype]" value="{{ issue.itemtype }}" />
                                     <input type="hidden" name="replacements[{{ index }}][original_id]" value="{{ issue.original_id }}" />
-                                    {% if issue.state == 'several' %}
+                                    {% if issue.state == 'several' and not issue.more %}
                                         <select class="form-select" name="{{ field }}"
                                                 aria-label="Заменить на — {{ issue.label }}">
                                             {% if issue.itemtype != 'Entity' %}
@@ -104,7 +104,6 @@
             </div>
         </div>
 
-        <input type="hidden" name="_glpi_csrf_token" value="{{ csrf_token() }}" />
         {{ include('@itilflow/_import_hidden.html.twig') }}
     </form>
 {% endblock content_body %}

@@ -11,6 +11,7 @@
 
 {% block content_body %}
     <form method="POST" action="{{ action }}?step=execute" data-submit-once>
+        <input type="hidden" name="_glpi_csrf_token" value="{{ csrf_token() }}" />
         <div class="card">
             <div class="card-header py-3 px-4">
                 <h3 class="card-title">Предпросмотр импорта</h3>
@@ -100,7 +101,6 @@
             </div>
         </div>
 
-        <input type="hidden" name="_glpi_csrf_token" value="{{ csrf_token() }}" />
         {{ include('@itilflow/_import_hidden.html.twig') }}
     </form>
 {% endblock content_body %}
