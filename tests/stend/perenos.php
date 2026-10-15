@@ -126,7 +126,7 @@ ok(count($prev) === count($vse) && !array_filter($prev, static fn(array $r): boo
     'тот же файл: у каждого маршрута «уже есть — будет пропущен»',
     implode('; ', array_map(static fn(array $r): string => $r['name'] . ': ' . $r['status'], $prev)));
 $res = Transfer::import($file, mapper());
-ok($res['ok'] && !array_filter($res['rows'], static fn(array $r): bool => $r['status'] === 'imported'), 'импорт того же файла ничего не создаёт');
+ok($res['ok'] && !array_filter($res['rows'], static fn(array $r): bool => $r['status'] !== 'skipped'), 'импорт того же файла ничего не создаёт: все «Пропущен»');
 ok(slepok() === $do, 'таблицы маршрутов и этапов не изменились');
 
 // 3. Копия маршрута — где больше всего режимов и есть точки возврата.
@@ -237,7 +237,8 @@ ok(!array_filter($res['rows'], static fn(array $r): bool => $r['status'] === 'im
 $m = mapper();
 $m->addReplacement('Group', $gid, $gid);
 $prev = Transfer::preview($fileNet, $m);
-ok($prev[0]['status'] === Transfer::READY, 'группа выбрана вручную — «Готов к импорту»', json_encode($prev[0]['details'], JSON_UNESCAPED_UNICODE));
+ok($prev[0]['status'] === Transfer::READY && in_array('Выбрано вручную: 1.', $prev[0]['details'], true) && $prev[0]['resolve'],
+    'группа выбрана вручную — «Готов к импорту», «Выбрано вручную: 1.», можно вернуться', json_encode($prev[0]['details'], JSON_UNESCAPED_UNICODE));
 ok(Transfer::issues($rgNet, $m)[0]['state'] === TransferMapper::REPLACED, 'выбранное остаётся в «Устранять проблемы» — можно поменять');
 
 // Оставить пустым — у этапа без исполнителя причина словами.
@@ -274,6 +275,8 @@ if (count($ents) === 2) {
     $r = mapper()->resolve(['itemtype' => 'Group', 'id' => 999999999, 'name' => $imya, 'completename' => $imya]);
     ok($r['state'] === TransferMapper::SEVERAL && array_keys($r['candidates']) === [$g1, $g2],
         'две группы с одним полным именем — «найдено несколько», обе в списке', json_encode($r, JSON_UNESCAPED_UNICODE));
+    ok(str_ends_with((string) ($r['candidates'][$g2] ?? ''), ' — ' . Dropdown::getDropdownName('glpi_entities', $ents[1])),
+        'у найденных — организация: их можно различить', (string) ($r['candidates'][$g2] ?? ''));
     $r = mapper()->resolve(['itemtype' => 'Group', 'id' => $g2, 'name' => $imya, 'completename' => $imya]);
     ok($r['state'] === TransferMapper::BY_ID && $r['id'] === $g2, 'несколько, но номер и имя совпали — берётся по номеру');
 } else {
