@@ -40,6 +40,9 @@
                                 {% if row.status == 'imported' %}
                                     <i class="ti ti-check text-success me-2 mt-1" aria-hidden="true"></i>
                                     <div><span>Импортировано</span>
+                                {% elseif row.status == 'skipped' %}
+                                    <i class="ti ti-player-skip-forward me-2 mt-1" aria-hidden="true"></i>
+                                    <div><span>Пропущен</span>
                                 {% else %}
                                     <i class="ti ti-x text-danger me-2 mt-1" aria-hidden="true"></i>
                                     <div><span>Не импортируется</span>

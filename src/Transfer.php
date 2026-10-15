@@ -192,7 +192,10 @@ final class Transfer
         if (!is_array($f) || !isset($f['error'], $f['tmp_name'], $f['name'], $f['size']) || is_array($f['error'])) {
             throw new TransferError('Выберите файл.');
         }
-        if (in_array((int) $f['error'], [UPLOAD_ERR_INI_SIZE, UPLOAD_ERR_FORM_SIZE], true) || (int) $f['size'] > self::MAX_BYTES) {
+        if (in_array((int) $f['error'], [UPLOAD_ERR_INI_SIZE, UPLOAD_ERR_FORM_SIZE], true)) {
+            throw new TransferError('Файл больше, чем принимает сервер (upload_max_filesize в настройках PHP).');
+        }
+        if ((int) $f['size'] > self::MAX_BYTES) {
             throw new TransferError('Файл больше 2 МБ — это не файл маршрутов.');
         }
         if ((int) $f['error'] === UPLOAD_ERR_NO_FILE) {
@@ -509,7 +512,7 @@ final class Transfer
                 $row['new_name'] = self::copyName($route['name'], $taken);
                 $row['details'][] = sprintf('Будет создан копией: «%s».', $row['new_name']);
             }
-            $count = [TransferMapper::MISSING => 0, TransferMapper::SEVERAL => 0, TransferMapper::BY_ID => 0, 'empty' => 0];
+            $count = [TransferMapper::MISSING => 0, TransferMapper::SEVERAL => 0, TransferMapper::BY_ID => 0, 'chosen' => 0, 'empty' => 0];
             $map = [];
             foreach ($route['data_requirements'] as $key => $req) {
                 $r = $mapper->resolve($req);
@@ -517,8 +520,8 @@ final class Transfer
                 if (isset($count[$r['state']])) {
                     $count[$r['state']]++;
                 }
-                if ($r['state'] === TransferMapper::REPLACED && $r['id'] === 0) {
-                    $count['empty']++;
+                if ($r['state'] === TransferMapper::REPLACED) {
+                    $count[$r['id'] === 0 && $req['itemtype'] !== 'Entity' ? 'empty' : 'chosen']++;
                 }
             }
             if ($count[TransferMapper::MISSING] || $count[TransferMapper::SEVERAL]) {
@@ -540,6 +543,10 @@ final class Transfer
             }
             if ($count[TransferMapper::BY_ID]) {
                 $row['details'][] = sprintf('Найдено по номеру, проверьте: %d.', $count[TransferMapper::BY_ID]);
+                $row['resolve'] = true;
+            }
+            if ($count['chosen']) {
+                $row['details'][] = sprintf('Выбрано вручную: %d.', $count['chosen']);
                 $row['resolve'] = true;
             }
             if ($count['empty']) {
@@ -691,7 +698,7 @@ final class Transfer
      * не переносятся: причина — в результате.
      *
      * @return array{ok:bool,error:string,rows:list<array{name:string,status:string,id:int,details:list<string>}>}
-     *   status: imported — «Импортировано»; not_imported — «Не импортируется»
+     *   status: imported — «Импортировано»; skipped — «Пропущен» (имя занято); not_imported — «Не импортируется»
      */
     public static function import(array $file, TransferMapper $mapper, array $skipped = [], array $copies = []): array
     {
@@ -733,11 +740,11 @@ final class Transfer
                     'details' => ['Выключен — включите после проверки.']];
                 continue;
             }
-            $details = match (true) {
-                $error !== '' && $row['status'] === self::READY => ['Изменения отменены вместе со всем импортом.'],
-                $row['status'] === self::EXISTS => ['Маршрут с таким именем уже есть — пропущен.'],
-                default => $row['details'],
-            };
+            if ($row['status'] === self::EXISTS) {
+                $rows[] = ['name' => $row['name'], 'status' => 'skipped', 'id' => 0, 'details' => ['Маршрут с таким именем уже есть.']];
+                continue;
+            }
+            $details = $error !== '' && $row['status'] === self::READY ? ['Изменения отменены вместе со всем импортом.'] : $row['details'];
             $rows[] = ['name' => $row['name'], 'status' => 'not_imported', 'id' => 0, 'details' => $details];
         }
         return ['ok' => $error === '', 'error' => $error, 'rows' => $rows];

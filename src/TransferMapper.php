@@ -154,22 +154,27 @@ final class TransferMapper
         } elseif ($item->isEntityAssign()) {
             $criteria[] = getEntitiesRestrictCriteria($table, '', $this->entities, $item->maybeRecursive());
         }
+        $in_entity = $type !== 'Entity' && $item->isEntityAssign();
         $out = [];
         foreach ($DB->request([
-            'SELECT' => array_merge([$table . '.id', $table . '.name'], $tree ? [$table . '.completename'] : []),
+            'SELECT' => array_merge([$table . '.id', $table . '.name'], $tree ? [$table . '.completename'] : [],
+                $in_entity ? [$table . '.entities_id'] : []),
             'FROM'   => $table,
             'WHERE'  => $criteria,
             'ORDER'  => $table . '.id',
             'LIMIT'  => self::CANDIDATES,
         ]) as $row) {
-            $label = (string) ($tree ? $row['completename'] : $row['name']);
-            if ($type === 'User') {
-                $full = trim((string) getUserName((int) $row['id']));
-                if ($full !== '' && $full !== $label) {
-                    $label .= ' — ' . $full;
-                }
+            $label = (string) ($tree ? $row['completename'] : $row['name']) . ' (' . (int) $row['id'] . ')';
+            // Найденные несколько различает организация (у пользователя — ФИО).
+            $extra = match (true) {
+                $type === 'User' => trim((string) getUserName((int) $row['id'])),
+                $in_entity => \Dropdown::getDropdownName('glpi_entities', (int) $row['entities_id']),
+                default => '',
+            };
+            if ($extra !== '' && $extra !== (string) $row['name']) {
+                $label .= ' — ' . $extra;
             }
-            $out[(int) $row['id']] = ['name' => (string) $row['name'], 'label' => $label . ' (' . (int) $row['id'] . ')'];
+            $out[(int) $row['id']] = ['name' => (string) $row['name'], 'label' => $label];
         }
         return $out;
     }
