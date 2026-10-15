@@ -143,15 +143,11 @@ $plohie += [
     'имя длиннее 255' => [$izm(static function (&$d) { $d['routes'][0]['name'] = str_repeat('я', 256); }), 'до 255 знаков'],
     'повтор номера маршрута' => [$izm(static function (&$d) { $d['routes'][1]['id'] = 5; foreach ($d['routes'][1]['stages'] as &$s) { $s['id'] += 100; if ($s['plugin_itilflow_stages_id_reject']) { $s['plugin_itilflow_stages_id_reject'] += 100; } } }), 'номер 5 в файле повторяется'],
     'неизвестный режим этапа' => [$izm(static function (&$d) { $d['routes'][0]['stages'][0]['execution_mode'] = 'script'; }), '«execution_mode» — недопустимое значение'],
-    'статус «Решена» на этапе' => [$izm(static function (&$d) { $d['routes'][0]['stages'][0]['ticket_status'] = 5; }), '«ticket_status» — недопустимое значение'],
     'порог больше 100' => [$izm(static function (&$d) { $d['routes'][0]['stages'][0]['approval_percent'] = 150; }), '«approval_percent»'],
     'инструкция больше 64 КБ' => [$izm(static function (&$d) { $d['routes'][0]['stages'][0]['content'] = str_repeat('a', 70000); }), 'до 64 КБ'],
-    'одинаковый порядок' => [$izm(static function (&$d) { $d['routes'][0]['stages'][2]['ranking'] = 10; }), 'одинаковым порядком'],
     'повтор номера этапа в файле' => [$izm(static function (&$d) { $d['routes'][1]['stages'][0]['id'] = 51; }), 'номер этапа 51 в файле повторяется'],
-    'точка возврата на этап другого маршрута' => [$izm(static function (&$d) { $d['routes'][0]['stages'][0]['return_targets'] = [61]; }), 'точка возврата — этапа нет в этом маршруте'],
     'точки возврата строкой' => [$izm(static function (&$d) { $d['routes'][0]['stages'][0]['return_targets'] = '[51]'; }), 'точки возврата записаны неверно'],
     'повтор точки возврата' => [$izm(static function (&$d) { $d['routes'][0]['stages'][0]['return_targets'] = [51, 51]; }), 'точки возврата записаны неверно'],
-    '«Вернуться на этап» — нет этапа' => [$izm(static function (&$d) { $d['routes'][1]['stages'][1]['plugin_itilflow_stages_id_reject'] = 999; }), '«Вернуться на этап» — этапа нет'],
     'ссылка без сведений' => [$izm(static function (&$d) { $d['routes'][0]['stages'][2]['users_id'] = 10; }), 'нет сведений об объекте GLPI User#10'],
     'организация маршрута без сведений' => [$izm(static function (&$d) { $d['routes'][1]['entities_id'] = 0; }), 'нет сведений об объекте GLPI Entity#0'],
     'неизвестный тип в сведениях' => [$izm(static function (&$d) { $d['routes'][0]['data_requirements'][] = ['itemtype' => 'Profile', 'id' => 4, 'name' => 'Super-Admin']; }), 'неизвестный тип'],
@@ -167,7 +163,44 @@ foreach ($plohie as $chto => [$json, $zhdem]) {
     ok($p !== '' && str_contains($p, $zhdem) && !str_starts_with($p, 'ОШИБКА PHP'), 'плохой файл: ' . $chto, $p === '' ? 'принят' : $p);
 }
 
-// 3. Поля запроса.
+// 3. Ошибки смысла одного маршрута — «Не может быть импортирован» у него, файл читается.
+$smysl = [
+    'статус «Решена» на этапе' => [static function (&$d) { $d['routes'][0]['stages'][0]['ticket_status'] = 5; }, 0, 'статус, который выставляет этап, не подходит типу маршрута'],
+    'неизвестный статус 99 у изменения' => [static function (&$d) { $d['routes'][1]['stages'][0]['ticket_status'] = 99; }, 1, 'статус, который выставляет этап'],
+    'одинаковый порядок' => [static function (&$d) { $d['routes'][0]['stages'][2]['ranking'] = 10; }, 0, 'Два этапа с порядком 10.'],
+    'порядок 0' => [static function (&$d) { $d['routes'][0]['stages'][2]['ranking'] = 0; }, 0, 'порядок должен быть больше нуля'],
+    'точка возврата на этап другого маршрута' => [static function (&$d) { $d['routes'][0]['stages'][0]['return_targets'] = [61]; }, 0, 'точка возврата: этапа нет в этом маршруте'],
+    '«Вернуться на этап» — нет этапа' => [static function (&$d) { $d['routes'][1]['stages'][1]['plugin_itilflow_stages_id_reject'] = 999; }, 1, '«Вернуться на этап»: этапа нет в этом маршруте'],
+];
+foreach ($smysl as $chto => [$f, $nomer, $zhdem]) {
+    $d = fajl();
+    $f($d);
+    try {
+        $r = Transfer::parse(json($d))['routes'];
+        $drugoj = $r[1 - $nomer]['problems'];
+        ok((bool) array_filter($r[$nomer]['problems'], static fn(string $p): bool => str_contains($p, $zhdem)) && $drugoj === [],
+            'ошибка смысла у маршрута, файл читается: ' . $chto, json_encode($r[$nomer]['problems'], JSON_UNESCAPED_UNICODE));
+    } catch (\Throwable $e) {
+        ok(false, 'ошибка смысла у маршрута, файл читается: ' . $chto, $e->getMessage());
+    }
+}
+ok(Transfer::parse(json(fajl()))['routes'][0]['problems'] === [], 'у правильного маршрута ошибок смысла нет');
+
+// 4. Ссылки, которые этап не читает, сведений не требуют.
+$d = fajl();
+$d['routes'][0]['stages'][1]['groups_id'] = 77;      // согласование «при прохождении»: группа не нужна
+$d['routes'][0]['stages'][2]['itilcategories_id'] = 78; // задача: категория — только у дочерней заявки
+$d['routes'][0]['stages'][2]['entity_strategy'] = 'fixed';
+$d['routes'][0]['stages'][2]['entities_id_target'] = 79;
+try {
+    $r = Transfer::parse(json($d))['routes'][0];
+    ok(!isset($r['data_requirements']['Group#77']) && !isset($r['data_requirements']['ITILCategory#78']) && !isset($r['data_requirements']['Entity#79']),
+        'поля, которые этап не читает, — не ссылки: сведений не нужно');
+} catch (\Throwable $e) {
+    ok(false, 'поля, которые этап не читает, — не ссылки: сведений не нужно', $e->getMessage());
+}
+
+// 5. Поля запроса.
 ok(Transfer::requestIds(['3', 4, 'x', '-1', '5.0', '3', ['7']]) === [3, 4], 'номера из запроса — только целые, без повторов');
 ok(Transfer::requestIds('12') === [12], 'один номер строкой');
 ok(Transfer::requestReplacements([
@@ -177,5 +210,8 @@ ok(Transfer::requestReplacements([
     ['itemtype' => 'Entity', 'original_id' => '3', 'replacement_id' => '3'],
     'мусор',
 ]) === [['Group', 7, 0], ['Entity', 3, 3]], 'замены — только известные типы и целые номера');
+ok(Transfer::requestReplacements('[{"itemtype":"Group","original_id":7,"replacement_id":8},{"itemtype":"X","original_id":1,"replacement_id":1}]')
+    === [['Group', 7, 8]], 'прежние замены — одним полем JSON');
+ok(Transfer::requestReplacements('не json') === [] && Transfer::requestReplacements('[[[[[1]]]]]') === [], 'испорченное поле замен — пусто, без ошибки');
 
 itog();

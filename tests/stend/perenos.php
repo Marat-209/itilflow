@@ -347,19 +347,24 @@ try {
     $x = dom($html);
     $f = '//form[contains(@action, "step=execute")]';
     ok($x->query($f . '//input[@name="_glpi_csrf_token" and @value!=""]')->length === 1, 'предпросмотр: ключ CSRF в форме');
+    ok($x->query($f . '//input')->item(0)?->getAttribute('name') === '_glpi_csrf_token', 'предпросмотр: ключ CSRF — первым полем (max_input_vars не отрежет)');
     ok($x->query($f . '//input[@name="json"]')->item(0)?->getAttribute('value') === $json, 'предпросмотр: файл — скрытым полем без искажений');
     ok($x->query($f . '//input[@name="skipped_routes[]" and @value="7"]')->length === 1
         && $x->query($f . '//input[@name="copy_routes[]" and @value="8"]')->length === 1
-        && $x->query($f . '//input[@name="replacements[0][replacement_id]" and @value="0"]')->length === 1, 'предпросмотр: убранные, копии и замены — скрытыми полями');
+        && json_decode((string) $x->query($f . '//input[@name="replacements_json"]')->item(0)?->getAttribute('value'), true) === $page['replacements'],
+        'предпросмотр: убранные, копии и замены (одним полем JSON) — скрытыми полями');
     ok(str_contains($html, 'Готов к импорту') && str_contains($html, 'Предпросмотр импорта'), 'предпросмотр: слова GLPI');
 
     $html = $tpl->render('@itilflow/import_step3_issues.html.twig', $page + ['route' => array_replace($rgNet, ['name' => $xss['name']]),
         'issues' => Transfer::issues($rgNet, mapper()), 'active_entity' => 0]);
     ok(!str_contains($html, '<script>alert(1)') && str_contains($html, 'Устранять проблемы'), '«Устранять проблемы»: название — текстом');
     $x = dom($html);
-    ok($x->query('//*[@name="replacements[1][replacement_id]"]')->length === 1
-        && $x->query('//input[@name="replacements[1][original_id]" and @value="' . $gid . '"]')->length === 1,
-        '«Устранять проблемы»: замена — после прежних, с номером в файле');
+    ok($x->query('//*[@name="replacements[0][replacement_id]"]')->length === 1
+        && $x->query('//input[@name="replacements[0][original_id]" and @value="' . $gid . '"]')->length === 1
+        && $x->query('//input[@name="replacements_json"]')->length === 1,
+        '«Устранять проблемы»: новая замена с номером в файле, прежние — полем JSON');
+    ok($x->query('//form[contains(@action, "step=preview")]//input')->item(0)?->getAttribute('name') === '_glpi_csrf_token',
+        '«Устранять проблемы»: ключ CSRF — первым полем');
 
     $html = $tpl->render('@itilflow/import_step4_result.html.twig', $page + ['result' => ['ok' => false, 'error' => '<b>x</b>',
         'rows' => [['name' => $xss['name'], 'status' => 'not_imported', 'id' => 0, 'url' => '', 'details' => ['<i>y</i>']]]]]);
@@ -378,5 +383,68 @@ $_SESSION['glpiactiveprofile']['plugin_itilflow_process'] = READ;
 $links = Process::getAdditionalMenuLinks();
 ok(is_array($links) && !in_array('/plugins/itilflow/front/import.php', $links, true), 'только чтение — без «Импорт маршрутов»');
 $_SESSION['glpiactiveprofile']['plugin_itilflow_process'] = $pravo;
+
+// 10. Пользователь — только активный, с профилем в активных организациях.
+$aktivnyj = new User();
+$aktivnyj->getFromDB($admin);
+ok(mapper()->resolve(['itemtype' => 'User', 'id' => $admin, 'name' => (string) $aktivnyj->fields['name']])['state'] === TransferMapper::FOUND,
+    'пользователь с профилем найден по логину');
+$vykl = $DB->request(['SELECT' => ['id', 'name'], 'FROM' => 'glpi_users', 'WHERE' => ['is_active' => 0, 'is_deleted' => 0], 'LIMIT' => 1])->current();
+if ($vykl !== null) {
+    $r = mapper()->resolve(['itemtype' => 'User', 'id' => (int) $vykl['id'], 'name' => (string) $vykl['name']]);
+    ok($r['state'] === TransferMapper::MISSING, 'выключенный пользователь не находится ни по логину, ни по номеру', $r['state']);
+    $m = mapper();
+    $m->addReplacement('User', 1, (int) $vykl['id']);
+    ok($m->resolve(['itemtype' => 'User', 'id' => 1, 'name' => 'нет такого логина'])['state'] === TransferMapper::MISSING,
+        'замена на выключенного пользователя не принимается');
+}
+
+// 11. Экспорт: ссылки в никуда и поля, которые этап не читает, в файл не идут.
+$kopiya = new Process();
+if ($novyj > 0 && $kopiya->getFromDB($novyj)) {
+    $etapy = $kopiya->getStages();
+    $chuzhoj = (int) $DB->request(['SELECT' => ['id'], 'FROM' => $S, 'WHERE' => ['NOT' => ['plugin_itilflow_processes_id' => $novyj]],
+        'LIMIT' => 1])->current()['id'];
+    $kat = (int) ($DB->request(['SELECT' => ['id'], 'FROM' => 'glpi_itilcategories', 'LIMIT' => 1])->current()['id'] ?? 0);
+    $DB->update($S, ['plugin_itilflow_stages_id_reject' => $chuzhoj, 'return_targets' => json_encode([(int) $etapy[0]['id'], $chuzhoj])],
+        ['id' => (int) $etapy[0]['id']]);
+    $neDoch = null;
+    foreach ($etapy as $s) {
+        if ($s['execution_mode'] !== 'delegated') {
+            $neDoch = (int) $s['id'];
+            $DB->update($S, ['itilcategories_id' => $kat, 'entity_strategy' => 'fixed', 'entities_id_target' => 999999], ['id' => $neDoch]);
+            break;
+        }
+    }
+    $kopiya->getFromDB($novyj);
+    $f = Transfer::parse(Transfer::export([$kopiya])['json'])['routes'][0];
+    $e0 = array_values(array_filter($f['stages'], static fn(array $s): bool => $s['id'] === (int) $etapy[0]['id']))[0];
+    ok($e0['plugin_itilflow_stages_id_reject'] === 0 && $e0['return_targets'] === [(int) $etapy[0]['id']] && $f['problems'] === [],
+        'экспорт: «Вернуться на этап» и точка возврата на этап другого маршрута не попадают в файл, маршрут импортируем');
+    if ($neDoch !== null) {
+        $en = array_values(array_filter($f['stages'], static fn(array $s): bool => $s['id'] === $neDoch))[0];
+        ok($en['itilcategories_id'] === 0 && $en['entities_id_target'] === 0 && !isset($f['data_requirements']['Entity#999999']),
+            'экспорт: категория и организация отдела у этапа не «дочерняя заявка» — нулём, сведений нет');
+    }
+}
+
+// 12. Маршрут с ошибкой смысла не мешает остальным.
+$plohoj = $rg;
+$plohoj['problems'] = ['Этап 10 «x» — статус, который выставляет этап, не подходит типу маршрута.'];
+$horoshij = $rg;
+$horoshij['name'] = $rg['name'] . ' хороший';
+$horoshij['id'] = $rg['id'] + 2000000;
+foreach ($horoshij['stages'] as &$s) {
+    $s['id'] += 2000000;
+    $s['return_targets'] = $s['return_targets'] === null ? null : array_map(static fn(int $t): int => $t + 2000000, $s['return_targets']);
+    $s['plugin_itilflow_stages_id_reject'] = $s['plugin_itilflow_stages_id_reject'] > 0 ? $s['plugin_itilflow_stages_id_reject'] + 2000000 : 0;
+}
+unset($s);
+$fileP = ['routes' => [$plohoj, $horoshij]] + $file;
+$prev = Transfer::preview($fileP, mapper());
+ok($prev[0]['status'] === Transfer::INVALID && !$prev[0]['resolve'] && in_array($plohoj['problems'][0], $prev[0]['details'], true)
+    && $prev[1]['status'] === Transfer::READY, 'ошибка смысла — «Не может быть импортирован» у этого маршрута, другой «Готов к импорту»');
+$res = Transfer::import($fileP, mapper());
+ok($res['ok'] && $res['rows'][0]['status'] === 'not_imported' && $res['rows'][1]['status'] === 'imported', 'импортирован только исправный маршрут', $res['error']);
 
 itog();
