@@ -303,10 +303,59 @@ flagged «Найдено по номеру, проверьте» (found by ID, p
 fails, nothing is written. Existing routes are never changed. Then check each
 route — the readiness line and the Stages tab — and enable it.
 
-Business rules that start a route are not in the file: move them with the
-standard GLPI rule export and import (**Administration → Rules → Business
-rules for tickets**) — GLPI finds the "Start stage route" action value by the
-route name. Or create the rule again, as in step 4.
+### What is not moved
+
+The file carries only routes and their stages. Not moved:
+
+- **start rules** — business rules that start a route: move them with the
+  standard GLPI rule export and import (**Administration → Rules → Business
+  rules for tickets**) — GLPI finds the "Start stage route" action value by
+  the route name. Or create the rule again, as in step 4;
+- **GLPI 11 forms** that create the tickets — forms have their own export
+  and import (**Administration → Forms**);
+- **profile rights** — grant Stage routes and Route bypass in the target
+  GLPI, as in [RIGHTS.en.md](RIGHTS.en.md);
+- **images and files in a stage instruction** — the instruction text is
+  moved, but images and documents inserted into it stay in the source GLPI:
+  insert them again after the import;
+- **GLPI dropdowns** — entities, groups, categories, calendars, SLAs and users
+  are only looked up, the import creates none of them: set them up first;
+- **tickets and route progress** — steps, attempts, outcomes and the log stay
+  in the source GLPI.
+
+### Example file
+
+A fictitious file with the route of Example 1 (names in Russian, as in the
+plugin interface) —
+[examples/routes-export-example.json](examples/routes-export-example.json).
+The top level holds the format (`format`, `version`), the plugin and GLPI
+versions, the date and the `routes` list. A route holds its fields, its stages
+(`stages`) and what is known about the GLPI objects the route and its stages
+refer to (`data_requirements`):
+
+```json
+"data_requirements": [
+    {
+        "itemtype": "Entity",
+        "id": 3,
+        "name": "Отдел исполнения",
+        "completename": "Корневая организация > Отдел исполнения"
+    },
+    {
+        "itemtype": "Group",
+        "id": 5,
+        "name": "Первая линия",
+        "completename": "Первая линия"
+    }
+]
+```
+
+`id` is the object's ID in the source GLPI. In the target GLPI the object is
+looked up by `completename`; calendars, SLAs and users by `name` (a user's
+`name` is the login). There is no need to edit the file by hand: mismatches
+are resolved in "Resolve issues". The import checks the file strictly: an
+extra or missing field, a wrong value type or a reference without details is
+rejected with the reason.
 
 ---
 

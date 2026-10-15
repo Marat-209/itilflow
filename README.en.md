@@ -163,7 +163,7 @@ Step by step, with fields and checks: [docs/TUTORIAL.en.md](docs/TUTORIAL.en.md)
 |---|---|
 | [Installation and upgrade](docs/INSTALL.en.md) | requirements, install, cron, upgrade from 1.9, 1.8 and 1.7, rollback, removal |
 | [Concepts](docs/CONCEPTS.en.md) | route, stage, stage modes, outcomes and attempts, answer to the requester, statuses |
-| [Setting up a route step by step](docs/TUTORIAL.en.md) | two illustrative examples from dropdowns to testing; moving routes to another GLPI |
+| [Setting up a route step by step](docs/TUTORIAL.en.md) | two illustrative examples from dropdowns to testing; moving routes to another GLPI: what is not moved, a fictitious example file |
 | [Rights](docs/RIGHTS.en.md) | profile rights and who may perform which action |
 | [FAQ and GLPI 11 pitfalls](docs/FAQ.en.md) | symptoms, causes, fixes |
 | [Changelog](CHANGELOG.md) | all releases (in Russian) |
