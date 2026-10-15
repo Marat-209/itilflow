@@ -369,4 +369,14 @@ try {
     ok(false, 'страницы шагов собираются', get_class($e) . ': ' . $e->getMessage());
 }
 
+// 9. Кнопки списка и массовое действие — по праву.
+$links = Process::getAdditionalMenuLinks();
+ok(is_array($links) && in_array('/plugins/itilflow/front/export.php', $links, true) && in_array('/plugins/itilflow/front/import.php', $links, true),
+    'над списком — «Экспорт всех» и «Импорт маршрутов»');
+ok(isset((new Process())->getSpecificMassiveActions()[Process::class . MassiveAction::CLASS_ACTION_SEPARATOR . 'export']), 'массовое действие «Экспорт»');
+$_SESSION['glpiactiveprofile']['plugin_itilflow_process'] = READ;
+$links = Process::getAdditionalMenuLinks();
+ok(is_array($links) && !in_array('/plugins/itilflow/front/import.php', $links, true), 'только чтение — без «Импорт маршрутов»');
+$_SESSION['glpiactiveprofile']['plugin_itilflow_process'] = $pravo;
+
 itog();
