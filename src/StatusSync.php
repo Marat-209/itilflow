@@ -22,7 +22,8 @@ final class StatusSync
     {
         self::inside();
         $context = self::context($step);
-        if ($context === null || $sourceActor <= 0 || $sourceActor !== (int) Session::getLoginUserID()) {
+        // Источник — вошедший; при ответе инициатора письмом — автор письма (Engine::sourceActor).
+        if ($context === null || $sourceActor <= 0 || $sourceActor !== Engine::sourceActor()) {
             throw new \RuntimeException('Не подтверждён источник перехода этапа.');
         }
         [$instance, $item, $stage] = $context;
@@ -90,6 +91,7 @@ final class StatusSync
             $tx->commit(); // Сначала фиксируем начало исполнения, затем меняем штатный статус.
         } catch (\Throwable $e) {
             try { $tx->rollback(); } catch (\Throwable $ignored) {}
+            TransactionScope::assertHealthy();
             return self::result(self::UNKNOWN,'claim_unknown');
         }
         // Сбой после этой точки оставляет EXECUTING: выборка больше не берёт такой запрос.
@@ -129,6 +131,7 @@ final class StatusSync
         } catch (\Throwable $e) {
             // После ошибки нет новых записей. Начало исполнения сохраняется и при неизвестном исходе отката.
             try { $tx->rollback(); } catch (\Throwable $ignored) {}
+            TransactionScope::assertHealthy();
             return self::result(self::UNKNOWN,'execution_unknown');
         }
     }
@@ -270,11 +273,11 @@ final class StatusSync
         if($state===self::NONE) { return null; }
         $item=$i->getItilItem();
         if($state===self::APPLIED && $item!==null && (int)$item->fields['status']===(int)$step->fields['status_sync_target']) { return null; }
-        return ['title'=>$state===self::QUEUED ? 'Обновление статуса ожидается' : 'Статус заявки требует проверки',
-            'message'=>$state===self::QUEUED ? 'Этап открыт. Обновление статуса ещё не подтверждено; пока учитывается текущий статус заявки.'
+        return ['title'=>$state===self::QUEUED ? 'Статус заявки скоро обновится' : 'Проверьте статус заявки',
+            'message'=>$state===self::QUEUED ? 'Статус заявки обновится в течение минуты.'
                 : (Session::getCurrentInterface()==='central'
-                    ? 'Проверьте фактический статус. После устранения известного отказа повторите только синхронизацию; при неизвестном исходе сначала установите результат записи.'
-                    : 'Ответственному нужно проверить статус заявки. Результат вашего действия по маршруту сохранён отдельно.'),
+                    ? 'Статус заявки не обновился — проверьте и нажмите «Повторить смену статуса».'
+                    : 'Исполнитель проверит статус заявки. Ваше действие по маршруту сохранено.'),
             'queued'=>$state===self::QUEUED,
             'unknown'=>in_array($state,[self::UNKNOWN,self::EXECUTING],true)];
     }

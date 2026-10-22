@@ -51,6 +51,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && in_array($step, ['preview', 'resolv
 
         $route = $step === 'resolve' ? Transfer::route($file, Transfer::requestIds($_POST['route_id'] ?? null)[0] ?? 0) : null;
         if ($route !== null) {
+            $route['start_questions'] = Transfer::startQuestions($route, $mapper);
             $template = 'import_step3_issues.html.twig';
             $page += [
                 'route'         => $route,

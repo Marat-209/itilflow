@@ -1,9 +1,12 @@
 {% import 'components/form/fields_macros.html.twig' as fields %}
 
 {#
-   Форма маршрута 1.9: строка готовности, шесть основных полей и «Дополнительно» со сводкой.
+   Форма маршрута: строка готовности, основные поля, «Запуск маршрута» и «Дополнительно» со сводкой.
    Новый маршрут сразу в новом порядке исходов — выбора порядка в форме нет.
    У старого маршрута — плашка «Перевести на новый порядок».
+   «Запуск маршрута»: форма, назначение формы, согласование назначения,
+   вопросы формы в условиях этапов, «Запускать, если» — общий редактор условий и
+   «Другие маршруты этой формы». start — Process::startView.
 #}
 
 {% macro hint(text, more = '', more_id = '') %}
@@ -25,7 +28,8 @@
 
 <div class="asset">
    {% if readiness is defined and readiness is not null %}
-      <div class="px-3 pt-3">
+      {# Пересчёт без сохранения заменяет содержимое блока (front/draft.php). #}
+      <div class="px-3 pt-3" data-itilflow-readiness-box aria-live="polite">
          {{ include('@itilflow/readiness.html.twig', {'r': readiness, 'stage_view': false}) }}
       </div>
    {% endif %}
@@ -44,8 +48,13 @@
       {# Подсказки под полями: в тёмных палитрах GLPI цвет Tabler для form-text не переопределён —
          тёмный текст на тёмном фоне. Там — от цвета текста палитры. То же правило — в форме этапа. #}
       [data-glpi-theme-dark="1"] .itilflow-form .form-text { color: color-mix(in srgb, var(--tblr-body-color) 90%, var(--tblr-bg-surface)); }
+      .itilflow-form .itilflow-start-line { border: 1px solid var(--tblr-border-color); border-radius: 6px; padding: .4rem .7rem; margin-bottom: .5rem; }
+      .itilflow-form .itilflow-start-line.itilflow-start-warn { border-color: var(--tblr-warning); }
+      .itilflow-form .itilflow-start-sum { color: var(--tblr-secondary); font-size: .9em; }
+      [data-glpi-theme-dark="1"] .itilflow-form .itilflow-start-sum { color: color-mix(in srgb, var(--tblr-body-color) 80%, var(--tblr-bg-surface)); }
    </style>
-   <form class="itilflow-form" name="itilflow_process_form" id="itilflow-process-{{ rand }}" method="post" action="{{ target }}" data-submit-once>
+   <form class="itilflow-form" name="itilflow_process_form" id="itilflow-process-{{ rand }}" method="post" action="{{ target }}" data-submit-once
+         {% if draft_url|default('') %}data-itilflow-draft-url="{{ draft_url }}"{% endif %}>
       <input type="hidden" name="_glpi_csrf_token" value="{{ csrf_token() }}">
       {% if not item.isNewItem() %}
          <input type="hidden" name="id" value="{{ item.fields['id'] }}">
@@ -63,19 +72,16 @@
                {{ fields.textField('name', item.fields['name'], 'Название маршрута', {
                   'required': true,
                   'add_field_attribs': {'data-itilflow-field': 'name'},
-                  'add_field_html': _self.hint('Видят исполнители и заявитель. Например: «Выдача рабочего места».'),
+                  'add_field_html': _self.hint('Видят исполнители и инициатор.'),
                }) }}
 
                {{ fields.dropdownField('Entity', 'entities_id', item.fields['entities_id'], 'Организация', {
                   'add_field_attribs': {'data-itilflow-field': 'entities_id'},
-                  'add_field_html': _self.hint('Маршрут применяется к заявкам этой организации.',
-                     'Бизнес-правило, которое запускает маршрут, видит маршруты своей организации и вышестоящих, если у них включено «Виден в подчинённых организациях». Если правило описано там, где маршрут не виден, строка готовности об этом скажет.',
-                     'itilflow-more-org-' ~ rand),
+                  'add_field_html': _self.hint('Маршрут применяется к заявкам этой организации.'),
                }) }}
 
-               {{ fields.dropdownYesNo('is_recursive', item.fields['is_recursive'], 'Виден в подчинённых организациях', {
+               {{ fields.dropdownYesNo('is_recursive', item.fields['is_recursive'], 'Подчинённые организации', {
                   'add_field_attribs': {'data-itilflow-field': 'is_recursive', 'id': 'itilflow-recursive'},
-                  'add_field_html': _self.hint('Да — маршрут применяется и к заявкам подчинённых организаций.'),
                }) }}
 
                {{ fields.dropdownField('Calendar', 'calendars_id', item.fields['calendars_id'], 'Рабочий календарь', {
@@ -86,14 +92,59 @@
 
                {{ fields.dropdownYesNo('is_active', item.fields['is_active'], 'Маршрут включён', {
                   'add_field_attribs': {'data-itilflow-field': 'is_active', 'id': 'itilflow-active'},
-                  'add_field_html': _self.hint('Выключенный маршрут к новым заявкам не применяется. Начатые доходят до конца.'),
+                  'add_field_html': _self.hint('Выключенный маршрут не запускается на новых заявках. Уже начатые идут до конца.'),
                }) }}
 
                {{ fields.textareaField('comment', item.fields['comment'], 'Описание', {
                   'full_width': true,
                   'add_field_attribs': {'data-itilflow-field': 'comment'},
-                  'add_field_html': _self.hint('Зачем процесс, на какой документ опирается, кто владелец. Видят только администраторы.'),
+                  'add_field_html': _self.hint('Видят только администраторы маршрутов.'),
                }) }}
+
+               {% if structured and item.fields['itemtype'] == 'Ticket' %}
+                  {# ---------------------------------------------- Запуск маршрута #}
+                  {{ fields.smallTitle('Запуск маршрута', 'ti ti-player-play') }}
+                  {% if start is defined and start is not null %}
+                     <div class="col-12 px-3 mb-2 itilflow-start-sum" data-itilflow-start-summary>{{ start.summary }}</div>
+                  {% endif %}
+                  {{ fields.dropdownArrayField('forms_forms_id', item.fields['forms_forms_id'] ?? 0, form_sources, 'Форма', {
+                     'add_field_html': _self.hint('Сохраните маршрут — появятся назначения и вопросы формы.'),
+                  }) }}
+                  {{ fields.dropdownArrayField('forms_destinations_id', item.fields['forms_destinations_id'] ?? 0, form_destinations, 'Назначение формы', {
+                     'add_field_html': _self.hint('Назначение, которое создаёт заявку.'),
+                  }) }}
+                  {% if start is defined and start is not null %}
+                     <div class="col-12 px-3" data-itilflow-start>
+                        <div class="form-text text-warning mb-2" data-itilflow-form-changed hidden>
+                           Форма изменена — сохраните маршрут.
+                        </div>
+                        {% if start.info.no_form %}
+                           <div class="itilflow-start-line itilflow-start-warn" data-itilflow-start-line>{{ start.info.no_form }}</div>
+                        {% endif %}
+                        {% for line in start.info.approvals %}
+                           <div class="itilflow-start-line" data-itilflow-start-line>{{ line }}</div>
+                        {% endfor %}
+                        {% if start.info.questions %}
+                           <div class="itilflow-start-line" data-itilflow-start-line>{{ start.info.questions }}</div>
+                        {% endif %}
+                        {% if start.editor %}
+                           {{ include('@itilflow/condition_editor.html.twig', start.editor) }}
+                           <div class="mt-3 mb-2" data-itilflow-siblings>
+                              <div class="fw-semibold mb-1">Другие маршруты этой формы</div>
+                              {% if start.siblings is empty %}
+                                 <div class="form-text">Других нет.</div>
+                              {% else %}
+                                 <ul class="mb-0">
+                                    {% for s in start.siblings %}
+                                       <li><a href="{{ s.url }}">{{ s.name }}</a> <span class="itilflow-start-sum">— {{ s.destination }}, {{ s.summary }}</span></li>
+                                    {% endfor %}
+                                 </ul>
+                              {% endif %}
+                           </div>
+                        {% endif %}
+                     </div>
+                  {% endif %}
+               {% endif %}
 
                {# -------------------------------------------------------- Дополнительно #}
                <div class="col-12 mt-2">
@@ -109,43 +160,37 @@
                   <div class="row">
                      {{ fields.dropdownArrayField('itemtype', item.fields['itemtype'], itemtypes, 'Для чего маршрут', {
                         'add_field_attribs': {'data-itilflow-field': 'itemtype', 'data-itilflow-s': 'Для чего'},
-                        'add_field_html': _self.hint('Заявки, изменения или проблемы. После первых запусков не меняйте.'),
+                        'add_field_html': _self.hint('После первых запусков не меняйте.'),
                      }) }}
 
-                     {{ fields.dropdownArrayField('enforcement', item.fields['enforcement'], enforcements, 'Если действуют не в свой этап', {
-                        'add_field_attribs': {'data-itilflow-field': 'enforcement', 'data-itilflow-s': 'Чужой этап'},
-                        'add_field_html': _self.hint('Касается только порядка этапов; права на заявку проверяются всегда.',
-                           'Пример: исполнитель этапа 40 закрывает свою задачу, пока идёт этап 20. «Журнал» — действие проходит, запись видит администратор процессов под таблицей маршрута в заявке. «Предупреждение» — проходит, человек видит предупреждение. «Запрет» — действие отменяется с объяснением. Начинайте с «Журнала».',
-                           'itilflow-more-enf-' ~ rand),
+                     {{ fields.dropdownArrayField('enforcement', item.fields['enforcement'], enforcements, 'Если действие не по порядку этапов', {
+                        'add_field_attribs': {'data-itilflow-field': 'enforcement', 'data-itilflow-s': 'Не по порядку'},
+                        'add_field_html': _self.hint('Права на заявку проверяются всегда.'),
                      }) }}
 
                      {{ fields.dropdownYesNo('block_resolution', item.fields['block_resolution'], 'Решить заявку — только после всех этапов', {
                         'add_field_attribs': {'data-itilflow-field': 'block_resolution', 'data-itilflow-s': 'Решение после всех этапов'},
-                        'add_field_html': _self.hint('Да — пока маршрут не пройден, заявку нельзя решить.'),
                      }) }}
 
                      {{ fields.dropdownYesNo('public_log', item.fields['public_log'], 'Писать ход этапов в ленту заявки', {
                         'add_field_attribs': {'data-itilflow-field': 'public_log', 'data-itilflow-s': 'Ход в ленте'},
-                        'add_field_html': _self.hint('Да — заявитель видит, какой этап идёт и чем закончился.',
-                           'При «Да» отчёт последней задачи в заявке уходит заявителю итогом в решении заявки. Выключайте для внутренних процессов, детали которых заявителю не показывают.',
-                           'itilflow-more-log-' ~ rand),
+                        'add_field_html': _self.hint('Последнее «Что сделано» станет решением заявки.'),
                      }) }}
 
-                     {{ fields.dropdownYesNo('helpdesk_tab', item.fields['helpdesk_tab'], 'Вкладка маршрута у заявителя', {
-                        'add_field_attribs': {'data-itilflow-field': 'helpdesk_tab', 'data-itilflow-s': 'Вкладка у заявителя'},
-                        'add_field_html': _self.hint('Да — заявитель видит таблицу этапов в своей заявке.'),
+                     {{ fields.dropdownYesNo('helpdesk_tab', item.fields['helpdesk_tab'], 'Вкладка маршрута у инициатора', {
+                        'add_field_attribs': {'data-itilflow-field': 'helpdesk_tab', 'data-itilflow-s': 'Вкладка у инициатора'},
                      }) }}
 
-                     {{ fields.dropdownYesNo('allow_withdraw', item.fields['allow_withdraw'], 'Заявитель может отозвать заявку', {
+                     {{ fields.dropdownYesNo('allow_withdraw', item.fields['allow_withdraw'], 'Инициатор может отозвать заявку', {
                         'add_field_attribs': {'data-itilflow-field': 'allow_withdraw', 'data-itilflow-s': 'Отзыв'},
-                        'add_field_html': _self.hint('Да — у заявителя есть «Отозвать заявку» с причиной; маршрут прекращается.'),
+                        'add_field_html': _self.hint('Маршрут прервётся.'),
                      }) }}
 
                      {% if not item.isNewItem() %}
                         {{ fields.readOnlyField('version', item.fields['version'], 'Версия', {
                            'add_field_attribs': {'data-itilflow-field': 'version', 'data-itilflow-s': 'Версия'},
                            'add_field_html': _self.hint(structured
-                              ? 'Растёт при каждом сохранении. Начатые заявки идут по версии, с которой запущены.'
+                              ? 'Начатые заявки идут по своей версии.'
                               : 'Растёт при каждом сохранении. Начатые заявки идут по текущей настройке этапов.'),
                         }) }}
                      {% endif %}
@@ -158,10 +203,15 @@
 
       <div class="card-footer mx-n2 mb-n2 mt-4">
          <div class="d-flex flex-row-reverse align-items-start">
-            {% if item.isNewItem() %}
+            {# Только кнопки, которые сервер разрешит: с одним «Чтением» — ни «Сохранить», ни «Удалить навсегда». #}
+            {% set b = buttons|default({}) %}
+            {% if b.add|default(false) %}
                <button class="btn btn-primary" type="submit" name="add" value="1">{{ __('Add') }}</button>
-            {% else %}
+            {% endif %}
+            {% if b.update|default(false) %}
                <button class="btn btn-primary" type="submit" name="update" value="1">{{ __('Save') }}</button>
+            {% endif %}
+            {% if b.purge|default(false) %}
                <button class="btn btn-outline-danger me-2" type="submit" name="purge" value="1"
                        onclick="return confirm('{{ __('Confirm the final deletion?') }}');">{{ __('Delete permanently') }}</button>
             {% endif %}
@@ -178,6 +228,15 @@
    if (!form) {
       return;
    }
+   var changed = form.querySelector('[data-itilflow-form-changed]');
+   // Выбор другой формы не переносит старое назначение по совпадению номера; вопросы новой
+   // формы появятся в «Запускать, если» после сохранения.
+   $(form).on('change', '[name="forms_forms_id"]', function () {
+      $(form).find('[name="forms_destinations_id"]').val('0').trigger('change');
+      if (changed) {
+         changed.hidden = false;
+      }
+   });
    var more = form.querySelector('[data-itilflow-more]');
    var summary = form.querySelector('[data-itilflow-summary]');
    function shownValue(field) {
@@ -209,5 +268,56 @@
       more.addEventListener('hidden.bs.collapse', update);
    }
    update();
+
+   // Пересчёт без сохранения: строка готовности и нулевой пункт «Назначения формы».
+   // Если на форме есть редактор «Запускать, если», запрос шлёт он (событие itilflow:draft),
+   // иначе — этот скрипт (_itilflow_draft = process).
+   var draftUrl = form.getAttribute('data-itilflow-draft-url');
+   var box = form.parentElement ? form.parentElement.querySelector('[data-itilflow-readiness-box]') : null;
+   function applyDraft(data) {
+      if (!data) {
+         return;
+      }
+      if (box && typeof data.readiness_html === 'string') {
+         box.innerHTML = data.readiness_html;
+      }
+      var dest = form.querySelector('select[name="forms_destinations_id"]');
+      var zero = dest ? dest.querySelector('option[value="0"]') : null;
+      if (zero && typeof data.destination_zero === 'string' && zero.text !== data.destination_zero) {
+         zero.text = data.destination_zero;
+         if (window.jQuery) {
+            window.jQuery(dest).trigger('change.select2');
+         }
+      }
+   }
+   form.addEventListener('itilflow:draft', function (e) { applyDraft(e.detail || null); });
+   var startEditor = form.querySelector('[data-draft-url][data-scope=start]');
+   if (draftUrl && !startEditor && window.fetch && window.FormData) {
+      var timer = null, seq = 0;
+      var send = function () {
+         var mine = ++seq;
+         var body = new FormData(form);
+         body.append('_itilflow_draft', 'process');
+         var token = form.querySelector('input[name="_glpi_csrf_token"]');
+         window.fetch(draftUrl, {
+            method: 'POST', body: body, credentials: 'same-origin',
+            headers: {'X-Requested-With': 'XMLHttpRequest', 'X-Glpi-Csrf-Token': token ? token.value : ''}
+         }).then(function (r) {
+            return r.ok ? r.json() : Promise.reject(r.status);
+         }).then(function (data) {
+            if (mine === seq) {
+               applyDraft(data);
+            }
+         }).catch(function () {});
+      };
+      var schedule = function () {
+         clearTimeout(timer);
+         timer = setTimeout(send, 450);
+      };
+      form.addEventListener('change', schedule);
+      if (window.jQuery) {
+         window.jQuery(form).on('change', 'select', schedule);
+      }
+   }
 })();
 </script>

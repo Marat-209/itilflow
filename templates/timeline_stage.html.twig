@@ -24,6 +24,7 @@
    </h3>
 
    {% if action.kind == 'complete' %}
+      {% include '@itilflow/decision_fields.html.twig' with {'a': action} %}
       {% if action.instruction|striptags|trim != '' %}
          {# Инструкция — HTML из редактора: очищается штатным фильтром GLPI, как лента заявки. #}
          <div class="alert alert-info py-2">{{ action.instruction|safe_html }}</div>
@@ -36,7 +37,7 @@
          </label>
          <textarea class="form-control mb-2" id="itilflow_timeline_report_{{ action.steps_id }}"
                    name="report" rows="3"
-                   placeholder="Коротко опишите результат — это увидит заявитель"
+                   placeholder="Что сделано (увидит инициатор)"
                    {% if action.comment == 'required' %}required{% endif %}></textarea>
       {% endif %}
 
@@ -52,36 +53,34 @@
             </button>
          {% endif %}
       </div>
-      {% if action.is_optional %}
-         <div class="form-text">При пропуске причина обязательна.</div>
-      {% endif %}
    {% else %}
-      <p class="text-secondary">
-         На этом этапе согласующий заранее неизвестен. Укажите, кто должен
-         согласовать, и на каком основании. Каждому уйдёт отдельный штатный
-         запрос GLPI.
-      </p>
+      <p class="text-secondary">Укажите согласующих и причину.</p>
       <div class="mb-2">
-         <label class="form-label">Согласующие — сотрудники</label>
+         <label class="form-label">Согласующие — пользователи</label>
          {{ call('User::dropdown', [{
             'name': 'appr_users_id[]', 'value': [], 'right': 'all',
             'multiple': true, 'display': false, 'width': '100%'
          }])|raw }}
       </div>
       <div class="mb-2">
-         <label class="form-label">…и/или группы</label>
+         <label class="form-label">…или группы</label>
          {{ call('Group::dropdown', [{
             'name': 'appr_groups_id[]', 'value': [], 'entity': -1,
-            'condition': {'is_assign': 1}, 'multiple': true,
+            'multiple': true,
             'display': false, 'width': '100%'
          }])|raw }}
       </div>
       <div class="mb-2">
-         <label class="form-label">Основание выбора <span class="text-danger">*</span></label>
+         <label class="form-label">Причина <span class="text-danger">*</span></label>
          <input type="text" class="form-control" name="appr_reason" required
-                placeholder="Например: владелец ресурса по реестру доступов">
+                placeholder="Например: владелец ресурса">
       </div>
-      <button class="btn btn-warning" name="set_approver" value="1" type="submit">
+      <div class="mb-2">
+         <label class="form-label">Как согласует группа
+            <select class="form-select" name="appr_group_mode"><option value="any">Любой из группы — один запрос всей группе</option><option value="each">Каждый в группе — запрос каждому</option></select>
+         </label>
+         <div class="form-text">Не больше 50 запросов.</div>
+      </div>      <button class="btn btn-warning" name="set_approver" value="1" type="submit">
          <i class="ti ti-user-check me-1"></i>Указать согласующего
       </button>
    {% endif %}

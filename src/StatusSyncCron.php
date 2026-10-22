@@ -14,7 +14,7 @@ final class StatusSyncCron
             $step=new Step();
             if(!$step->getFromDB((int)$id)) { continue; }
             try { $result=Engine::synchronizeStatusFromCron($step,$task); }
-            catch (\Throwable $e) { $result=['state'=>StatusSync::UNKNOWN]; }
+            catch (\Throwable $e) { TransactionScope::assertHealthy(); $result=['state'=>StatusSync::UNKNOWN]; }
             $done++; $task->addVolume(1);
             if($result['state']===StatusSync::UNKNOWN || $result['state']===StatusSync::EXECUTING) {
                 // CronTask::end сохраняет это поле объекта обработчика в его собственной строке.

@@ -1,0 +1,42 @@
+<?php
+require __DIR__ . '/_nachalo.php';
+use GlpiPlugin\Itilflow\{BranchConfiguration as B, Condition, Stage, DefinitionSnapshot as D, StructuredSchema};
+
+ok(B::decode('{') === null && B::decode(null) === [], 'неверный JSON не становится пустым условием');
+ok(B::decisionItems([['key'=>'q_one','label'=>'Проверено?']]) !== null, 'стабильный ключ вопроса');
+ok(B::decisionItems([['key'=>'q','label'=>'Один'],['key'=>'q','label'=>'Два']]) === null, 'дубликат ключа отклонён');
+ok(B::decisionItems(array_fill(0,5,['key'=>'q','label'=>'Вопрос'])) === null, 'предел четыре вопроса');
+$form=['source'=>'form_answer','question_uuid'=>'uuid', 'question'=>['id'=>1,'uuid'=>'uuid','type'=>'choice','label'=>'Выбор',
+    'options'=>[['key'=>'a','label'=>'А'],['key'=>'b','label'=>'Б']]],'operator'=>'in','value'=>['a']];
+$decision=['source'=>'decision','stage_id'=>10,'key'=>'q','operator'=>'eq','value'=>true];
+$rule=static fn(array $clauses,string $join='all'):array=>['version'=>1,'join'=>$join,'clauses'=>$clauses];
+ok(B::applicantControls($rule([$form])), 'ответ заявителя один выключает контроль — предупреждение');
+ok(B::applicantControls($rule([$form,$decision])), 'all с решением отдела всё ещё допускает отключение заявителем');
+ok(!B::applicantControls($rule([$form,$decision],'any')), 'any с решением отдела требует также отказа отдела');
+ok(B::applicantControls($rule([$form],'any')), 'одно any не выдаёт полномочие');
+$gaps=B::uncoveredOptions([['run_if'=>D::encode($rule([$form]))]]);
+ok(count($gaps)===1 && $gaps[0]['options']===['Б'], 'покрытие сообщает точный недостижимый вариант');
+$other=$form; $other['operator']='not_in';
+ok(B::uncoveredOptions([['run_if'=>D::encode($rule([$form]))],['run_if'=>D::encode($rule([$other]))]])===[], 'in и not_in покрывают все варианты');
+$p=['forms_forms_id'=>1];
+$s1=['id'=>10,'ranking'=>10,'decision_items'=>D::encode([['key'=>'q','label'=>'Проверено?']]),'run_if'=>null,'unknown_policy'=>'run'];
+$s2=['id'=>20,'ranking'=>20,'decision_items'=>null,'run_if'=>D::encode($rule([$decision])),'unknown_policy'=>'ask'];
+ok(B::validateRoute($p,[$s1,$s2])===[], 'предыдущий этап и существующий ключ разрешены');
+$formStage = $s2 + ['execution_mode'=>Stage::MODE_APPROVAL,'approver_source'=>Stage::APPROVER_FORM];
+ok(B::validateRoute($p,[$s1,$formStage])!==[], 'виза из формы с условием отклонена');
+$formStage['run_if'] = null;
+ok(B::validateRoute($p,[$s1,$formStage])===[], 'виза из формы без условия разрешена');
+$fixedStage = $s2 + ['execution_mode'=>Stage::MODE_APPROVAL,'approver_source'=>Stage::APPROVER_FIXED];
+ok(B::validateRoute($p,[$s1,$fixedStage])===[], 'обычное согласование с условием разрешено');
+$bad=$s1; $bad['decision_items']=null;
+ok(B::validateRoute($p,[$bad,$s2])!==[], 'удаление используемого вопроса решения отклонено');
+$bad=$s1; $bad['ranking']=30;
+ok(B::validateRoute($p,[$bad,$s2])!==[], 'перестановка источника после зависимого этапа отклонена');
+$bad=$form; $bad['value']=['missing']; $s2['run_if']=D::encode($rule([$bad]));
+ok(B::validateRoute($p,[$s1,$s2])!==[], 'несуществующий ключ варианта отклонён');
+$old=['schema'=>2,'process'=>[],'stages'=>[['run_if'=>'forged','decision_items'=>'forged','unknown_policy'=>'ask']]];
+$old=D::normalize($old);
+ok($old['schema']===2 && $old['stages'][0]['run_if']===null && $old['stages'][0]['decision_items']===null, 'схема2 остаётся линейной даже при лишних полях');
+ok(D::SCHEMA===3 && in_array('run_if',D::stageFields(3),true) && !in_array('run_if',D::stageFields(2),true), 'поля схем версионированы');
+ok(isset(StructuredSchema::added112()['instances']['form_facts']), 'миграция хранит факты отдельно от квитанции виз');
+itog();

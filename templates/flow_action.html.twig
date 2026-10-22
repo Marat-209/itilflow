@@ -10,26 +10,51 @@
 {% endset %}
 {% set targets_field %}
    {% if a.targets|default([])|length > 1 %}
-      <label class="form-label">С какого этапа продолжить после уточнения</label>
+      <label class="form-label">С этапа</label>
       <select name="target_stage_id" class="form-select mb-2">{% for id, label in a.targets %}<option value="{{ id }}">{{ label }}</option>{% endfor %}</select>
    {% elseif a.targets|default([])|length == 1 %}
       {% for id, label in a.targets %}<input type="hidden" name="target_stage_id" value="{{ id }}">{% endfor %}
    {% endif %}
 {% endset %}
 
-{% if a.action == 'outcome' %}
+{% if a.action == 'decision' %}
+   <form method="post" action="{{ decision_url }}" class="p-1">
+      {{ cmd }}
+      {% include '@itilflow/decision_fields.html.twig' %}
+      <button class="btn btn-primary" name="decision_action" value="save">Сохранить ответы</button>
+      {% if a.can_approve %}
+         <input type="hidden" name="validation_id" value="{{ a.validation_id }}">
+         <button class="btn btn-success" name="decision_action" value="approve">Сохранить и одобрить</button>
+      {% endif %}
+   </form>
+{% elseif a.action == 'condition' %}
+   <form method="post" action="{{ step_url }}" class="p-1">
+      {{ cmd }}
+      <input type="hidden" name="choose_condition" value="1">
+      <input type="hidden" name="input_revision" value="{{ a.input_revision }}">
+      <label class="form-label d-block">Причина
+         <textarea class="form-control" name="condition_reason" rows="2" required></textarea>
+      </label>
+      <button class="btn btn-primary" name="choice" value="run">Выполнить этап</button>
+      {% if a.can_skip %}<button class="btn btn-outline-secondary" name="choice" value="skip">Этап не нужен</button>{% endif %}
+   </form>
+{% elseif a.action == 'outcome' %}
    <form method="post" action="{{ outcome_url }}" class="p-1">
       {{ cmd }}
-      <label class="form-label">Результат — его увидит заявитель <span class="text-danger">*</span></label>
+      {% if a.decision_items|default([])|length %}
+         {% include '@itilflow/decision_fields.html.twig' %}
+         <p class="form-text">Ответы нужны только для «Выполнено».</p>
+      {% endif %}
+      <label class="form-label">Ответ инициатору <span class="text-danger">*</span></label>
       <textarea class="form-control mb-2" name="public_summary" rows="2" required placeholder="Что сделано, или почему отказ, или что уточнить"></textarea>
-      <details class="mb-2"><summary class="small text-muted">Внутренний комментарий (заявитель не видит)</summary>
+      <details class="mb-2"><summary class="small text-muted">Приватный комментарий (инициатор не видит)</summary>
          <textarea class="form-control mt-1" name="reason" rows="2"></textarea>
       </details>
       {% if a.can_return %}{{ targets_field }}{% endif %}
       <div class="d-flex flex-wrap gap-2">
          <button class="btn btn-success" name="itilflow_do" value="done"><i class="ti ti-check me-1"></i>Выполнено</button>
-         <button class="btn btn-outline-danger" name="itilflow_do" value="refuse" onclick="return confirm('Отказ завершит маршрут, заявитель получит этот ответ. Продолжить?');"><i class="ti ti-x me-1"></i>Отказ</button>
-         {% if a.can_return %}<button class="btn btn-outline-warning" name="itilflow_do" value="return"><i class="ti ti-arrow-back-up me-1"></i>Вернуть на уточнение</button>{% endif %}
+         <button class="btn btn-outline-danger" name="itilflow_do" value="refuse" formnovalidate onclick="return confirm('Отказать? Инициатор увидит ответ.');"><i class="ti ti-x me-1"></i>Отказ</button>
+         {% if a.can_return %}<button class="btn btn-outline-warning" name="itilflow_do" value="return" formnovalidate><i class="ti ti-arrow-back-up me-1"></i>Вернуть на уточнение</button>{% endif %}
       </div>
    </form>
 
@@ -38,7 +63,7 @@
       <input type="hidden" name="_glpi_csrf_token" value="{{ csrf_token() }}">
       <input type="hidden" name="id" value="{{ a.validation_id }}">
       <input type="hidden" name="users_id_validate" value="{{ me }}">
-      <label class="form-label">Комментарий — при отказе обязателен, его увидит заявитель</label>
+      <label class="form-label">Комментарий согласования (при отказе обязателен)</label>
       <textarea class="form-control mb-2" name="comment_validation" rows="2"></textarea>
       <div class="d-flex flex-wrap gap-2">
          <button class="btn btn-success" name="approval_action" value="approve"><i class="ti ti-thumb-up me-1"></i>Одобрить</button>
@@ -46,13 +71,14 @@
       </div>
    </form>
    {% if a.can_return %}
-      <details class="p-1 mt-1"><summary class="small">Вернуть на уточнение вместо ответа</summary>
+      <details class="p-1 mt-1"><summary class="small">Вернуть на уточнение</summary>
          <form method="post" action="{{ outcome_url }}" class="mt-2">
             {{ cmd }}
-            <label class="form-label">Что уточнить у заявителя <span class="text-danger">*</span></label>
+            {% if a.decision_items|default([])|length %}<input type="hidden" name="expected_decision_revision" value="{{ a.decision_revision }}">{% endif %}
+            <label class="form-label">Что уточнить у инициатора <span class="text-danger">*</span></label>
             <textarea class="form-control mb-2" name="public_summary" rows="2" required></textarea>
             {{ targets_field }}
-            <button class="btn btn-outline-warning" name="itilflow_do" value="return"><i class="ti ti-arrow-back-up me-1"></i>Вернуть на уточнение</button>
+            <button class="btn btn-outline-warning" name="itilflow_do" value="return" formnovalidate><i class="ti ti-arrow-back-up me-1"></i>Вернуть на уточнение</button>
          </form>
       </details>
    {% endif %}
@@ -62,24 +88,59 @@
       {{ cmd }}
       <div class="row g-2 align-items-end">
          <div class="col-md-4">
-            <label class="form-label">Кто согласует — сотрудники</label>
+            <label class="form-label">Согласующие — пользователи</label>
             {{ call('User::dropdown', [{'name': 'appr_users_id[]', 'value': [], 'right': 'all', 'multiple': true, 'display': false, 'width': '100%'}])|raw }}
          </div>
          <div class="col-md-4">
             <label class="form-label">…или группы</label>
-            {{ call('Group::dropdown', [{'name': 'appr_groups_id[]', 'value': [], 'entity': -1, 'condition': {'is_assign': 1}, 'multiple': true, 'display': false, 'width': '100%'}])|raw }}
+            {{ call('Group::dropdown', [{'name': 'appr_groups_id[]', 'value': [], 'entity': -1, 'multiple': true, 'display': false, 'width': '100%'}])|raw }}
          </div>
          <div class="col-md-4">
-            <label class="form-label">Почему он <span class="text-danger">*</span></label>
-            <input type="text" class="form-control" name="appr_reason" required placeholder="Например: руководитель заявителя">
+            <label class="form-label">Причина <span class="text-danger">*</span></label>
+            <input type="text" class="form-control" name="appr_reason" required placeholder="Например: руководитель инициатора">
          </div>
       </div>
-      <button class="btn btn-primary mt-2" name="set_approver" value="1"><i class="ti ti-user-check me-1"></i>Указать согласующего</button>
+      {% if a.form_fallback|default(false) %}
+         <div class="mb-2">
+            <p>Согласование из формы не найдено. Проверьте вкладку «Согласования», чтобы не отправить запросы дважды.</p>
+            <label class="form-label">Нужно одобрений, %
+               <input class="form-control" type="number" name="fallback_percent" min="1" max="100" value="{{ a.fallback_percent }}" required>
+            </label>
+         </div>
+      {% endif %}
+      <div class="mb-2">
+         <label class="form-label">Как согласует группа
+            <select class="form-select" name="appr_group_mode"><option value="any">Любой из группы — один запрос всей группе</option><option value="each">Каждый в группе — запрос каждому</option></select>
+         </label>
+         <div class="form-text">Не больше 50 запросов.</div>
+      </div>      <button class="btn btn-primary mt-2" name="set_approver" value="1"><i class="ti ti-user-check me-1"></i>Указать согласующего</button>
    </form>
 
+{% elseif a.action == 'adopt_existing' %}
+   <div class="p-1">
+      {% if a.reason %}<p class="text-warning">{{ a.reason }}</p>{% endif %}
+      <p>Засчитайте этапу согласование, которое уже есть в заявке.</p>
+      {% for group in a.groups %}
+         <form method="post" action="{{ step_url }}" class="border rounded p-2 mb-2">
+            {{ cmd }}
+            <strong>{{ group.label }}</strong>
+            <div class="small mb-2">{{ group.requests|join('; ') }}</div>
+            {% for id in group.ids %}<input type="hidden" name="validation_ids[]" value="{{ id }}">{% endfor %}
+            {% if group.answered %}
+              <input type="hidden" name="answered_confirmation" value="{{ group.confirmation }}">
+              <label class="form-check"><input class="form-check-input" type="checkbox" name="confirm_answered" value="1" required> {{ group.confirmation_label }}</label>
+            {% endif %}
+            <label class="form-label">Причина <span class="text-danger">*</span>
+               <textarea class="form-control" name="adopt_reason" rows="2" required></textarea>
+            </label>
+            <button class="btn btn-primary" name="adopt_existing" value="1">Засчитать это согласование</button>
+         </form>
+      {% else %}<p class="text-muted">В заявке нет подходящего согласования.</p>{% endfor %}
+   </div>
 {% elseif a.action == 'complete' %}
    <form method="post" action="{{ step_url }}" class="p-1">
       {{ cmd }}
+      {% include '@itilflow/decision_fields.html.twig' %}
       {% if a.comment != 'none' %}
          <label class="form-label">Что сделано{% if a.comment == 'required' %} <span class="text-danger">*</span>{% endif %}</label>
          <textarea class="form-control mb-2" name="report" rows="2" {% if a.comment == 'required' %}required{% endif %}></textarea>
@@ -93,9 +154,9 @@
 {% elseif a.action == 'activate' %}
    <form method="post" action="{{ outcome_url }}" class="p-1">
       {{ cmd }}
-      <label class="form-label">Что уточнил заявитель — кратко <span class="text-danger">*</span></label>
+      <label class="form-label">Ответ инициатора <span class="text-danger">*</span></label>
       <textarea class="form-control mb-2" name="subject_summary" rows="2" required></textarea>
-      <button class="btn btn-primary" name="itilflow_do" value="activate"><i class="ti ti-player-play me-1"></i>Продолжить маршрут</button>
+      <button class="btn btn-primary" name="itilflow_do" value="activate"><i class="ti ti-player-play me-1"></i>Продолжить</button>
    </form>
 
 {% elseif a.action == 'reassign' %}
@@ -104,7 +165,7 @@
       <div class="row g-2 align-items-end">
          <div class="col-md-4"><label class="form-label">Новая группа</label>
             {{ call('Group::dropdown', [{'name': 'to_groups_id', 'value': 0, 'entity': -1, 'condition': {'is_assign': 1}, 'display': false, 'width': '100%'}])|raw }}</div>
-         <div class="col-md-4"><label class="form-label">…или сотрудник</label>
+         <div class="col-md-4"><label class="form-label">…или пользователь</label>
             {{ call('User::dropdown', [{'name': 'to_users_id', 'value': 0, 'right': 'all', 'display': false, 'width': '100%'}])|raw }}</div>
          <div class="col-md-4"><label class="form-label">Причина <span class="text-danger">*</span></label>
             <input type="text" class="form-control" name="reassign_reason" required></div>
@@ -115,7 +176,7 @@
 {% elseif a.action == 'override' %}
    <form method="post" action="{{ step_url }}" class="p-1">
       {{ cmd }}
-      <label class="form-label">Причина — обязательно, попадёт в журнал <span class="text-danger">*</span></label>
+      <label class="form-label">Причина <span class="text-danger">*</span></label>
       <textarea class="form-control mb-2" name="report" rows="2" required></textarea>
       <button class="btn btn-sm btn-danger" name="override" value="1" onclick="return confirm('Закрыть этап принудительно, без ответа исполнителя или согласующего?');">Закрыть принудительно</button>
    </form>
@@ -123,10 +184,13 @@
 {% elseif a.action == 'new_attempt' %}
    <form method="post" action="{{ outcome_url }}" class="p-1">
       {{ cmd }}
-      {{ targets_field }}
+      {% if a.targets|default([])|length > 1 %}
+         <label class="form-label">С этапа</label>
+         <select name="target_stage_id" class="form-select mb-2">{% for id, label in a.targets %}<option value="{{ id }}">{{ label }}</option>{% endfor %}</select>
+      {% else %}{{ targets_field }}{% endif %}
       <label class="form-label">Что изменилось в заявке <span class="text-danger">*</span></label>
       <textarea class="form-control mb-2" name="subject_summary" rows="2" required></textarea>
-      <button class="btn btn-primary" name="itilflow_do" value="new_attempt">Начать новую попытку</button>
+      <button class="btn btn-primary" name="itilflow_do" value="new_attempt">Начать заново</button>
    </form>
 
 {% elseif a.action == 'retry_status_sync' %}
@@ -150,8 +214,8 @@
       {{ cmd }}
       <input type="hidden" name="action" value="{{ a.action }}">
       <input type="hidden" name="outcomes_id" value="{{ a.outcome_id }}">
-      <label class="form-label">Пояснение для заявителя <span class="text-danger">*</span></label>
+      <label class="form-label">Ответ инициатору <span class="text-danger">*</span></label>
       <textarea class="form-control mb-2" name="public_summary" rows="2" required></textarea>
-      <button class="btn btn-primary">Отправить пояснение</button>
+      <button class="btn btn-primary">Отправить</button>
    </form>
 {% endif %}

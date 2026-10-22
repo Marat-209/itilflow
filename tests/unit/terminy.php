@@ -1,82 +1,71 @@
 <?php
 
 /**
- * Термины 1.9.0: тексты плагина, которые видит человек, — словами русского перевода
- * GLPI 11 и русской терминологии ITSM, без калек и бытовых слов.
+ * Термины: сам словарь экрана и кнопка ответа согласующего.
  *
- * Проверяются шаблоны (без комментариев Twig, HTML и скриптов) и строковые
- * литералы src/ и front/ (без комментариев PHP). Список — то, что исправлено
- * в 1.9.0, чтобы не вернулось:
- * - «сущность» — в GLPI Entity называется «Организация»;
- * - «виза» — в GLPI это «Согласование», «Запрос на согласование», «Одобрить»;
- * - «плашка», «маршрут запускается», «очередь этапов» (о порядке) — жаргон и кальки;
- * - «Настройка → …» — пункт меню GLPI называется «Настройки»;
- * - «инициатор» в шаблонах — в плагине роль называется «заявитель»;
- * - кнопка ответа согласующего на вкладке маршрута — «Одобрить», как кнопка GLPI
- *   (`"Approve"` → «Одобрить»); процесс по-прежнему называется «согласование».
+ * С 1.13 запрещённые слова — один список, GlpiPlugin\Itilflow\Terms::FORBIDDEN, и одна проверка
+ * текстов — tests/unit/terminy-113.php. Сюда перенесены и запреты 1.9 («сущность», «плашка»,
+ * «очередь этапов», «Настройка →», жаргон), а исключение 1.11 «Виза из формы» снято:
+ * с 1.13 это «Согласование из формы». Чтобы одно правило не проверялось двумя наборами
+ * по-разному, здесь тексты плагина не перебираются — проверяется, что словарь ловит то, что
+ * должен, и не ловит слова GLPI и выбранные слова.
  */
 
 require __DIR__ . '/_nachalo.php';
 
+use GlpiPlugin\Itilflow\Terms;
+
 $koren = dirname(__DIR__, 2);
 
-$obshchie = [
-    '/(?<![а-яё])сущност/iu' => '«сущность» — в GLPI «Организация»',
-    '/(?<![а-яё])виз(а|ы|у|е|ой|ам|ами|ах)?(?![а-яё])/iu' => '«виза» — в GLPI «согласование» / «запрос на согласование»',
-    '/плашк/iu' => '«плашка» — жаргон',
-    '/запуска(ет|ют)ся|запустится/iu' => '«маршрут запускается» — калька',
-    '/очеред[ьи] этапов/iu' => '«очередь этапов» о порядке этапов',
-    '/Настройка →/u' => 'меню GLPI — «Настройки →»',
-    '/тикет|апрув|аппрув|деплой/iu' => 'жаргон',
-];
-$shablony = $obshchie + [
-    '/(?<![а-яё])инициатор/iu' => '«инициатор» — в плагине «заявитель»',
-];
+if (!estKlass(Terms::class)) {
+    itog();
+}
 
-/** Текст шаблона, который увидит человек: без комментариев Twig и HTML и без скриптов. */
-function vidimyjTekst(string $twig): string
+/** Какие правила словаря срабатывают на текст. */
+function lovyat(string $tekst): array
 {
-    $t = preg_replace('/\{#.*?#\}/su', ' ', $twig);
-    $t = preg_replace('/<!--.*?-->/su', ' ', $t);
-    return preg_replace('/<script\b.*?<\/script>/su', ' ', $t);
-}
-
-/** Строковые литералы PHP-файла с номерами строк, без комментариев. */
-function literaly(string $php): array
-{
-    $out = [];
-    foreach (token_get_all($php) as $tok) {
-        if (is_array($tok) && in_array($tok[0], [T_CONSTANT_ENCAPSED_STRING, T_ENCAPSED_AND_WHITESPACE], true)) {
-            $out[] = [$tok[2], $tok[1]];
+    $pravila = [];
+    foreach (Terms::FORBIDDEN as $rx => $zamena) {
+        if (preg_match($rx, $tekst)) {
+            $pravila[] = $rx;
         }
     }
-    return $out;
+    return $pravila;
 }
 
-$nashli = [];
-$fajlov = 0;
-foreach (glob($koren . '/templates/*.twig') as $f) {
-    $fajlov++;
-    $tekst = vidimyjTekst((string) file_get_contents($f));
-    foreach ($shablony as $rx => $pochemu) {
-        if (preg_match_all($rx, $tekst, $m)) {
-            $nashli[] = 'templates/' . basename($f) . ': ' . implode(', ', array_unique($m[0])) . ' — ' . $pochemu;
-        }
-    }
-}
-foreach (array_merge(glob($koren . '/src/*.php'), glob($koren . '/front/*.php')) as $f) {
-    $fajlov++;
-    foreach (literaly((string) file_get_contents($f)) as [$stroka, $lit]) {
-        foreach ($obshchie as $rx => $pochemu) {
-            if (preg_match($rx, $lit, $m)) {
-                $nashli[] = basename(dirname($f)) . '/' . basename($f) . ':' . $stroka . ': «' . $m[0] . '» — ' . $pochemu;
-            }
-        }
-    }
-}
+// Что словарь обязан ловить: запреты 1.9 и прежние слова, которые заменил словарь 1.13.
+$nelzya = [
+    'Виза из формы', 'в организации сущности', 'жёлтая плашка', 'очередь этапов', 'Настройка → Автоматические действия',
+    'тикет', 'заявитель получит ответ', 'администратор процессов', 'Нарушение маршрута', 'Источник',
+    'ступень согласования', 'шаг согласования', 'Решение отдела', 'учитываемых прохождений', 'Не потребовался',
+    'Приостановлен', 'точка возврата', 'Маршруты обработки', 'Сотрудник №17', 'обновите карточку',
+];
+$propushcheny = array_values(array_filter($nelzya, static fn(string $t): bool => lovyat($t) === []));
+ok($propushcheny === [], 'словарь ловит прежние слова и запреты 1.9', implode(' | ', $propushcheny));
 
-ok($fajlov > 30, 'проверено файлов: ' . $fajlov);
-ok($nashli === [], 'тексты плагина — словами GLPI и ITSM, без жаргона', PHP_EOL . '    ' . implode(PHP_EOL . '    ', $nashli));
+// Что словарь ловить не должен: слова GLPI и выбранные слова.
+$mozhno = [
+    'Источник запросов', 'источника запроса', 'действие проходит', 'Маршруты этапов', 'Запустить маршрут этапов',
+    'инициатор заявки', 'пользователь', 'этап согласования', 'администратор маршрутов', 'Согласование из формы',
+    'Журнал маршрута', 'Не нужен по условию', 'Прежняя попытка', 'Нужно одобрений, %', 'Организация',
+];
+$lishnie = [];
+foreach ($mozhno as $t) {
+    if (($p = lovyat($t)) !== []) {
+        $lishnie[] = $t . ' ← ' . implode(' ', $p);
+    }
+}
+ok($lishnie === [], 'словарь не ловит слова GLPI и выбранные слова', implode(' | ', $lishnie));
+
+// Константы словаря сами не нарушают словарь.
+$konstanty = array_filter((new ReflectionClass(Terms::class))->getConstants(), 'is_string');
+$plohie = [];
+foreach ($konstanty as $imya => $slovo) {
+    if (lovyat($slovo) !== []) {
+        $plohie[] = $imya . ' = ' . $slovo;
+    }
+}
+ok($plohie === [], 'слова словаря Terms проходят свои же запреты', implode(' | ', $plohie));
 
 // Кнопка ответа согласующего — как кнопка GLPI в ленте («Одобрить» / «Отказать»).
 $dejstvie = (string) file_get_contents($koren . '/templates/flow_action.html.twig');
@@ -85,7 +74,7 @@ foreach (['approve', 'refuse'] as $v) {
     $knopki[$v] = preg_match('/<button[^>]*name="approval_action"[^>]*value="' . $v . '"[^>]*>(.*?)<\/button>/su', $dejstvie, $m)
         ? trim(strip_tags($m[1])) : null;
 }
-ok($knopki === ['approve' => 'Одобрить', 'refuse' => 'Отказать'], 'ответ согласующего на вкладке маршрута: «Одобрить» / «Отказать», как в GLPI',
+ok($knopki === ['approve' => Terms::APPROVE, 'refuse' => Terms::REFUSE], 'ответ согласующего на вкладке маршрута: «Одобрить» / «Отказать», как в GLPI',
     json_encode($knopki, JSON_UNESCAPED_UNICODE));
 
 itog();

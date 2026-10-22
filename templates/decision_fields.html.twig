@@ -1,0 +1,16 @@
+{# Пустое значение обязательно: отсутствие ответа не равнозначно «нет». #}
+{% if a.decision_items|default([])|length %}
+   <input type="hidden" name="expected_decision_revision" value="{{ a.decision_revision }}">
+   <fieldset class="mb-2">
+      <legend class="fs-6">Вопросы этапа</legend>
+      {% for question in a.decision_items %}
+         <label class="form-label d-block">{{ question.label }}
+            <select class="form-select" name="decision_answers[{{ question.key }}]" required>
+               <option value="" {% if a.decision_answers[question.key] is not defined %}selected{% endif %}>Выберите ответ</option>
+               <option value="1" {% if a.decision_answers[question.key] is defined and a.decision_answers[question.key] is same as(true) %}selected{% endif %}>Да</option>
+               <option value="0" {% if a.decision_answers[question.key] is defined and a.decision_answers[question.key] is same as(false) %}selected{% endif %}>Нет</option>
+            </select>
+         </label>
+      {% endfor %}
+   </fieldset>
+{% endif %}

@@ -1,19 +1,23 @@
 {#
    Строка готовности маршрута (Readiness). r — результат проверки;
-   stage_view — показ на форме этапа: только недостающее этому этапу.
+   stage_view — показ на форме этапа: problems — «Этот этап не готов»,
+   notes — «Проверьте этот этап». Пересчёт без сохранения заменяет этот блок целиком.
 #}
 {% if stage_view %}
-   {% if r.problems is not empty %}
-      <div class="alert alert-warning itilflow-readiness" data-itilflow-readiness>
+   {% set problems = r.problems ?? [] %}
+   {% set notes = r.notes ?? [] %}
+   {% if problems is not empty or notes is not empty %}
+      <div class="alert {{ problems is not empty ? 'alert-warning' : 'alert-info' }} itilflow-readiness" data-itilflow-readiness role="status">
          <div class="d-flex">
-            <i class="ti ti-alert-triangle me-2 mt-1"></i>
+            <i class="ti {{ problems is not empty ? 'ti-alert-triangle' : 'ti-info-circle' }} me-2 mt-1"></i>
             <div>
-               <div class="fw-semibold">
-                  {{ r.problems|length == 1 ? 'Этому этапу не хватает одного выбора' : 'Этому этапу не хватает: ' ~ r.problems|length }}
-               </div>
+               <div class="fw-semibold">{{ problems is not empty ? 'Этот этап не готов' : 'Проверьте этот этап' }}</div>
                <ul class="mb-0">
-                  {% for p in r.problems %}
+                  {% for p in problems %}
                      <li>{{ p.text }}</li>
+                  {% endfor %}
+                  {% for n in notes %}
+                     <li class="text-secondary">{{ n.text }}</li>
                   {% endfor %}
                </ul>
             </div>
@@ -38,7 +42,8 @@
             {% endif %}
             {% for n in r.notes %}
                <div class="small mt-1">
-                  {% if n.service %}<span class="badge bg-secondary-lt me-1">служебное</span>{% endif %}{{ n.text }}
+                  {% if n.service ?? false %}<span class="badge bg-secondary-lt me-1">для администратора GLPI</span>{% endif %}{{ n.text }}
+                  {% if n.url ?? false %}<a href="{{ n.url }}" class="ms-1">{{ n.link }}</a>{% endif %}
                </div>
             {% endfor %}
          </div>

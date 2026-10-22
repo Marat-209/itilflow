@@ -2,69 +2,72 @@
 
 English · **[Русский](RIGHTS.md)**
 
-The plugin has no permission system of its own. It adds two rights to GLPI
-profiles and takes everything else from GLPI: entity access, rights on the
-ticket, assignment as technician, assignment as approver.
+The plugin adds two rights to GLPI profiles. Everything else comes from GLPI:
+access to the entity and ticket, assignment as assignee and as approver.
 
-## Profile rights
+## Plugin rights
 
-**Administration → Profiles → [profile]**, the plugin's rights section:
+**Administration → Profiles → ‹profile› → the “Маршруты этапов” (Stage routes)
+tab.**
 
-| Right | Give it to | What it allows |
+| Right | Checkbox | What it gives |
 |---|---|---|
-| **Stage routes** («Маршруты этапов») | process administrators, support managers | read — the route list and the report; update — set up routes and stages, start manually, abort and resume, new attempt, retry status change, the out-of-order log. Such a person is called a **process administrator** below |
-| **Route bypass** («Обход маршрута») | an on-call administrator — deliberately | force-close the current stage with a reason and a log entry |
+| “Маршруты этапов” | Read | the “Маршруты этапов” menu, route settings and scheme, report, export |
+| | Update | route administrator: setting up routes and stages, managing the route on a ticket |
+| | Create | new routes; with Update — import |
+| | Purge | deleting routes and stages |
+| “Закрытие этапа без ответа” (Closing a stage without an answer) | “Закрыть принудительно” (Force close) | close the current stage without an answer, with a reason |
 
-On install GLPI grants Stage routes to profiles that can update the
-configuration — review that list. Route bypass is granted to nobody.
+- The tab exists only for central-interface profiles. It is changed by
+  whoever has the GLPI right Profiles: update.
+- The menu item appears after logging in again.
+- On installation “Маршруты этапов” goes to profiles with General setup;
+  “Закрытие этапа без ответа” — to nobody. An upgrade does not change rights.
 
-Neither right gives access to a ticket the person cannot otherwise reach, and
-neither lets anyone answer on behalf of another approver.
+![Profile, the “Маршруты этапов” tab](img/profile-rights.png)
 
 ## Who may do what
 
-Every action is checked on the server, in every control mode. The action
-button on the tab is shown only to those the server will allow.
+Every action is checked on the server; a button is shown only to whoever is
+allowed. No right opens a ticket someone cannot see or lets them answer for
+another approver.
 
-| Action | Who | Conditions |
+| Who | May | Needs |
 |---|---|---|
-| Complete or skip a "Task in the ticket" stage | the stage's responsible person or group member | update right on the ticket; central interface; skip — optional stages only, with a reason |
-| Name the approver | the ticket's assignee (personally or via a group) or a process administrator | the stage is waiting; approvers cannot be swapped once approvals exist |
-| Answer an approval | the assigned approver | stock GLPI check: addressee, their groups, substitution; no special right needed, works from self-service |
-| Record a department result (new handling) | the child ticket's assignee (personally or via a group) | "How the department reports the result" is "Assignee marks the result"; update right on the child ticket |
-| Return for clarification (new handling) | the department's technician or the current stage's approver | the stage has return points |
-| Continue after clarification | the main ticket's assignee or a process administrator | the route is waiting for clarification |
-| Explain to the requester | the outcome's author or the department's current assignee | the outcome is waiting for a public explanation |
-| Hand over a stage | the stage's responsible person or a process administrator | not for approvals; a reason is mandatory |
-| Force close | task and approval — Route bypass or a process administrator; child ticket — Route bypass only | a reason is mandatory; does not count as an approver's vote |
-| New attempt after refusal or completion | a process administrator | new handling; return points exist |
-| Retry status change, reconcile an approver's answer | a process administrator | new handling |
-| Abort or resume the route | a process administrator | update right on the ticket |
-| Start a route manually | a process administrator | update right on the ticket; the route is active and fits the ticket's type and entity |
-| Withdraw the ticket | the original requester | the route allows withdrawal; it is running or halted; the ticket is not solved; works from self-service |
-| See the route tab | everyone who sees the ticket | the requester — if "Route tab for the requester" is on |
-| See the out-of-order log | a process administrator | |
+| route administrator | setup; on a ticket — manual start, “Прервать маршрут…” (Abort route), “Возобновить маршрут” (Resume route), “Начать заново с этапа…” (Restart from stage), “Закрыть принудительно…” for tasks and approvals, “Засчитать согласование” (Count this approval) for an already answered approval | Read and Update; update right on the ticket |
+| assignee of a “Задача” (Task) stage | “Завершить этап” (Complete stage), “Пропустить” (Skip), “Передать этап…” (Reassign stage) | central-interface profile in the ticket's entity |
+| ticket assignee | “Указать согласующего” (Set approver), “Засчитать согласование”, “Выполнять этап?” (Run the stage?), “Продолжить” (Continue) after clarification | the same |
+| child ticket assignee | “Отметить результат” (Record result), “Ответить инициатору” (Answer the requester) | profile in the child ticket's entity |
+| approver | “Одобрить” (Approve), “Отказать” (Refuse), “Вернуть на уточнение” (Return for clarification) | GLPI right “Утверждения заявок” (Ticket approvals); self-service is enough |
+| requester | see the route tab if enabled; answer a clarification with a followup; “Отозвать заявку” (Withdraw ticket) if allowed | access to their ticket |
+| duty administrator | “Закрыть принудительно…” for any current stage, including a child ticket | “Закрытие этапа без ответа” |
 
-## The profile's entity
+“Продолжить” is needed only if the assignee asked for clarification, the
+approver no longer fits the ticket or the requester did not answer with a
+followup. If an approval stage returned the ticket, the requester's public
+followup or email continues the route.
 
-A right depends not only on the profile but on the entity where it is granted.
-With only a self-service profile in the ticket's entity, a technician can
-neither complete nor hand over a stage: GLPI does not give them the update
-right on the ticket.
+A reason is required for “Передать этап…”, “Закрыть принудительно…”,
+“Указать согласующего”, “Засчитать согласование”, “Этап не нужен” (Stage not
+needed), “Прервать маршрут…” and “Отозвать заявку”.
 
-- Stage owners and the ticket's assignee need a technician profile in the
-  ticket's entity (or above, recursive).
-- A department's technician — in the child ticket's entity.
-- An approver only needs to be assigned: answering works from self-service too.
+With a self-service profile in the ticket's entity an assignee can neither
+complete nor reassign a stage. If the user set in a “Дочерняя заявка” (Child
+ticket) stage has no profile in its entity, the child ticket is not created.
 
-A person set as the responsible of a "Child ticket" stage must have a profile
-in the target entity. With the new handling this is checked when the stage
-opens: without a profile the child ticket is not created and the route
-reports an error.
+## GLPI approval right
 
-## About the "Approve request / incident" right
+When the route sends requests itself (“Задан в этапе” — Set in the stage,
+“Указывает исполнитель заявки” — Set by the ticket's assignee), it checks
+each approver: the account is active and has a profile in the ticket's entity
+with the right “Утверждения заявок” (Assistance tab): create or approve
+requests.
 
-Routes do not need it. In GLPI 11 the approval answer buttons are governed by
-`CommonITILValidation::canAnswer()`, which only checks whether the user is the
-assigned approver. The right itself controls whom GLPI offers in its own
-approver picker, and the plugin assigns approvers itself.
+- Without the right a user is left out of the requests — unless an active
+  substitute has it.
+- For “Любой из группы” (Any group member) one member with the right is
+  enough.
+- The readiness line names approvers who fail the check.
+
+Whoever GLPI addressed the request to may answer: the approver, a group
+member or an active substitute.

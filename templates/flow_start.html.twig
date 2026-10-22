@@ -1,9 +1,9 @@
 {% import 'components/form/fields_macros.html.twig' as fields %}
 
-{% if processes|length == 0 %}
-   <div class="alert alert-info">
-      Для этого типа объекта в текущей организации не описано ни одного активного маршрута.
-   </div>
+{% if processes|length == 0 and (active ?? 0) == 0 %}
+   <div class="alert alert-info">В этой организации маршрутов нет.</div>
+{% elseif processes|length == 0 %}
+   <div class="alert alert-info">Маршрут на этой заявке не запущен.</div>
 {% elseif not can_start %}
    <div class="alert alert-info">Маршрут на этой заявке не запущен.</div>
 {% else %}

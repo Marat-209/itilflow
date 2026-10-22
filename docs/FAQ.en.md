@@ -1,166 +1,136 @@
-# FAQ and GLPI 11 pitfalls
+# FAQ
 
 English · **[Русский](FAQ.md)**
 
-## Starting a route
+The interface is Russian only; labels are quoted in Russian with the English
+meaning in brackets ([glossary](REFERENCE.en.md#1-words)).
 
-**The route does not start — where to begin.**
-Open the route: the readiness line at the top names what is missing — the
-stage and the field, with a link. It checks the same things the plugin checks
-at start, plus a disabled route, a rule that cannot see the route, and a group
-that is not visible in the department ticket's entity.
+## Start
 
-**The list of routes in the business rule action is empty.**
-The list is filtered by the rule's entity. A rule in a child entity sees
-routes of its own and parent entities — but only those with **"Visible in
-child entities"** on. Turn the flag on in the route form, or create the route
-in the rule's entity. A rule without a usable value still saves and silently
-does nothing — hence "the rule does not fire".
+**A route does not start — where to begin?**
+Open the route: the readiness line at the top names what is missing, with
+a link to the stage.
 
-**The rule fired but the route did not start.**
-Check in order: the route is enabled ("Route enabled" = Yes); "Route is for"
-matches the ticket's type; the ticket's entity is the route's or a child of
-it with "Visible in child entities"; the rule is not overridden by a higher
-rule with "Stop processing".
+**The form created a ticket, but there is no route.**
+Two routes fit, none, or the answer to a question in the condition is
+unknown. The readiness line of the form's routes shows the reason and the
+number of such tickets. Fix “Запускать, если” (Start if); on this ticket the
+route can be started by hand (“Маршрут этапов” tab → “Запустить маршрут” —
+Start route).
 
-**The route halted as soon as a stage opened.**
-Almost always the responsible group is not visible in the target entity.
-GLPI lets you assign a group from another entity without an error, and the
-ticket would hang with a group that cannot see it; the plugin halts the route
-instead. Make the group visible in child entities from a parent entity, or
-pick a group from the target entity.
+**The business rule action shows an empty route list.**
+A rule sees routes of its own and parent entities only if they have child
+entities = Yes. Turn it on or create the route in the rule's entity.
 
-**The group is missing from the stage's list.**
-The group lacks **"Can be assigned to tickets"**.
+**The rule fired, but the ticket has no route.**
+Check: the route is enabled; “Для чего маршрут” (Route for) matches the
+ticket type; the entity fits; a rule higher up did not stop processing. If
+the ticket's form has a route with “Запускать, если”, the rule does not start
+the route.
 
-**The stage form lacks a field I need.**
-The form shows the fields of the selected mode ("How it is done") and of the
-route's outcome handling. Rarely used fields are in the collapsed "More" at
-the bottom: order, ticket status at the stage, duration and "can be skipped"
-for a task, SLA for a child ticket, how many approvals are needed. A field of
-another mode is not sent by the form, and its value in the database does not
-change.
+**An unknown answer did not choose the “no” branch.**
+By design: no answer is not “no”. The stage's “Если ответа нет” (If no answer)
+decides what to do.
 
-**I deleted a stage and it disappeared from other stages' return points.**
-By design since 1.9.0: a deleted stage is removed from the return points of
-the other stages of the same route, and the message names those stages.
-Before, deleting such a stage was rolled back with "Refresh the page".
+## Stages
 
-## Walking the stages
+**The route stopped as soon as it reached a stage.**
+Most often the stage's group is not visible in the entity of the ticket or
+child ticket. Another cause — a deadline or SLA after 18 January 2038. Fix the
+stage and choose “Возобновить маршрут” (Resume route) in the tab's “…” menu.
 
-**The Answer menu has no "Complete stage".**
-It is shown only to the responsible of the current "Task in the ticket" stage,
-and only in the central interface. An approval closes by the approver's
-answer, a child ticket by its outcome (new handling) or solution (previous).
+**A group is missing from the stage's list.**
+In the group form, Visible in a ticket → Assigned to is not Yes.
 
-**"Complete" on an approval or a department stage is refused.**
-By design since 1.8.0: an approval completes only by the approver's answer,
-department work by the outcome in its ticket. Such a stage can be closed
-without an answer only by force, with the right and a reason.
+**A field is missing from the stage form.**
+The form shows the fields of the chosen “Как выполняется” (How it runs). Rare
+ones are in the collapsed “Дополнительно” (More): order, ticket status, SLA,
+“Нужно одобрений, %” (Approvals needed, %), “Этап можно пропустить” (Stage can
+be skipped).
 
-**The child ticket cannot be solved by hand.**
-With the new handling it is closed by the department's outcome: the child
-ticket's route tab → "Record result". After that it is solved automatically.
+**No “Завершить этап” (Complete stage) on an approval or a child ticket.**
+By design: an approval is closed by the approver's answer, a child ticket by
+“Отметить результат” (Record result). Without an answer — only “Закрыть
+принудительно…” (Force close) with a reason.
 
-**"Name the approver" silently did not save.**
-Fixed in 1.8.0. GLPI puts a hidden empty field in front of every multi-select;
-if only a person or only a group was picked, the form discarded the choice.
-Upgrade to 1.8.0.
+**A child ticket cannot be solved by hand.**
+Open its “Результат отдела” (Department result) tab → “Отметить результат”.
+It then solves itself.
 
-**A technician or approver cannot do anything with the ticket.**
-They have only a self-service profile in the ticket's entity. Rights depend on
-the entity where the profile is granted — see [RIGHTS.en.md](RIGHTS.en.md).
-For answering an approval, self-service is enough.
+**An approval request cannot be deleted.**
+While the stage runs, its request cannot be deleted. If the approval is not
+needed, choose “Закрыть принудительно…” in the stage row menu or “Прервать
+маршрут…” (Abort route).
 
-**A mandatory report was bypassed by marking the task done.**
-Not since 1.7.0: with a mandatory report, marking the task done is refused;
-closing goes through "Complete stage".
+**Everyone answered, but the stage is still Waiting for approval.**
+GLPI rounds “Нужно одобрений, %” this way (for example, 2 of 3 at 67 %). The
+route administrator closes the stage. Also check for mandatory stage questions
+without an answer.
 
-## Statuses and the end of a route
+**The approver answered, but the stage did not move.**
+The answer is saved but the route has not taken it yet — for example, with
+simultaneous answers. The “Сроки этапов” (Stage deadlines) automatic action
+catches the stage up within 15 minutes; check that GLPI's cron works.
 
-**The ticket status does not follow the stages (new handling).**
-The `itilflow_status_sync` automatic action is disabled, or there is no system
-cron running `front/cron.php`. The administrator sees a warning in the route
-list. Enable the task: **Setup → Automatic actions**.
+**The requester answered the clarification, but the route is waiting.**
+The requester's public followup or email continues the route by itself if
+an approval stage returned the ticket. If the assignee returned it or the
+approver no longer fits the ticket, the main ticket's assignee or the route
+administrator clicks “Продолжить” (Continue).
 
-**The ticket was not solved after the last stage.**
-That is the previous handling: the solution block is lifted, and the assignee
-writes the solution. Automatic solving with the result happens only with the
-new handling.
+**An assignee or approver can do nothing.**
+The assignee has only a self-service profile in the ticket's entity — a
+central-interface profile is needed ([RIGHTS.en.md](RIGHTS.en.md)).
+Self-service is enough for an approver, but they need the GLPI right
+“Утверждения заявок” (Ticket approvals).
 
-**The ticket cannot be solved although all stages are done.**
-The route halted after a refusal ("Stop"). Route tab → "Resume route",
-"New attempt…" or "Abort route…".
+## Statuses and the end of the route
 
-**After a refusal from self-service the ticket stayed "In progress".**
-Fixed in 1.8.0: GLPI stored the solution but did not change the status when
-the last answer came from a user without update rights on the ticket. The
-route now sets the status itself.
+**The ticket status does not follow the stages.**
+`itilflow_status_sync` is disabled or there is no system cron for
+`front/cron.php`. **Setup → Automatic actions.**
 
-**The child ticket's SLA differs from the stage's.**
-The stage's SLA is set when the child ticket is created, then a GLPI business
-rule with an SLA action overrides it. Exclude the stage service category from
-such rules, or remove the SLA from the stage.
+**The ticket cannot be solved.**
+The route is not complete or is “Остановлен” (Stopped) after a refusal. The
+route administrator chooses “Начать заново с этапа…” (Restart from stage) or
+“Прервать маршрут…”.
 
-**Withdrawal is unavailable on old tickets.**
-For routes started before 1.8.0 the original requester was not recorded, and
-the plugin does not guess it from the current actors.
+**The child ticket has a different SLA than the stage.**
+A GLPI business rule with an SLA action overrode it. Exclude the stage's
+category from the rule or remove the SLA from the stage.
 
-## Installation and upgrade
+## Installation
 
-**After replacing the files no routes are shown and the plugin is disabled.**
-GLPI compares the version in `setup.php` with the one in the database and, on
-a mismatch, puts the plugin into "to be updated". Run `plugin:install` and
-`plugin:activate` (or "Update" in the plugin list — not "Uninstall").
+**After replacing the files no routes show, the plugin is disabled.**
+The version in the files differs from the database — GLPI waits for an
+update. Run `plugin:install` and `plugin:activate` (or Update in the plugin
+list, not Uninstall).
 
-**Old forms and tabs are shown after the upgrade.**
-Template cache. In production mode GLPI 11 does not reread a changed template:
-the compiled copy is looked up by the file's path, not by its contents, and the
-"Update" and "Clear cache" buttons in the interface do not touch it. Since
-1.9.0 the plugin removes its own copies on install and upgrade, but the
-reliable way is still the same — from the GLPI directory, as the web user:
-`php bin/console cache:clear`. With OPcache without file timestamp checks
-(`opcache.validate_timestamps=0`), reset it too: **Setup → General →
-Performance** → "Reset".
-
-A quick sign without the console: in debug mode GLPI compiles templates
-separately. If the form is new there and old in normal mode, it is the cache.
+**Old screens after an upgrade.**
+Template cache: `php bin/console cache:clear` from the GLPI directory. With
+`opcache.validate_timestamps=0` reset OPcache too.
 
 **The plugin's files return 404.**
-The archive was built on Windows and the directories lack the `x` bit.
-Rebuild it on Linux (`git archive` or `tar`), or fix permissions:
-`find itilflow -type d -exec chmod 755 {} +` and
-`find itilflow -type f -exec chmod 644 {} +`.
+The archive was built on Windows. Rebuild it on Linux or set permissions:
+`find itilflow -type d -exec chmod 755 {} +`.
 
-**Installation stopped: "schema … not confirmed".**
-After the migration the plugin verifies fields, indexes and the table engine.
-A common cause is tables not on InnoDB. Attach the installation log to an
-issue and do not carry on with a production database.
-
-**The migration log says "review ACLs after update".**
-Expected: GLPI granted the new right to profiles that can update the
-configuration. Review that list.
-
-## GLPI 11 forms and catalogue
-
-**"Item not found" when opening a form.**
-GLPI 11 has no `/Form/Render?uuid=…` or `servicecatalog.php`. The catalogue is
-`/ServiceCatalog`, a form is `/Form/Render/<form id>`.
-
-**The form creates a ticket but the route does not start.**
-The category in the form's destination is not set as a specific value but
-taken from an answer or a default, and the rule does not see the expected
-category. Set the category as a specific value.
+**An old route's page says “Маршрут прежнего порядка” (Old-mode route).**
+The route was created long ago. “Перевести на новый порядок” (Convert to the
+new mode) fills the new fields; started tickets finish the old way.
 
 ## General
 
 **Why is the interface Russian only?**
-Strings are hardcoded; there is no translation catalogue yet.
+The strings are in the code; there is no translation catalogue.
 
-**Can stages run in parallel or conditionally?**
-No. A route is linear; only an optional stage can be skipped, manually.
+**Are parallel stages possible?**
+No, a route is sequential. A stage can run by condition or be skipped if
+allowed.
 
-**Can I edit a route that tickets are running on?**
-With the new handling, running tickets keep the definition snapshot from their
-start. With the previous handling they read the current stage settings — set
-up a substantially changed process as a new route.
+**Can a route be edited while tickets run on it?**
+Yes. Running tickets keep the settings they started with; changes apply to
+new ones.
+
+**After import a form or question was not found.**
+Copying a GLPI form changes its internal keys. Choose the form by hand, then
+the destination, approval step and questions ([TRANSFER.en.md](TRANSFER.en.md)).

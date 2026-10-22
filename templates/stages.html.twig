@@ -1,6 +1,9 @@
 {#
-   Вкладка «Этапы» маршрута: строка готовности и таблица № · Этап · Как выполняется · Кто · Срок · Если отказ.
-   «Если отказ» — по порядку исходов маршрута. На узком экране строки — карточки.
+   Вкладка «Этапы» маршрута: строка готовности и таблица
+   № · Этап · Как выполняется · Когда · Кто · Срок · Если отказ · Порядок.
+   «Когда» — условие обычной фразой; «Если отказ» — по порядку исходов маршрута.
+   Стрелки меняют номер с соседним этапом (обычное сохранение обоих), «Убрать» — удаление этапа.
+   На узком экране строки — карточки.
 #}
 {{ include('@itilflow/readiness.html.twig', {'r': readiness, 'stage_view': false}) }}
 
@@ -14,10 +17,9 @@
 </div>
 
 {% if rows|length == 0 %}
-   <div class="alert alert-info">
-      В маршруте пока нет этапов. Маршрут без этапов запустить нельзя.
-   </div>
+   <div class="alert alert-info">Этапов пока нет.</div>
 {% else %}
+   {% set action = path('/plugins/itilflow/front/stage.form.php') %}
    <style>
       @media (max-width: 575.98px) {
          .itilflow-stages thead { display: none; }
@@ -26,6 +28,8 @@
          .itilflow-stages td::before { content: attr(data-label); flex: 0 0 7.5rem; color: var(--tblr-secondary, #667382); }
       }
       .itilflow-stages tr.itilflow-problem > td:first-child { box-shadow: inset 3px 0 0 var(--tblr-warning, #f59f00); }
+      .itilflow-stages .itilflow-order { display: flex; flex-wrap: wrap; gap: .25rem; }
+      .itilflow-stages .itilflow-order form { display: inline; margin: 0; }
    </style>
    <table class="table table-hover itilflow-stages">
       <thead>
@@ -33,9 +37,11 @@
             <th style="width:56px">№</th>
             <th>Этап</th>
             <th>Как выполняется</th>
+            <th>Когда</th>
             <th>Кто</th>
             <th>Срок</th>
             <th>Если отказ</th>
+            {% if can_edit %}<th>Порядок</th>{% endif %}
          </tr>
       </thead>
       <tbody>
@@ -45,18 +51,22 @@
             <td data-label="Этап">
                <span>
                   {% if can_edit %}
-                     <a href="{{ path('/plugins/itilflow/front/stage.form.php') }}?id={{ s.id }}">{{ s.name }}</a>
+                     <a href="{{ action }}?id={{ s.id }}" aria-label="Настроить этап {{ s.ranking }} «{{ s.name }}»">{{ s.name }}</a>
                   {% else %}
                      {{ s.name }}
                   {% endif %}
                   {% if s.report_required %}<span class="badge bg-secondary-lt ms-1">отчёт обязателен</span>{% endif %}
                   {% if s.is_optional %}<span class="badge bg-secondary-lt ms-1">можно пропустить</span>{% endif %}
                   {% for p in s.problems %}
-                     <span class="d-block small text-warning">{{ p }}</span>
+                     <span class="d-block small text-danger" data-itilflow-row-problem>{{ p }}</span>
+                  {% endfor %}
+                  {% for n in s.notes ?? [] %}
+                     <span class="d-block small text-warning" data-itilflow-row-note>{{ n }}</span>
                   {% endfor %}
                </span>
             </td>
-            <td data-label="Как">{{ s.mode }}</td>
+            <td data-label="Как выполняется">{{ s.mode }}</td>
+            <td data-label="Когда">{{ s.when }}</td>
             <td data-label="Кто" data-itilflow-col="who">
                <span>
                   {% if s.who is empty %}<span class="text-danger">не выбран</span>{% else %}{{ s.who }}{% endif %}
@@ -70,6 +80,29 @@
                   {% if s.reject_sub is not empty %}<span class="d-block small text-muted">{{ s.reject_sub }}</span>{% endif %}
                </span>
             </td>
+            {% if can_edit %}
+               <td data-label="Порядок">
+                  <div class="itilflow-order">
+                     {% for dir in ['up', 'down'] %}
+                        <form method="post" action="{{ action }}">
+                           <input type="hidden" name="_glpi_csrf_token" value="{{ csrf_token() }}">
+                           <input type="hidden" name="id" value="{{ s.id }}">
+                           <button type="submit" class="btn btn-sm btn-outline-secondary" name="move" value="{{ dir }}"
+                                   aria-label="{{ dir == 'up' ? 'Поднять' : 'Опустить' }} этап {{ s.ranking }} «{{ s.name }}»"
+                                   {% if (dir == 'up' and loop.parent.loop.first) or (dir == 'down' and loop.parent.loop.last) %}disabled{% endif %}>{{ dir == 'up' ? '↑' : '↓' }}</button>
+                        </form>
+                     {% endfor %}
+                     <form method="post" action="{{ action }}">
+                        <input type="hidden" name="_glpi_csrf_token" value="{{ csrf_token() }}">
+                        <input type="hidden" name="id" value="{{ s.id }}">
+                        <input type="hidden" name="plugin_itilflow_processes_id" value="{{ process.fields['id'] }}">
+                        <button type="submit" class="btn btn-sm btn-outline-danger" name="purge" value="1"
+                                aria-label="Убрать этап {{ s.ranking }} «{{ s.name }}»"
+                                onclick="return confirm({{ ('Убрать этап ' ~ s.ranking ~ ' «' ~ s.name ~ '»?')|json_encode }});">Убрать</button>
+                     </form>
+                  </div>
+               </td>
+            {% endif %}
          </tr>
       {% endfor %}
       </tbody>

@@ -22,31 +22,30 @@
                <div class="fs-2 fw-bold">{{ summary.total }}</div>
             </div>
             <div class="col-auto">
-               <div class="text-muted small">Средний срок прохождения</div>
-               <div class="fs-2 fw-bold">{{ summary.lead_avg > 0 ? call('Html::timestampToString', [summary.lead_avg, false]) : '—' }}</div>
+               <div class="text-muted small">Среднее время маршрута</div>
+               <div class="fs-2 fw-bold">{{ summary.lead_avg > 0 ? summary.lead_avg_text : '—' }}</div>
             </div>
             <div class="col-auto">
                <div class="text-muted small">Медиана</div>
-               <div class="fs-2 fw-bold">{{ summary.lead_med > 0 ? call('Html::timestampToString', [summary.lead_med, false]) : '—' }}</div>
+               <div class="fs-2 fw-bold">{{ summary.lead_med > 0 ? summary.lead_med_text : '—' }}</div>
             </div>
             <div class="col-auto">
                <div class="text-muted small">Максимум</div>
-               <div class="fs-2 fw-bold text-danger">{{ summary.lead_max > 0 ? call('Html::timestampToString', [summary.lead_max, false]) : '—' }}</div>
+               <div class="fs-2 fw-bold text-danger">{{ summary.lead_max > 0 ? summary.lead_max_text : '—' }}</div>
             </div>
             <div class="col">
                <div class="text-muted small">Состояния</div>
                <div class="mt-1">
+               {% set state_labels = states|default({}) %}
                {% for state, n in summary.by_state %}
-                  <span class="badge {% if state == 'done' %}bg-green-lt{% elseif state == 'running' %}bg-blue-lt{% else %}bg-red-lt{% endif %} me-1">{{ state }}: {{ n }}</span>
+                  <span class="badge {% if state == 'done' %}bg-green-lt{% elseif state == 'running' %}bg-blue-lt{% else %}bg-red-lt{% endif %} me-1">{{ state_labels[state]|default('Неизвестно') }}: {{ n }}</span>
                {% endfor %}
                </div>
             </div>
          </div>
 
          <p class="text-muted small">
-            Средняя длительность обманчива: узкое место обычно видно по максимуму и числу
-            просрочек, а не по среднему. Смотрите строки, где максимум сильно больше медианы, —
-            там процесс задерживается. В новом режиме длительность — разница сохранённых дат начала и завершения; неизвестная или обратная пара исключается из статистики. Это не показатель SLA.
+            Узкое место — где максимум намного больше медианы. Время — от начала до конца этапа (не SLA).
          </p>
 
          <div class="table-responsive">
@@ -55,14 +54,14 @@
                   <tr>
                      <th style="width:46px">№</th>
                      <th>Этап</th>
-                     <th>Режим</th>
-                     <th class="text-end">Прохождений</th>
+                     <th>Как выполняется</th>
+                     <th class="text-end">Раз</th>
                      <th class="text-end">Средняя</th>
                      <th class="text-end">Медиана</th>
                      <th class="text-end">Максимум</th>
                      <th class="text-end">Просрочек</th>
                      <th class="text-end">Отклонено / уточнений</th>
-                     <th class="text-end">Отказов / прекращено</th>
+                     <th class="text-end">Отказов / прервано</th>
                      <th class="text-end">Передач</th>
                   </tr>
                </thead>
@@ -70,13 +69,22 @@
                {% for s in stages %}
                   <tr>
                      <td class="text-center fw-bold">{{ s.ranking }}</td>
-                     <td>{{ s.name }}</td>
+                     <td>{{ s.name }}
+                        {% set p = s.required_progress %}
+                        <div class="small text-muted">Нужен был: {{ p.required }} из {{ p.total }}</div>
+                        {% for d in s.decisions.groups %}
+                           <div class="small mt-2">Вопрос этапа: {{ d.label }}</div>
+                           <div class="small text-muted">Да: {{ d.yes }} · Нет: {{ d.no }} · Нет ответа: {{ d.unknown }}</div>
+                           <div class="small text-muted">Не нужен по условию: {{ d.not_needed }} · Прежних попыток: {{ d.history }}</div>
+                        {% endfor %}
+                        {% if s.decisions.unavailable %}<div class="small text-muted">Вопросы недоступны: {{ s.decisions.unavailable }} раз</div>{% endif %}
+                     </td>
                      <td class="text-muted">{{ modes[s.mode]|default(s.mode) }}</td>
-                     <td class="text-end">{{ s.passes }}<div class="small text-muted">Длительность: {{ s.duration_samples }} измерений / {{ s.duration_unknown }} неизвестно</div></td>
-                     <td class="text-end">{{ s.duration_samples > 0 ? call('Html::timestampToString', [s.avg, false]) : '—' }}</td>
-                     <td class="text-end">{{ s.duration_samples > 0 ? call('Html::timestampToString', [s.median, false]) : '—' }}</td>
+                     <td class="text-end">{{ s.passes }}{% if s.duration_unknown > 0 %}<div class="small text-muted">Время известно: {{ s.duration_samples }}, неизвестно: {{ s.duration_unknown }}</div>{% endif %}</td>
+                     <td class="text-end">{{ s.duration_samples > 0 ? s.avg_text : '—' }}</td>
+                     <td class="text-end">{{ s.duration_samples > 0 ? s.median_text : '—' }}</td>
                      <td class="text-end {{ s.max > s.median * 3 and s.median > 0 ? 'text-danger fw-bold' : '' }}">
-                        {{ s.duration_samples > 0 ? call('Html::timestampToString', [s.max, false]) : '—' }}
+                        {{ s.duration_samples > 0 ? s.max_text : '—' }}
                      </td>
                      <td class="text-end">{% if s.overdue %}<span class="badge bg-red-lt">{{ s.overdue }}</span>{% else %}—{% endif %}</td>
                      <td class="text-end">{{ s.rejected }} / {{ s.clarification }}</td>

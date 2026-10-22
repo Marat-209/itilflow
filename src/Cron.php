@@ -21,11 +21,11 @@ class Cron extends CommonDBTM
     public static function cronInfo($name): array
     {
         if ($name === 'itilflow_status_sync') {
-            return ['description' => 'Синхронизация статусов этапов. Требует включения после настройки штатного CLI cron.'];
+            return ['description' => 'Статус заявки по этапам (cron раз в минуту)'];
         }
         if ($name === 'itilflow_deadlines') {
             return [
-                'description' => 'Контроль сроков этапов: отметка просрочки и запись в журнал',
+                'description' => 'Сроки этапов: отметить просроченные; учесть пропущенные ответы согласующих',
             ];
         }
         return [];
@@ -60,10 +60,16 @@ class Cron extends CommonDBTM
             }
         }
 
+        // Догоняющая сверка: ответ согласующего сохранён в GLPI, а этап стоит (MySQL 8).
+        $caught = Engine::catchUpApprovals();
+        if ($caught > 0) {
+            $task->addVolume($caught);
+            $task->log(sprintf('Учтено ответов согласующих, пропущенных маршрутом: %d', $caught));
+        }
+
         if ($done > 0) {
             $task->log(sprintf('Отмечено просроченных этапов: %d', $done));
-            return 1;
         }
-        return 0;
+        return $done > 0 || $caught > 0 ? 1 : 0;
     }
 }

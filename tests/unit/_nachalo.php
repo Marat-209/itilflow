@@ -37,6 +37,12 @@ function ok(bool $uslovie, string $chto, string $podrobno = ''): void
     }
 }
 
+/** Сведения без проверки. */
+function info(string $tekst): void
+{
+    echo 'инфо: ' . $tekst . PHP_EOL;
+}
+
 function itog(): void
 {
     $n = $GLOBALS['itilflow_proval'];

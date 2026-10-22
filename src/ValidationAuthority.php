@@ -40,6 +40,7 @@ final class ValidationAuthority
             return $allowed;
         } catch (\Throwable $e) {
             if ($scope !== null) { try { $scope->rollback(); } catch (\Throwable $ignored) {} }
+            TransactionScope::assertHealthy();
             throw $e;
         }
     }

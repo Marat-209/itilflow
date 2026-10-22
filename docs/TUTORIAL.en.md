@@ -1,374 +1,234 @@
-# Setting up a route step by step
+# First route step by step
 
 English · **[Русский](TUTORIAL.md)**
 
-Two illustrative examples. Entity, group and category names are made up —
-use your own. The interface is Russian only; Russian labels are given in
-«quotes» where it helps to find them on screen.
+One example from setup to a solved ticket. All names are fictional — use your
+own. What each field means — [REFERENCE.en.md](REFERENCE.en.md). The
+interface is Russian only; labels are quoted in Russian with the English
+meaning in brackets.
 
-- **Example 1** — "Request with approval": manager approval → work by
-  a department → answer to the requester: refusal, return for clarification,
-  the result as the ticket solution.
-- **Example 2** — "Work inside one department": three tasks in one ticket.
-  The simplest setup. At the end — how to convert a route created before
-  1.9.0.
+**The route “Пример: выдача оборудования”** (Example: equipment issue) starts
+from an answer to the form “Пример: заказ оборудования” (Example: equipment
+request):
 
-Before you start: [installation](INSTALL.en.md) and the **Stage routes** right
-in your own profile ([RIGHTS.en.md](RIGHTS.en.md)).
-
----
-
-## Example 1. Request with approval
-
-| # | Stage | Mode | Who | Refusal | Return for clarification |
-|---|---|---|---|---|---|
-| 10 | Manager approval | Approval | named during processing | abort | to stage 10 |
-| 20 | Department work | Child ticket | group "Service department" | abort | to stage 10 or 20 |
-| 30 | Answer to the requester | Task in the ticket | group "First line" | stop | — |
-
-### Step 1. GLPI dropdowns
-
-The route relies on stock GLPI dropdowns — prepare them first.
-
-**Entities.** For the example: a root entity holding the requesters, and
-a child entity "Service department" where the child ticket goes.
-
-**Groups** (**Administration → Groups**):
-
-| Group | Where | Flags |
-|---|---|---|
-| First line | root entity, **visible in child entities** | "Can be assigned to tickets" |
-| Service department | entity "Service department" | "Can be assigned to tickets" |
-
-Without "Can be assigned to tickets" the group is missing from the stage's
-list. The group of a "Task in the ticket" stage must be visible in the
-ticket's entity — hence "visible in child entities". Put people in the groups
-(the "Users" tab).
-
-**Categories** (**Setup → Dropdowns → Ticket categories**), both visible in
-child entities:
-
-1. "Request with approval" — the rule starts the route on it.
-2. "Route stage" — a service category for stage child tickets.
-
-**Profiles.** Each participant needs a technician profile in the entity where
-their object lives: the approver and the first line in the ticket's entity,
-the department's technician in "Service department". A self-service profile is
-enough to answer approvals and to withdraw one's own ticket, but not to work
-on stages.
-
-**Calendar and SLA** — optional: a calendar for the stage deadline, an SLA for
-the child ticket.
-
-### Step 2. The route
-
-**Administration → Stage routes → Add**
-
-A new route uses the new outcome handling right away: refusal, return for
-clarification, the result as the ticket solution. Nothing has to be switched
-on separately.
-
-| Field | Value | Why |
-|---|---|---|
-| Route name | Request with approval | seen by technicians and the requester |
-| Entity | root | |
-| Visible in child entities | **Yes** | otherwise a rule in a child entity cannot see the route |
-| Working calendar | optional | stage deadlines in working days are counted on it |
-| Route enabled | Yes | a disabled route does not start on new tickets |
-| Description | optional | seen by administrators only |
-
-Everything else is under the collapsed **"More"**; its summary line shows the
-values without expanding it. The defaults are fine to start with: for
-tickets; if someone acts outside their stage — "Log"; solve the ticket only
-after all stages; stage progress is written to the timeline (needed for stage
-30's report to become the result); the route tab for the requester and
-withdrawal of the ticket are on.
-
-Save. A route without stages saves; the readiness line at the top says
-"Not ready to start — missing: 1" with the item "No stages."
-
-![Route form: the readiness line, six fields and the collapsed "More" (fictional data)](img/ui-route-form.png)
-
-### Step 3. Stages
-
-The **"Stages"** tab → "Add stage". The stage form shows only the fields of
-the selected mode — switch **"How it is done"** and the form rearranges
-itself. The stage number is filled in as the next ten, and "this stage" is
-already ticked as a return point.
-
-**Stage 10 — Manager approval**
-
-| Block | Field | Value |
-|---|---|---|
-| What to do | Stage name | Manager approval |
-| | How it is done | Approval |
-| | Instructions | what the approver should check |
-| Who | Who approves | Chosen during the run |
-| Deadline | Stage deadline | 1 working day |
-| On refusal | What to do on refusal | Answer the requester with a refusal and end the route (default) |
-| | Where it can be returned for clarification | 10 — this stage (ticked automatically) |
-
-Leave group and person empty: with "Chosen during the run" the form does not
-show them — the ticket's assignee names the approver.
-
-**Stage 20 — Department work**
-
-| Block | Field | Value |
-|---|---|---|
-| What to do | Stage name | Department work |
-| | How it is done | Child ticket |
-| | Department ticket category | Route stage |
-| | Instructions | what to do and what to write as the result |
-| Who | Department (group) | Service department |
-| | Where to create the department ticket | In the chosen entity → "Service department" |
-| | How the department reports the result | Assignee marks the result (default) |
-| Deadline | Stage deadline | 3 working days |
-| On refusal | What to do on refusal | Answer the requester with a refusal and end the route |
-| | Where it can be returned for clarification | 10 and 20 |
-
-**Stage 30 — Answer to the requester**
-
-| Block | Field | Value |
-|---|---|---|
-| What to do | Stage name | Answer to the requester |
-| | How it is done | Task in the ticket |
-| | Report on completion | Mandatory |
-| | Instructions | write the answer for the requester |
-| Who | Assignee group | First line |
-
-A task has no "On refusal" block: refusals do not happen on it, and the
-plugin sets the value itself.
-
-**"More"** on a stage holds the order, the ticket status at the stage (by
-default by mode: approval — "Approval", child ticket — "Pending", task —
-"Processing"), the planned duration and "can be skipped" for a task, the SLA
-for a child ticket, and how many approvals are needed for an approval.
-
-![Child-ticket stage form: the "What to do", "Who", "Deadline" and "On refusal" blocks (fictional data)](img/ui-stage-form.png)
-
-When the stages are ready, the readiness line above the stage table says
-"Ready to start". If something is missing, it names the stage and what to
-choose, with a link to the stage.
-
-![The "Stages" tab: the readiness line, who, deadline and what happens on refusal (fictional data)](img/ui-stages-list.png)
-
-### Step 4. Start by a rule
-
-**Administration → Rules → Business rules for tickets → Add**
-
-- **Criterion:** Category — is — "Request with approval".
-- **Actions:**
-  - Start stage route («Запустить маршрут этапов») — assign — "Request with
-    approval";
-  - assign the assignee group "First line" with a stock action of the same or
-    another rule. The ticket needs an assignee: they name the approver and
-    continue the route after clarification.
-
-![Route start chain](img/start-chain.en.svg)
-
-If the list of routes in the rule action is empty, the route lives in another
-entity and is not flagged "Visible in child entities". The route's readiness
-line shows this too: "Rule … will not see the route". Mind the rule order and
-"Stop processing": a rule higher up may take the ticket first.
-
-A route can also be started by hand: the ticket's **"Stage route"** tab → pick
-the route → "Start route" (requires the Stage routes right).
-
-**Catalogue form (optional).** In **Administration → Forms** create a form and,
-in its destination, set the category "Request with approval" as a specific
-value — the requester cannot pick the wrong category. In GLPI 11 the catalogue
-is at `/ServiceCatalog`, a form at `/Form/Render/<form id>`.
-
-### Step 5. Check
-
-Walk the route as each participant, not as an administrator: as an
-administrator you see neither visibility limits nor missing rights.
-
-**Normal path**
-
-1. **The requester** creates a ticket in "Request with approval". On the
-   "Stage route" tab stage 10 is "Now", waiting for the ticket's assignee to
-   name the approver.
-2. **First line** (the ticket's assignee): in the stage 10 row (or **Answer →
-   Name the approver**) picks a person and writes the basis in "Why them".
-3. **The approver**: "Approve or refuse" in the stage row → "Approve" (or the
-   stock approval answer in the timeline). Stage 10 is "Done", stage 20 opens,
-   and a child ticket "[Этап 20, попытка 1] …" appears in "Service department".
-4. **The department's technician** opens the child ticket, its route tab →
-   "Record result" → writes the result → "Done". The child ticket is solved
-   with the same text, stage 30 opens.
-5. **First line**: "Complete stage" in the stage 30 row (or **Answer → Complete
-   stage**), fills in "What was done".
-6. The ticket is solved with "all stages of the route are done" and the result.
-   The requester accepts the solution the stock way.
-
-**Refusal.** The approver refuses with a comment — the ticket is solved with
-"Refused at stage «Manager approval»" and the reason.
-
-**Return for clarification.**
-
-1. The department's technician: "Record result" → writes what to clarify →
-   "Return for clarification".
-2. The requester sees a request to reply with a comment, and replies.
-3. First line: "Continue after clarification" → briefly what was clarified →
-   which stage to continue from (10 or 20).
-4. A new attempt opens; the earlier result is in the "Stage history".
-
-**Also check**
-
-- The child ticket cannot be solved by hand without an outcome — GLPI shows
-  a message.
-- While the route is not done the ticket cannot be solved (in Log mode the
-  attempt passes but lands in "Out-of-order actions").
-- The requester can withdraw the ticket with a reason — it is solved with that
-  reason.
-- The ticket status changes to "Approval" and "Pending" within a minute if
-  `itilflow_status_sync` is enabled.
-- The **approval sheet** (button in the tab header) shows the whole run.
-
-![Approval sheet (screenshot of 1.6–1.7, fictional data)](img/ui-approval-sheet.png)
-
----
-
-## Example 2. Work inside one department
-
-All stages are tasks in one ticket. Suits an internal procedure of one unit.
-
-| # | Stage | How it is done | Group | Notes |
+| No. | Stage | How it runs | Who | Note |
 |---|---|---|---|---|
-| 10 | Triage | Task in the ticket | First line | optional report |
-| 20 | Do the work | Task in the ticket | Service department | deadline 1 working day |
-| 30 | Check the result | Task in the ticket | First line | can be skipped, mandatory report |
+| 10 | “Согласование руководителя” (Manager approval) | Approval | the manager from the form answer | — |
+| 20 | “Подготовить” (Prepare) | Task | group “Исполнители” (Assignees) | stage question “Нужна закупка?” (Purchase needed?) |
+| 25 | “Согласовать закупку” (Approve purchase) | Approval | group “Согласующие” (Approvers) | only if stage 20 answered “yes” |
+| 30 | “Выдача” (Issue) | Child ticket | group “Исполнители” | then the ticket solves itself |
 
-1. **Groups.** Both groups are visible in the tickets' entity ("visible in
-   child entities" from a parent entity): the task lives in the ticket itself,
-   and for the duration of the stage the plugin adds the group to its
-   assignees.
-2. **Route.** As in example 1, with your own category and rule.
-3. **Stages.** "How it is done" — "Task in the ticket". Stage 20 has "Stage
-   deadline" — 1 working day, and the route has a working calendar:
-   `itilflow_deadlines` marks it overdue. Stage 30 has "Stage can be skipped:
-   Yes" under "More".
-4. **Walk-through.** Each stage's assignee clicks "Complete stage" in the stage
-   row or in **Answer → Complete stage**. Stage 30 also offers "Skip" — the
-   reason is mandatory and goes to the timeline.
-5. **End.** After stage 30 the ticket is solved automatically, and that
-   stage's report is the result for the requester.
+## Step 0. Prepare GLPI
 
-### A route created before 1.9.0
+- The plugin is installed, cron and `itilflow_status_sync` are on
+  ([INSTALL.en.md](INSTALL.en.md)); you have “Маршруты этапов” (Stage routes):
+  Read and Update.
+- Entity “Пример” (Example); in it the groups “Исполнители” and
+  “Согласующие” with Visible in a ticket → Assigned to = Yes.
+- Users: a requester, their manager, an assignee (central-interface profile in
+  “Пример”, member of “Исполнители”), an approver (member of “Согласующие”).
+- A GLPI approval step “Согласование руководителя”.
+- The form “Пример: заказ оборудования”: “Что нужно” (What is needed — list
+  “Монитор” / Monitor, “Гарнитура” / Headset, “Доступ к сетевой папке” /
+  Network folder access, mandatory), “Руководитель” (Manager — user),
+  “Срочно” (Urgent — yes / no), “Комментарий” (Comment). Destination
+  “Заявка” (Ticket) creates a ticket in “Пример” for the group “Исполнители”;
+  approval — the “Руководитель” answer, approval step “Согласование
+  руководителя”.
 
-A route on the previous outcome handling shows a **"The route uses the
-previous order"** banner («Маршрут работает по прежнему порядку») on its page
-and the **"Convert to the new order"** button («Перевести на новый порядок»).
-Before converting, a dialog lists what will be filled in: "abort" → "answer
-the requester with a refusal", "stop" → "stop", "return to stage N" → "stop"
-plus return point N; child tickets get "assignee marks the result", tasks
-need no choice. Only empty fields are filled. Tickets already started finish
-on the previous handling, new ones follow the new one. The form offers no way
-back.
+## Step 1. Route
 
----
+**Administration → Маршруты этапов → Add:** “Название маршрута” (Route name) —
+“Пример: выдача оборудования”, entity “Пример”, “Маршрут включён” (Route
+enabled) — Yes. After “Добавить” (Add) the readiness line says “Нет ни одного
+этапа.” (No stages yet.)
 
-## Moving routes to another GLPI
+In the “Запуск маршрута” (Route start) block choose “Форма” (Form) —
+“Пример: заказ оборудования”, save, then “Назначение формы” (Form
+destination) — “Заявка”. Leave “Запускать, если” (Start if) at “Не запускать
+по форме” (Not started from the form) for now — step 7 turns it on.
 
-Since 1.10.0 routes move as a file — the same way as GLPI 11 forms ("Import
-forms"). Both the source and the target GLPI need itilflow 1.10.0.
+![New route: readiness line, main fields, “Запуск маршрута”, collapsed “Дополнительно”](img/route-new.png)
 
-**Export.** **Administration → Stage routes**: "Экспорт всех" (export all)
-above the list, or select routes and use the "Экспорт" massive action. You
-get a JSON file: routes with stages and the GLPI objects they refer to —
-entities, groups, categories (by complete name), calendar and time to resolve
-(by name), users (by login). Tickets, route progress and passwords are not
-in the file.
+## Step 2. Stage 10
 
-**Import.** "Импорт маршрутов" above the list (requires create and update on
-routes) → file → preview («Предварительный просмотр импорта»):
+“Этапы” (Stages) tab → “Добавить этап” (Add stage). The form shows only the
+fields of the chosen “Как выполняется” (How it runs).
 
-- **"Ready to be imported"** («Готов к импорту») — everything is found;
-- **"Can't be imported"** («Не может быть импортирован») — something is not
-  found, found more than once, or a stage lacks an assignee. "Resolve
-  issues" («Устранять проблемы») → pick a replacement from the GLPI list for
-  each object, or "-----" (leave empty) → preview again;
-- **"A route with this name already exists — it will be skipped"** — by
-  default the route is not created; «Создать копией» creates it as
-  "… (копия)";
-- the bin icon removes the route from the list.
+| Field | Value |
+|---|---|
+| Название этапа (Stage name) | Согласование руководителя |
+| Как выполняется | Согласование (Approval) |
+| Кто согласует (Who approves) | Согласование из формы (Approval from the form) |
+| Этап согласования в форме (Approval step in the form) | Согласование руководителя |
 
-Objects are looked up the same way as in the GLPI form import: by complete
-name (or name) in your active entities, exactly one must match. Otherwise an
-object with the same ID is used if its name is the same; such matches are
-flagged «Найдено по номеру, проверьте» (found by ID, please check).
+Keep the default for “Если отказ” (On refusal): “Отказать инициатору
+и закончить маршрут” (Refuse the requester and end the route).
 
-"Import" creates the routes **disabled**, in one transaction: if anything
-fails, nothing is written. Existing routes are never changed. Then check each
-route — the readiness line and the Stages tab — and enable it.
+![Stage 10: “Согласование из формы” and “Этап согласования в форме”](img/stage-10-approval.png)
 
-### What is not moved
+## Step 3. Stage 20
 
-The file carries only routes and their stages. Not moved:
+| Field | Value |
+|---|---|
+| Название этапа | Подготовить |
+| Как выполняется | Задача (Task) |
+| Отчёт при завершении (Report on completion) | Обязательно (Required) |
+| Группа (Group) | Исполнители |
+| Срок этапа (Stage deadline) | 1 working day |
 
-- **start rules** — business rules that start a route: move them with the
-  standard GLPI rule export and import (**Administration → Rules → Business
-  rules for tickets**) — GLPI finds the "Start stage route" action value by
-  the route name. Or create the rule again, as in step 4;
-- **GLPI 11 forms** that create the tickets — forms have their own export
-  and import (**Administration → Forms**);
-- **profile rights** — grant Stage routes and Route bypass in the target
-  GLPI, as in [RIGHTS.en.md](RIGHTS.en.md);
-- **images and files in a stage instruction** — the instruction text is
-  moved, but images and documents inserted into it stay in the source GLPI:
-  insert them again after the import;
-- **GLPI dropdowns** — entities, groups, categories, calendars, SLAs and users
-  are only looked up, the import creates none of them: set them up first;
-- **tickets and route progress** — steps, attempts, outcomes and the log stay
-  in the source GLPI.
+“Вопросы этапа” (Stage questions) → “+ Добавить вопрос” (Add question) →
+“Нужна закупка?”.
 
-### Example file
+![Stage 20: “Задача”, group, stage question “Нужна закупка?”](img/stage-20-question.png)
 
-A fictitious file with the route of Example 1 (names in Russian, as in the
-plugin interface) —
-[examples/routes-export-example.json](examples/routes-export-example.json).
-The top level holds the format (`format`, `version`), the plugin and GLPI
-versions, the date and the `routes` list. A route holds its fields, its stages
-(`stages`) and what is known about the GLPI objects the route and its stages
-refer to (`data_requirements`):
+## Step 4. Stage 25
 
-```json
-"data_requirements": [
-    {
-        "itemtype": "Entity",
-        "id": 3,
-        "name": "Отдел исполнения",
-        "completename": "Корневая организация > Отдел исполнения"
-    },
-    {
-        "itemtype": "Group",
-        "id": 5,
-        "name": "Первая линия",
-        "completename": "Первая линия"
-    }
-]
-```
+| Field | Value |
+|---|---|
+| Название этапа | Согласовать закупку |
+| Как выполняется | Согласование |
+| Кто согласует | Задан в этапе (Set in the stage) |
+| Или согласующие группы (Or approver groups) | Согласующие, “Любой из группы” (Any group member) |
+| Дополнительно → Порядок (More → Order) | 25 |
 
-`id` is the object's ID in the source GLPI. In the target GLPI the object is
-looked up by `completename`; calendars, SLAs and users by `name` (a user's
-`name` is the login). There is no need to edit the file by hand: mismatches
-are resolved in "Resolve issues". The import checks the file strictly: an
-extra or missing field, a wrong value type or a reference without details is
-rejected with the reason.
+“Когда выполнять” (When to run) — “Только если выполнены условия” (Only if
+conditions are met); “Что проверяем” (What to check) — “20. Подготовить —
+«Нужна закупка?»”, “Сравнение” (Comparison) — “да” (yes). The sentence under
+it: “Этап выполняется, если на этапе 20 ответили «да» на «Нужна закупка?».”
+“Если ответа нет” (If no answer) — “выполнять этап” (run the stage). “Что
+дальше” (What next) shows both branches at once.
 
----
+![Stage 25: “Когда выполнять”, condition, sentence, “Если ответа нет”](img/stage-25-condition.png)
 
-## Rollout
+![Stage 25: “Что дальше” — two branches after stage 20](img/stage-25-next.png)
 
-1. A month in **Log** mode: out-of-order actions are logged, authority is
-   always checked.
-2. Review the log: regular bypassing usually points at the procedure — an
-   unneeded stage, the wrong owner, an unrealistic deadline.
-3. **Warn** for a transition period.
-4. **Block** once bypasses have almost stopped.
+## Step 5. Stage 30
 
-Set up a substantially changed process as a new route, and keep the old one
-while tickets still run on it.
+| Field | Value |
+|---|---|
+| Название этапа | Выдача |
+| Как выполняется | Дочерняя заявка (Child ticket) |
+| Задание отделу (Task for the department) | issue what was prepared |
+| Группа отдела (Department group) | Исполнители |
+| Где создать дочернюю заявку (Where to create the child ticket) | В организации основной заявки (In the main ticket's entity) |
+| Как отдел сообщает результат (How the department reports the result) | Исполнитель отмечает результат (Assignee records the result) |
 
-Problems and their causes: [FAQ.en.md](FAQ.en.md).
+![Stage 30: “Дочерняя заявка” — task, group, where to create, result, “Если отказ”](img/stage-30-child.png)
+
+## Step 6. Check the setup
+
+“Этапы”: “Готов к запуску · запуск вручную” (Ready to start · started manually;
+the form start is enabled in step 7), the “Когда” (When) column shows the
+condition of stage 25, arrows ↑ ↓ change the order.
+“Схема” (Scheme): the bypass of stage 25 on the right.
+
+![The “Этапы” tab: readiness line, “Когда”, arrows](img/stages-list.png)
+
+![The “Схема” tab: four stages and the bypass of stage 25](img/route-scheme.png)
+
+## Step 7. Start from a form answer
+
+“Запуск маршрута” → “Запускать, если” — “Только если выполнены условия”;
+“Что нужно” — “любой из” (any of) — “Монитор”, “Гарнитура”. Save. The
+readiness line: “Готов к запуску · 4 этапа · запускается по ответу формы
+«Пример: заказ оборудования»” (… started from the form …). No business rule
+is needed.
+
+The second route “Пример: доступ к папке” (Example: folder access) — same
+form and destination, the same stage 10, stage 20 a task “Открыть доступ”
+(Grant access); “Запускать, если” — “Доступ к сетевой папке”. Both routes
+list each other in “Другие маршруты этой формы” (Other routes of this form).
+If the conditions overlap, the route is not ready.
+
+![“Запуск маршрута”: form, destination, condition, “Другие маршруты этой формы”](img/route-form-start.png)
+
+## Step 8. Rights
+
+**Administration → Profiles → ‹profile› → “Маршруты этапов”.** The route
+administrator gets Read and Update. The assignee needs no plugin rights, only
+a central-interface profile in “Пример”. The manager and approvers need the
+GLPI right “Утверждения заявок” (Ticket approvals); self-service is enough
+([RIGHTS.en.md](RIGHTS.en.md)).
+
+![Profile, the “Маршруты этапов” tab](img/profile-rights.png)
+
+## Step 9. Requester
+
+Test as each participant, not as the administrator.
+
+The requester submits the form: “Что нужно” — “Монитор”, the manager. On the
+“Маршрут этапов” (Stage route) tab: stage 10 is “Сейчас” (Current), the others
+“Впереди” (Upcoming). The requester does not see conditions or stage
+questions. On a phone — cards.
+
+![The form in the service catalog](img/form-submit.png)
+
+![The tab for the requester: 10 “Сейчас”, the others “Впереди”](img/ticket-initiator.png)
+
+![The requester's tab on a phone](img/ticket-initiator-phone.png)
+
+## Step 10. Manager
+
+Stage 10 row → “Одобрить или отказать” (Approve or refuse) → “Одобрить”
+(Approve), or answer the request in the ticket timeline. Stage 10 becomes
+“Согласовано” (Approved), stage 20 starts.
+
+![Stage 10 row: “Одобрить или отказать”](img/ticket-approve.png)
+
+## Step 11. Assignee
+
+Stage 20 row → “Завершить этап” (Complete stage): answer “Нужна закупка?”,
+fill in “Что сделано” (What was done), “Завершить этап”. The stage group stops
+being the ticket's assignee, and the assignee returns to the home page.
+
+![“Завершить этап”: stage question and “Что сделано”](img/ticket-task-complete.png)
+
+## Step 12. Two branches
+
+- “Да” (Yes) — stage 25: a request to the group “Согласующие”, any member
+  approves.
+- “Нет” (No) — stage 25 is “Не нужен по условию” (Not needed) with the reason
+  “20: «Нужна закупка?» — нет”; stage 30 starts at once.
+
+![Stage 25 “Не нужен по условию”, stage 30 “Сейчас”](img/ticket-not-needed.png)
+
+## Step 13. Child ticket
+
+The child ticket “Выдача — к заявке №…” (Handover — for ticket No. …) appears in
+“Пример”; the stage 30 row of the main ticket links to it as “№…”. The assignee:
+“Результат отдела” (Department result) tab → “Отметить результат” (Record
+result) → “Ответ инициатору” (Answer to the requester) → “Выполнено” (Done).
+The child ticket solves itself.
+
+![Child ticket: “Результат отдела” and “Отметить результат”](img/child-result.png)
+
+## Step 14. Result
+
+The main ticket solves itself: “Заявка выполнена: все этапы маршрута «Пример:
+выдача оборудования» пройдены. Результат: …” (Ticket done: all stages passed.
+Result: …). The requester accepts the solution.
+
+![The “Заявка выполнена…” solution for the requester](img/ticket-solution.png)
+
+## Step 15. The tab for the route administrator
+
+The header shows “Нужно пройти: 3 из 4 этапов (1 не нужен по условию).” (To
+pass: 3 of 4 stages, 1 not needed), “Лист согласования” (Approval sheet) and
+the “…” menu; rows have a “…” menu (“Передать этап…” — Reassign stage,
+“Закрыть принудительно…” — Force close); below the table — “Схема”. “Журнал
+маршрута” (Route log) appears under it when it has entries: actions out of
+stage order, stops, overdue stages.
+
+![The tab for the route administrator](img/ticket-tab-admin.png)
+
+![“Лист согласования” of a completed ticket](img/approval-sheet.png)
+
+## Next
+
+- Refusal, clarification, “Начать заново с этапа…” (Restart from stage) —
+  [REFERENCE.en.md](REFERENCE.en.md#6-result-refusal-clarification).
+- Start by a rule and manually —
+  [REFERENCE.en.md](REFERENCE.en.md#5-starting-a-route).
+- Transfer to another GLPI — [TRANSFER.en.md](TRANSFER.en.md); problems —
+  [FAQ.en.md](FAQ.en.md).

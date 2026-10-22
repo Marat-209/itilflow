@@ -21,6 +21,9 @@ class Process extends CommonDBTM
     public const ENFORCE_WARN   = 'warn';
     public const ENFORCE_STRICT = 'strict';
 
+    /** Имя редактора «Запускать, если» в форме маршрута: поля start_if_editor[…], ConditionEditor::parse. */
+    public const START_EDITOR = 'start_if_editor';
+
     public static function getTypeName($nb = 0)
     {
         return $nb > 1 ? 'Маршруты этапов' : 'Маршрут этапов';
@@ -45,6 +48,7 @@ class Process extends CommonDBTM
         $links = [];
         if (self::canView()) {
             $links['<i class="ti ti-file-arrow-right me-1"></i>Экспорт всех'] = '/plugins/itilflow/front/export.php';
+            $links['<i class="ti ti-chart-bar me-1"></i>Узкие места маршрутов'] = '/plugins/itilflow/front/report.php';
         }
         if (self::canCreate() && self::canUpdate()) {
             $links['<i class="ti ti-file-arrow-left me-1"></i>Импорт маршрутов'] = '/plugins/itilflow/front/import.php';
@@ -86,12 +90,27 @@ class Process extends CommonDBTM
         return true;
     }
 
+    /**
+     * Кнопки формы маршрута и этапа — только те, что сервер разрешит: с одним «Чтением» нет ни
+     * «Сохранить», ни «Удалить навсегда» (раньше они вели на «Доступ запрещен»).
+     *
+     * @return array{add:bool,update:bool,purge:bool}
+     */
+    public static function formButtons(\CommonDBTM $item): array
+    {
+        if ($item->isNewItem()) {
+            return ['add' => (bool) $item::canCreate(), 'update' => false, 'purge' => false];
+        }
+        $id = (int) $item->getID();
+        return ['add' => false, 'update' => (bool) $item->can($id, UPDATE), 'purge' => (bool) $item->can($id, PURGE)];
+    }
+
     public static function getEnforcementLabels(): array
     {
         return [
-            self::ENFORCE_AUDIT  => 'Журнал — разрешить и записать',
-            self::ENFORCE_WARN   => 'Предупреждение — разрешить с предупреждением',
-            self::ENFORCE_STRICT => 'Запрет — не дать сделать',
+            self::ENFORCE_AUDIT  => 'Только записать',
+            self::ENFORCE_WARN   => 'Предупредить',
+            self::ENFORCE_STRICT => 'Запретить',
         ];
     }
 
@@ -119,6 +138,7 @@ class Process extends CommonDBTM
         $tabs = [];
         $this->addDefaultFormTab($tabs);
         $this->addStandardTab(Stage::class, $tabs, $options);
+        $this->addStandardTab(Scheme::class, $tabs, $options);
         $this->addStandardTab('Log', $tabs, $options);
         return $tabs;
     }
@@ -130,10 +150,16 @@ class Process extends CommonDBTM
         TemplateRenderer::getInstance()->display('@itilflow/process.html.twig', [
             'item'         => $this,
             'params'       => $options,
+            'buttons'      => self::formButtons($this),
             'enforcements' => self::getEnforcementLabels(),
             'itemtypes'    => self::getItemtypeFormLabels(),
             'structured'   => $structured,
+            'form_sources' => $structured ? FormConfiguration::formOptions() : [],
+            'form_destinations' => $structured ? FormConfiguration::destinationOptions($this->fields) : [],
+            'start'        => $structured && ($this->fields['itemtype'] ?? '') === 'Ticket' ? $this->startView() : null,
             'readiness'    => $this->isNewItem() ? null : Readiness::check($this),
+            // Пересчёт строки готовности и «Назначения формы» без сохранения (front/draft.php).
+            'draft_url'    => $this->isNewItem() ? '' : \Plugin::getWebDir('itilflow') . '/front/draft.php',
             'new_contract' => $this->isNewItem() ? (string) $this->fields['outcome_contract'] : '',
             'legacy'       => $this->isNewItem() || $structured ? null : [
                 'lines'       => self::conversionLines(self::conversionPlan($this->getStages()), $this->runningCount()),
@@ -141,6 +167,107 @@ class Process extends CommonDBTM
             ],
         ]);
         return true;
+    }
+
+    /**
+     * Блок «Запуск маршрута» формы маршрута: сводка, строки о согласовании
+     * назначения и вопросах формы, редактор «Запускать, если» с пересчётом без
+     * сохранения и «Другие маршруты этой формы» с их условиями.
+     *
+     * @return array{summary:string,info:array,editor:?array,siblings:list<array>}
+     */
+    public function startView(): array
+    {
+        $p = $this->fields;
+        [$mode, $rule] = self::startMode($p['start_if'] ?? null);
+        $formId = (int) ($p['forms_forms_id'] ?? 0);
+        $form = new \Glpi\Form\Form();
+        $formName = $formId > 0 && $form->getFromDB($formId) ? (string) ($form->fields['name'] ?? '') : '';
+        $summary = ConditionEditor::summary(ConditionEditor::SCOPE_START, $mode, $rule);
+        $editor = null; $siblings = [];
+        if ($formId > 0 && !$this->isNewItem()) {
+            $editor = ConditionEditor::view(ConditionEditor::SCOPE_START, self::START_EDITOR, $mode, $rule, $p)
+                + ['draft_url' => \Plugin::getWebDir('itilflow') . '/front/draft.php'];
+            foreach (StartReadiness::siblings($p) as $row) {
+                $siblings[] = $row + ['url' => self::getFormURLWithID((int) $row['id'])];
+            }
+        }
+        return [
+            'summary' => $formId > 0 ? ($formName !== '' ? $formName . ' · ' : '') . $summary : 'форма не выбрана',
+            'info' => FormConfiguration::informational($p, $this->isNewItem() ? [] : $this->getStages()),
+            'editor' => $editor,
+            'siblings' => $siblings,
+        ];
+    }
+
+    /**
+     * Режим редактора по processes.start_if: NULL — «Не запускать по форме», «Всегда»,
+     * «Только если» с правилом. Повреждённая запись — «Только если» без условий: сохранить её
+     * так нельзя, редактор просит задать условия заново.
+     *
+     * @return array{0:string,1:array}
+     */
+    public static function startMode(mixed $startIf): array
+    {
+        $start = StartRule::decode($startIf);
+        if ($start === null) { return [ConditionEditor::MODE_OFF, []]; }
+        if ($start['mode'] === StartRule::MODE_ALWAYS) { return [ConditionEditor::MODE_ALWAYS, []]; }
+        return [ConditionEditor::MODE_IF, $start['mode'] === StartRule::MODE_CONDITIONS ? $start['rule'] : []];
+    }
+
+    /** Поля формы маршрута, от которых зависит строка готовности, — их берёт пересчёт без сохранения. */
+    private const DRAFT_FIELDS = ['is_active', 'entities_id', 'is_recursive', 'calendars_id', 'forms_forms_id', 'forms_destinations_id'];
+
+    /**
+     * Маршрут «как в форме сейчас» для пересчёта без сохранения (front/draft.php): сохранённые
+     * поля, поверх — введённые числа полей готовности и «Запускать, если» из редактора, если он
+     * разбирается без ошибок. В базу не пишется.
+     */
+    public static function draftFields(array $fields, array $post): array
+    {
+        $saved = $fields;
+        foreach (self::DRAFT_FIELDS as $field) {
+            $value = $post[$field] ?? null;
+            if ((is_string($value) || is_int($value)) && preg_match('/^(0|[1-9][0-9]{0,9})$/D', (string) $value)) {
+                $fields[$field] = (int) $value;
+            }
+        }
+        if (is_array($post[self::START_EDITOR] ?? null)) {
+            $start = self::startFromEditor($post, $saved);
+            if ($start['error'] === null) { $fields['start_if'] = $start['start_if']; }
+        }
+        return $fields;
+    }
+
+    /**
+     * «Запускать, если» из редактора формы маршрута — значение processes.start_if.
+     * $fields — сохранённый маршрут; форма — из ввода, если её меняют в этой же отправке.
+     * Сменили форму, а условия заданы по вопросам прежней — условия сбрасываются, запуск по
+     * форме выключается (notice): у новой формы этих вопросов нет.
+     *
+     * @return array{start_if:?string,error:?string,notice:?string}
+     */
+    public static function startFromEditor(array $input, array $fields, bool $isNew = false): array
+    {
+        $editor = is_array($input[self::START_EDITOR] ?? null) ? $input[self::START_EDITOR] : [];
+        $target = $fields;
+        if (array_key_exists('forms_forms_id', $input)) { $target['forms_forms_id'] = (int) $input['forms_forms_id']; }
+        $formChanged = !$isNew && array_key_exists('forms_forms_id', $input)
+            && (int) $input['forms_forms_id'] !== (int) ($fields['forms_forms_id'] ?? 0);
+        if ($formChanged && ($editor['mode'] ?? null) === ConditionEditor::MODE_IF) {
+            return ['start_if' => null, 'error' => null,
+                'notice' => 'Форма изменилась: «Запускать, если» сброшено — задайте заново.'];
+        }
+        $parsed = ConditionEditor::parse($editor, ConditionEditor::SCOPE_START, $target);
+        if ($parsed['errors']) {
+            return ['start_if' => null, 'error' => '«Запускать, если» — ' . $parsed['errors'][0], 'notice' => null];
+        }
+        $start = match ($parsed['mode']) {
+            ConditionEditor::MODE_ALWAYS => ['mode' => StartRule::MODE_ALWAYS],
+            ConditionEditor::MODE_IF => ['mode' => StartRule::MODE_CONDITIONS, 'rule' => $parsed['rule']],
+            default => null,
+        };
+        return ['start_if' => StartRule::encode($start), 'error' => null, 'notice' => null];
     }
 
     /**
@@ -152,7 +279,7 @@ class Process extends CommonDBTM
      * молча отказывался его запускать, из-за чего бизнес-правило выглядело
      * неработающим. Значения совпадают со значениями по умолчанию в схеме,
      * кроме режима контроля: для первого внедрения руководство советует
-     * «Журнал», поэтому форма предлагает его, а не «Запрет».
+     * «Только записать», поэтому форма предлагает его, а не «Запретить».
      *
      * С 1.9.0 новый маршрут из формы сразу в новом порядке исходов. Маршрут,
      * созданный через API без outcome_contract, по умолчанию схемы остаётся
@@ -171,6 +298,8 @@ class Process extends CommonDBTM
         $this->fields['calendars_id']     = 0;
         $this->fields['version']          = 1;
         $this->fields['outcome_contract'] = DefinitionSnapshot::MODE;
+        $this->fields['forms_forms_id'] = 0;
+        $this->fields['forms_destinations_id'] = 0;
     }
 
     /**
@@ -272,8 +401,8 @@ class Process extends CommonDBTM
         $labels = array_map(static fn(array $c): string => $c[0], Stage::getNegativePolicyChoices());
         $policy = static fn(array $r): string => $labels[$r['policy']] ?? $labels[Stage::REJECT_BLOCK];
         $lines = [$running > 0
-            ? sprintf('Новые заявки пойдут по новому порядку. %d %s по прежнему.', $running,
-                self::plural($running, 'начатая доходит', 'начатые доходят', 'начатых доходят'))
+            ? sprintf('Новые заявки пойдут по новому порядку. %d %s по старому.', $running,
+                self::plural($running, 'начатая дойдёт', 'начатые дойдут', 'начатых дойдут'))
             : 'Новые заявки пойдут по новому порядку. Начатых заявок нет.'];
         // Этапы с точками возврата: одной строкой те, у кого одинаковые «при отказе» и точки.
         $back = [];
@@ -281,16 +410,16 @@ class Process extends CommonDBTM
             $back[$r['policy'] . '|' . implode(',', $r['to'])][] = $r;
         }
         foreach ($back as $rows) {
-            $lines[] = sprintf('%s %s: при отказе — «%s», %s — %s.',
+            $lines[] = sprintf('%s %s: при отказе — «%s», вернуть можно на %s %s.',
                 count($rows) === 1 ? 'Этап' : 'Этапы',
                 self::andList(array_map(static fn(array $r): string => $r['ranking']
                     . ($r['from'] !== null ? ' («Вернуться на этап ' . $r['from'] . '»)' : ''), $rows)),
                 $policy($rows[0]),
-                count($rows[0]['to']) === 1 ? 'точка возврата' : 'точки возврата',
+                count($rows[0]['to']) === 1 ? 'этап' : 'этапы',
                 self::andList(array_map('strval', $rows[0]['to'])));
         }
         foreach ($groups['back_lost'] as $r) {
-            $lines[] = sprintf('Этап %d: этап для возврата позже или удалён — при отказе «%s», точку возврата выберите в этапе.',
+            $lines[] = sprintf('Этап %d: этап для возврата стоит позже или удалён — при отказе «%s», выберите этап для возврата в этапе.',
                 $r['ranking'], $policy($r));
         }
         if ($groups['abort']) {
@@ -302,7 +431,7 @@ class Process extends CommonDBTM
                 $labels[Stage::REJECT_BLOCK]);
         }
         if ($delegated) {
-            $lines[] = sprintf('Дочерние заявки на %s %s: отдел сообщает итог — «Исполнитель отмечает результат».',
+            $lines[] = sprintf('Дочерние заявки на %s %s: отдел сообщает результат кнопками «Выполнено», «Отказ», «Вернуть на уточнение».',
                 count($delegated) === 1 ? 'этапе' : 'этапах', self::andList(array_map('strval', $delegated)));
         }
         if ($groups['task']) {
@@ -393,8 +522,45 @@ class Process extends CommonDBTM
 
     private function validateInput(array $input): array
     {
+        // Блок «Запуск маршрута»: редактор «Запускать, если» → start_if (проверка — ниже, со связью с формой).
+        if (array_key_exists(self::START_EDITOR, $input)) {
+            $start = self::startFromEditor($input, $this->fields, $this->isNewItem());
+            unset($input[self::START_EDITOR]);
+            if ($start['error'] !== null) { Session::addMessageAfterRedirect(htmlescape($start['error']), false, ERROR); return []; }
+            if ($start['notice'] !== null) { Session::addMessageAfterRedirect(htmlescape($start['notice']), false, WARNING); }
+            $input['start_if'] = $start['start_if'];
+        }
+        if (isset($input['forms_forms_id']) && (int) $input['forms_forms_id'] !== (int) ($this->fields['forms_forms_id'] ?? 0)
+            && !array_key_exists('forms_destinations_id', $input)) { $input['forms_destinations_id'] = 0; }
+        $source_changed = $this->isNewItem()
+            || (isset($input['forms_forms_id']) && (int) $input['forms_forms_id'] !== (int) ($this->fields['forms_forms_id'] ?? 0))
+            || (isset($input['forms_destinations_id']) && (int) $input['forms_destinations_id'] !== (int) ($this->fields['forms_destinations_id'] ?? 0));
+        $validate_source = $source_changed || array_key_exists('start_if', $input)
+            || (!empty($input['is_active']) && empty($this->fields['is_active']))
+            || (isset($input['itemtype']) && $input['itemtype'] !== ($this->fields['itemtype'] ?? ''))
+            || (isset($input['outcome_contract']) && $input['outcome_contract'] !== ($this->fields['outcome_contract'] ?? ''));
+        $form_error = $validate_source ? FormConfiguration::inputError(array_replace($this->fields, $input), true) : null;
+        if ($form_error !== null) { Session::addMessageAfterRedirect($form_error, false, ERROR); return []; }
+        if ($validate_source) {
+            $process = array_replace($this->fields, $input);
+            $start = StartRule::decode($process['start_if'] ?? null);
+            if ($start !== null) {
+                if (($process['itemtype'] ?? '') !== 'Ticket'
+                    || ($process['outcome_contract'] ?? '') !== DefinitionSnapshot::MODE
+                    || (int) ($process['forms_forms_id'] ?? 0) <= 0) {
+                    Session::addMessageAfterRedirect('Для запуска по ответам выберите форму заявки и маршрут заявок нового порядка.', false, ERROR);
+                    return [];
+                }
+                $errors = StartRule::validate($start, FormFacts::questionCatalog((int) $process['forms_forms_id']));
+                if ($errors !== []) {
+                    Session::addMessageAfterRedirect(implode(' ', $errors), false, ERROR);
+                    return [];
+                }
+            }
+            if (array_key_exists('start_if', $input)) { $input['start_if'] = StartRule::encode($start); }
+        }
         if (isset($input['outcome_contract']) && !in_array($input['outcome_contract'], ['legacy', DefinitionSnapshot::MODE], true)) {
-            Session::addMessageAfterRedirect('Неизвестный контракт исходов.', false, ERROR);
+            Session::addMessageAfterRedirect('Неизвестный порядок работы маршрута. Обновите страницу.', false, ERROR);
             return [];
         }
         // Полнота нового порядка проверяется только у маршрута с этапами: пустой новый
@@ -416,7 +582,7 @@ class Process extends CommonDBTM
         }
         if (isset($input['enforcement'])
             && !array_key_exists($input['enforcement'], self::getEnforcementLabels())) {
-            Session::addMessageAfterRedirect('Неизвестный режим контроля.', false, ERROR);
+            Session::addMessageAfterRedirect('Неизвестное значение «Если действие не по порядку этапов».', false, ERROR);
             return [];
         }
         if (isset($input['itemtype'])
@@ -458,9 +624,10 @@ class Process extends CommonDBTM
             'name' => 'Тип объекта', 'datatype' => 'itemtypename',
             'itemtype_list' => 'itil_types', 'massiveaction' => false,
         ];
+        // Выбор из трёх значений — и в поиске, и в массовом «Обновлении» (не поле свободного ввода).
         $tab[] = [
             'id' => '4', 'table' => self::getTable(), 'field' => 'enforcement',
-            'name' => 'Режим контроля', 'datatype' => 'string',
+            'name' => 'Если действие не по порядку этапов', 'datatype' => 'specific', 'searchtype' => ['equals', 'notequals'],
         ];
         $tab[] = [
             'id' => '5', 'table' => self::getTable(), 'field' => 'is_active',
@@ -483,6 +650,27 @@ class Process extends CommonDBTM
             'name' => __('Comments'), 'datatype' => 'text',
         ];
         return $tab;
+    }
+
+    public static function getSpecificValueToDisplay($field, $values, array $options = [])
+    {
+        if (!is_array($values)) { $values = [$field => $values]; }
+        if ($field === 'enforcement') {
+            $value = (string) ($values[$field] ?? '');
+            return htmlescape(self::getEnforcementLabels()[$value] ?? $value);
+        }
+        return parent::getSpecificValueToDisplay($field, $values, $options);
+    }
+
+    public static function getSpecificValueToSelect($field, $name = '', $values = '', array $options = [])
+    {
+        if (!is_array($values)) { $values = [$field => $values]; }
+        if ($field === 'enforcement') {
+            $options['display'] = false;
+            $options['value'] = (string) ($values[$field] ?? '');
+            return \Dropdown::showFromArray($name, self::getEnforcementLabels(), $options);
+        }
+        return parent::getSpecificValueToSelect($field, $name, $values, $options);
     }
 
     public function cleanDBonPurge()

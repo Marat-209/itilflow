@@ -1,13 +1,19 @@
 {#
- # Вкладка маршрута: одна таблица. Итог этапа и действие человека — в строке этапа,
+ # Вкладка маршрута: одна таблица. Результат этапа и действие человека — в строке этапа,
  # форма действия раскрывается строкой сразу под этапом. Видно только то, что можно сделать.
+ # Схема — под таблицей и только у администратора маршрутов.
  #}
 <style>
    .itilflow-route .itilflow-current > td:first-child { box-shadow: inset 3px 0 0 var(--tblr-primary, #206bc4); }
-   .itilflow-route .itilflow-summary { max-width: 36rem; }
+   .itilflow-route .itilflow-summary { max-width: 24rem; }
+   .itilflow-route .itilflow-actions { width: 1%; }
    .itilflow-route .itilflow-panel > td { background: var(--tblr-bg-surface-secondary, #f6f8fb); }
    .itilflow-route .itilflow-history summary { cursor: pointer; color: var(--tblr-secondary, #667382); }
-   @media (max-width: 575.98px) {
+   .itilflow-route .itilflow-scheme > summary { cursor: pointer; background: var(--tblr-bg-surface-secondary, #f6f8fb); border-radius: 6px; padding: .35rem .6rem; }
+   {# Узкая вкладка — карточки вместо таблицы: на телефоне и там, где самой вкладке мало места
+      (1024 и вкладки GLPI столбиком слева, 1280 с открытым меню). Шесть столбцов уже не помещаются. #}
+   .itilflow-route { container-type: inline-size; container-name: itilflow-route; }
+   {% set kartochki %}
       .itilflow-route-table thead { display: none; }
       .itilflow-route-table, .itilflow-route-table tbody, .itilflow-route-table tr, .itilflow-route-table td { display: block; width: 100%; }
       .itilflow-route-table tr.itilflow-row { border: 1px solid var(--tblr-border-color, #dce1e7); border-radius: 8px; margin-bottom: .5rem; padding: .35rem .6rem; }
@@ -17,6 +23,14 @@
       .itilflow-route .itilflow-current > td:first-child { box-shadow: none; }
       .itilflow-route-table tr.itilflow-current { border-color: var(--tblr-primary, #206bc4); }
       .itilflow-route-table td.itilflow-empty { display: none; }
+      .itilflow-route-table td.itilflow-actions { width: 100%; }
+      .itilflow-route-table td.itilflow-actions > div { align-items: flex-start !important; }
+   {% endset %}
+   @media (max-width: 575.98px) {
+      {{ kartochki }}
+   }
+   @container itilflow-route (max-width: 760px) {
+      {{ kartochki }}
    }
 </style>
 
@@ -26,7 +40,13 @@
          <h3 class="mb-0"><i class="ti ti-route me-1"></i>{{ process_name }}</h3>
          {% if only and parent_link %}<div class="small text-muted">Этап маршрута по заявке {{ parent_link|raw }}</div>{% endif %}
          {% if not only and state[2] %}<div class="small text-muted">{{ state[2] }}</div>{% endif %}
-         {% if enforcement %}<div class="small text-muted">Режим контроля: {{ enforcement }}</div>{% endif %}
+         {% if is_staff and not only and required_progress|default(null) %}
+            {% set p = required_progress %}
+            {# Одна строка; остальные счётчики — в листе согласования. #}
+            {% set odin = (p.total % 10 == 1 and p.total % 100 != 11) %}
+            {% set nn_odin = (p.not_needed % 10 == 1 and p.not_needed % 100 != 11) %}
+            <div class="small text-muted itilflow-progress">Нужно пройти: {{ p.required }} из {{ p.total }} {{ odin ? 'этапа' : 'этапов' }}{% if p.not_needed %} ({{ p.not_needed }} {{ nn_odin ? 'не нужен' : 'не нужны' }} по условию){% endif %}.{% if p.undetermined %} Зависят от условий: {{ p.undetermined }}.{% endif %}</div>
+         {% endif %}
       </div>
       <div class="d-flex align-items-center gap-2">
          {% if sheet_url %}
@@ -35,7 +55,7 @@
          {% if not only %}<span class="badge {{ state[1] }} fs-5">{{ state[0] }}</span>{% endif %}
          {% if header_menu|length or can_resume %}
             <div class="dropdown itilflow-menu">
-               <button type="button" class="btn btn-sm btn-ghost-secondary" data-bs-toggle="dropdown" aria-label="Действия администратора"><i class="ti ti-dots"></i></button>
+               <button type="button" class="btn btn-sm btn-ghost-secondary" data-bs-toggle="dropdown" aria-label="Действия с маршрутом"><i class="ti ti-dots"></i></button>
                <div class="dropdown-menu dropdown-menu-end">
                   {% for m in header_menu %}
                      <a href="#" class="dropdown-item" data-action="{{ m.action }}" data-bs-toggle="collapse" data-bs-target="#itilflow-h-{{ m.action }}">{{ m.label }}</a>
@@ -60,38 +80,40 @@
             <input type="hidden" name="_glpi_csrf_token" value="{{ csrf_token() }}">
             {% if command is not null %}<input type="hidden" name="command_key" value="{{ command.key }}"><input type="hidden" name="expected_attempt_id" value="{{ command.attempt_id }}">{% endif %}
             <input type="hidden" name="instances_id" value="{{ instance.fields['id'] }}">
-            <label class="form-label">Причина — её увидит заявитель <span class="text-danger">*</span></label>
+            <label class="form-label">Причина — её увидит инициатор <span class="text-danger">*</span></label>
             <textarea class="form-control mb-2" name="abort_reason" rows="2" required></textarea>
             <button class="btn btn-sm btn-danger" name="abort" value="1" onclick="return confirm('Прервать маршрут? Открытые этапы будут закрыты.');">Прервать маршрут</button>
          </form>
       </div>
    {% endfor %}
 
+   <div class="table-responsive">
    <table class="table table-vcenter card-table itilflow-route-table">
       <thead>
          <tr>
             <th style="width:48px">№</th>
             <th>Этап</th>
-            <th>Ответственные</th>
-            <th>Итог</th>
+            <th>Исполнитель</th>
+            <th>Результат</th>
             <th>Срок</th>
             <th class="w-1"></th>
          </tr>
       </thead>
       <tbody>
       {% for r in rows %}
-         <tr class="itilflow-row{% if r.current %} itilflow-current table-active{% endif %}" data-rank="{{ r.rank }}" data-step="{{ r.step_id }}">
+         <tr{% if r.step_id > 0 %} id="itilflow-row-{{ r.step_id }}"{% endif %} class="itilflow-row{% if r.current %} itilflow-current table-active{% endif %}{% if r.result.kind == 'not_needed' %} text-muted{% endif %}" data-rank="{{ r.rank }}" data-step="{{ r.step_id }}">
             <td data-label="" class="fw-bold">{{ r.rank }}</td>
             <td data-label="Этап">
                <div>{{ r.name }}{% if r.try > 0 %} <span class="itilflow-try text-muted small">· попытка {{ r.try }}</span>{% endif %}</div>
                <span class="badge {{ r.mode_class }}">{{ r.mode_label }}</span>
                {% if r.artifact %}<span class="small ms-1">{{ r.artifact|raw }}</span>{% endif %}
             </td>
-            <td data-label="Ответственные">{{ r.owner }}</td>
-            <td data-label="Итог">
+            <td data-label="Исполнитель">{{ r.owner }}{% for line in r.approval|default([]) %}<div class="small text-secondary">{{ line }}</div>{% endfor %}</td>
+            <td data-label="Результат">
                <span class="badge itilflow-outcome {{ r.result.class }}" data-outcome="{{ r.result.kind }}">{{ r.result.label }}</span>
-               {% if r.result.summary %}<div class="itilflow-summary">{{ r.result.summary }}</div>{% endif %}
+               {% if r.result.summary %}<div class="itilflow-summary{% if r.result.problem|default(false) %} small text-danger{% elseif r.result.kind in ['not_needed', 'pending'] %} small text-muted{% endif %}">{{ r.result.summary }}</div>{% endif %}
                {% if r.result.internal %}<div class="small text-muted">{{ r.result.internal }}</div>{% endif %}
+               {% for line in r.decisions|default([]) %}<div class="small text-muted">{{ line }}</div>{% endfor %}
                {% if r.result.author %}<div class="itilflow-author small text-muted">{{ r.result.author }}{% if r.result.date %}, {{ r.result.date }}{% endif %}</div>{% endif %}
                {% if r.history|length %}
                   <details class="itilflow-history small mt-1">
@@ -106,20 +128,26 @@
             <td data-label="Срок" class="{{ r.overdue ? 'text-danger fw-bold' : 'text-muted' }}{% if not r.due and not r.took %} itilflow-empty{% endif %}">
                {% if r.due %}{{ r.due }}{% if r.overdue %} <span class="badge bg-red-lt">просрочен</span>{% endif %}{% elseif r.took %}заняло {{ r.took }}{% else %}—{% endif %}
             </td>
-            <td data-label="" class="text-end text-nowrap">
-               {% for a in r.actions %}
-                  <button type="button" class="btn btn-sm btn-primary itilflow-act mb-1" data-action="{{ a.action }}"
-                          data-bs-toggle="collapse" data-bs-target="#itilflow-p-{{ r.step_id }}-{{ a.action }}">{{ a.label }}</button>
-               {% endfor %}
-               {% if r.menu|length %}
-                  <div class="dropdown d-inline-block itilflow-menu">
-                     <button type="button" class="btn btn-sm btn-ghost-secondary" data-bs-toggle="dropdown" aria-label="Ещё"><i class="ti ti-dots"></i></button>
-                     <div class="dropdown-menu dropdown-menu-end">
-                        {% for m in r.menu %}
-                           <a href="#" class="dropdown-item" data-action="{{ m.action }}" data-bs-toggle="collapse" data-bs-target="#itilflow-p-{{ r.step_id }}-{{ m.action }}">{{ m.label }}</a>
-                        {% endfor %}
+            {# Кнопки — столбиком: строка кнопок раздвигала таблицу шире вкладки (1024 и 1280 с открытым меню). #}
+            <td data-label="" class="text-end itilflow-actions{% if not r.actions|length and not r.menu|length %} itilflow-empty{% endif %}">
+               {% if r.actions|length or r.menu|length %}
+               <div class="d-flex flex-column align-items-end gap-1">
+                  {% for a in r.actions %}
+                     <button type="button" class="btn btn-sm btn-primary itilflow-act" data-action="{{ a.action }}"
+                             data-bs-toggle="collapse" data-bs-target="#itilflow-p-{{ r.step_id }}-{{ a.action }}">{{ a.label }}</button>
+                  {% endfor %}
+                  {% if r.menu|length %}
+                     <div class="dropdown itilflow-menu">
+                        {# strategy fixed: меню не обрезается прокруткой таблицы. #}
+                        <button type="button" class="btn btn-sm btn-ghost-secondary" data-bs-toggle="dropdown" data-bs-popper-config='{"strategy":"fixed"}' aria-label="Ещё"><i class="ti ti-dots"></i></button>
+                        <div class="dropdown-menu dropdown-menu-end">
+                           {% for m in r.menu %}
+                              <a href="#" class="dropdown-item" data-action="{{ m.action }}" data-bs-toggle="collapse" data-bs-target="#itilflow-p-{{ r.step_id }}-{{ m.action }}">{{ m.label }}</a>
+                           {% endfor %}
+                        </div>
                      </div>
-                  </div>
+                  {% endif %}
+               </div>
                {% endif %}
             </td>
          </tr>
@@ -131,6 +159,16 @@
       {% endfor %}
       </tbody>
    </table>
+   </div>
+
+   {% if scheme|default(null) %}
+      <details class="itilflow-scheme mt-3" open>
+         <summary><strong>Схема</strong></summary>
+         {% include '@itilflow/scheme.html.twig' with {'scheme': scheme} only %}
+      </details>
+   {% elseif not only and scheme_hint|default(false) %}
+      <div class="itilflow-scheme-hint small text-muted mt-2">Схема — у администратора маршрутов.</div>
+   {% endif %}
 
    {% if withdraw %}
       <details class="mt-3">
@@ -147,10 +185,10 @@
 
    {% if violations|length %}
       <details class="mt-3 small">
-         <summary>Действия вне порядка этапов ({{ violations|length }})</summary>
+         <summary>Журнал маршрута ({{ violations|length }})</summary>
          <ul class="mt-1 mb-0">
          {% for v in violations %}
-            <li>{{ v['date'] }} — {{ v['user_name'] }}: {{ v['message'] }} — {% if v['was_blocked'] %}заблокировано{% else %}разрешено и записано{% endif %}</li>
+            <li>{{ v['date'] }} — {{ v['user_name'] }}: {{ v['message'] }}{% if v['out_of_order'] is not defined or v['out_of_order'] %} — {% if v['was_blocked'] %}запрещено{% else %}разрешено, записано{% endif %}{% endif %}</li>
          {% endfor %}
          </ul>
       </details>

@@ -16,6 +16,9 @@ final class Hook
     /** @var array<string,Step|false> кэш «объект -> шаг» в пределах запроса */
     private static array $step_cache = [];
 
+    /** @var array<string,true> заявки, которые удаляются навсегда в этом запросе: «Тип#номер» */
+    private static array $purging = [];
+
     private static function stepFor(string $itemtype, int $items_id): ?Step
     {
         $key = $itemtype . '#' . $items_id;
@@ -110,7 +113,7 @@ final class Hook
             && $stage->fields['execution_mode'] === Stage::MODE_INLINE
             && $stage->fields['completion_comment'] === 'required') {
             Session::addMessageAfterRedirect(
-                'Для этого этапа отчёт обязателен. Завершите его действием «Завершить этап» в ленте заявки и опишите, что сделано.',
+                'Завершите этап кнопкой «Завершить этап» и заполните «Что сделано».',
                 false,
                 ERROR
             );
@@ -182,7 +185,7 @@ final class Hook
         $name = $process ? $process->fields['name'] : '';
         if ($instance->fields['state'] === Instance::HALTED) {
             return sprintf(
-                'Маршрут «%s» остановлен и требует решения: возобновите его или прервите явно.',
+                'Маршрут «%s» остановлен: возобновите или прервите его.',
                 $name
             );
         }
@@ -208,6 +211,14 @@ final class Hook
     /** Пока маршрут идёт, заявку нельзя решить или закрыть. */
     public static function preItilUpdate(CommonITILObject $item): void
     {
+        // Промежуточный пересчёт ядра, пока маршрут снимает свой запрос (см. dropWaitingValidations):
+        // ядро записало бы «Отклонено» за опустевшую ступень. Итоговый статус маршрут запишет сам.
+        if (is_array($item->input) && !empty($item->input['_from_itilvalidation'])
+            && ($item->input['_trigger'] ?? null) instanceof CommonITILValidation
+            && Engine::isDropping($item->input['_trigger'])) {
+            $item->input = false;
+            return;
+        }
         if (Engine::isInside() || !is_array($item->input) || !isset($item->input['status'])) {
             return;
         }
@@ -242,8 +253,7 @@ final class Hook
             || $step->fields['state'] !== Step::RUNNING || Outcome::forStep($step->getID()) !== null) {
             return false;
         }
-        Session::addMessageAfterRedirect('Эта заявка — этап маршрута. Отметьте исход на вкладке маршрута: '
-            . '«Выполнено», «Отказ» или «Вернуть на уточнение» — заявка отдела решится сама.', false, ERROR);
+        Session::addMessageAfterRedirect('Это этап маршрута: отметьте результат на вкладке «Результат отдела».', false, ERROR);
         return true;
     }
 
@@ -317,27 +327,50 @@ final class Hook
         Engine::delegatedCompleted($item);
     }
 
+    /** Комментарий инициатора: ответ на уточнение этапа согласования продолжает маршрут (Engine::initiatorAnswered). */
+    public static function postFollowupAdd(\ITILFollowup $followup): void
+    {
+        // Комментарий уже сохранён ядром — исключение маршрута в ядро не выпускаем.
+        self::safely('postFollowupAdd', static function () use ($followup): void {
+            if (Engine::isInside()) {
+                return;
+            }
+            Engine::initiatorAnswered($followup);
+        });
+    }
+
     public static function postValidationUpdate(CommonITILValidation $val): void
     {
-        if (Engine::isInside()) {
-            return;
-        }
-        if (!in_array('status', $val->updates ?? [], true)) {
-            return;
-        }
-        // Шаг ищем по списку своих запросов: на этапе может быть несколько
-        // отдельных согласующих, и artifact_items_id указывает лишь на первый.
-        $step = OutcomeValidation::stepFor($val->getType(), $val->getID())
-            ?? Step::getByValidation($val->getType(), $val->getID());
-        if ($step === null || $step->fields['state'] !== Step::RUNNING) {
-            return;
-        }
-        $comment = strip_tags((string) ($val->fields['comment_validation'] ?? ''));
+        // Ответ согласующего уже сохранён ядром — исключение маршрута в ядро не выпускаем;
+        // этап, который не учёл ответ, догонит Engine::catchUpApprovals.
+        self::safely('postValidationUpdate', static function () use ($val): void {
+            if (Engine::isInside() || !in_array('status', $val->updates ?? [], true)) {
+                return;
+            }
+            // Шаг ищем по привязкам запроса — прежней строке номеров и строкам привязок:
+            // на этапе может быть несколько отдельных согласующих.
+            $step = Step::ownerOf($val->getType(), $val->getID());
+            if ($step === null || $step->fields['state'] !== Step::RUNNING) {
+                return;
+            }
+            // Решение принимает движок: он смотрит все запросы шага и порог этапа.
+            // Один ответ не обязательно закрывает этап — при нескольких согласующих
+            // ждём, пока порог будет достигнут или станет недостижим.
+            Engine::validationUpdated($val);
+        });
+    }
 
-        // Решение принимает движок: он смотрит все запросы шага и порог этапа.
-        // Один ответ не обязательно закрывает этап — при нескольких согласующих
-        // ждём, пока порог будет достигнут или станет недостижим.
-        Engine::validationUpdated($val);
+    /** Обработчик события ядра: любой сбой маршрута — в itilflow.log, не в ядро GLPI (HTTP 500). */
+    public static function safely(string $what, callable $handler): void
+    {
+        try {
+            $handler();
+        } catch (\Throwable $e) {
+            try {
+                \Toolbox::logInFile('itilflow', sprintf("Обработчик %s не завершён: %s: %s\n", $what, get_class($e),
+                    mb_substr($e->getMessage(), 0, 500)), true, false);
+            } catch (\Throwable) {}
+        }
     }
 
     /** Native ответ не превращается в полномочие для другого адресата или старой попытки. */
@@ -346,21 +379,8 @@ final class Hook
         if (!is_array($val->input) || !array_key_exists('status', $val->input)) {
             return;
         }
-        $own = OutcomeValidation::stepFor($val->getType(), $val->getID());
-        $direct = Step::getByValidation($val->getType(), $val->getID());
-        $bound = $own ?? $direct;
-        $instance = $bound?->getInstance();
-        if ($instance !== null && DefinitionSnapshot::enabled($instance)) {
-            $stored = new ($val->getType())();
-            if (($own !== null && count(Step::validationBindings($val->getType(), $val->getID())) !== 0)
-                || !$stored->getFromDB($val->getID()) || StructuredAccess::validationError($stored, $bound) !== null
-                || Outcome::forStep($bound->getID()) !== null
-                || !in_array((int) $val->input['status'], [CommonITILValidation::ACCEPTED, CommonITILValidation::REFUSED], true)) {
-                $val->input = false;
-            }
-            return;
-        }
-        $bindings = Step::validationBindings($val->getType(), $val->getID());
+        // Владельцы запроса — одной функцией по всем привязкам (Step::ownersOf).
+        $bindings = Step::ownersOf($val->getType(), $val->getID());
         if (count($bindings) === 0) {
             return; // штатное согласование, не связанное с маршрутом
         }
@@ -371,6 +391,16 @@ final class Hook
             return;
         }
         $step = $bindings[0];
+        $instance = $step->getInstance();
+        if ($instance !== null && DefinitionSnapshot::enabled($instance)) {
+            $stored = new ($val->getType())();
+            if (!$stored->getFromDB($val->getID()) || StructuredAccess::validationError($stored, $step) !== null
+                || Outcome::forStep($step->getID()) !== null
+                || !in_array((int) $val->input['status'], [CommonITILValidation::ACCEPTED, CommonITILValidation::REFUSED], true)) {
+                $val->input = false;
+            }
+            return;
+        }
         $stored = new ($val->getType())();
         $stored->getFromDB($val->getID());
         if (Authorizer::validationError($stored, $step) !== null
@@ -394,11 +424,63 @@ final class Hook
         if ($pid <= 0) {
             return;
         }
+        // Один путь запуска на форму. Если у формы заявки есть маршрут
+        // с «Запускать, если», маршрут выберет обратный вызов формы, правило его не запускает.
+        if (FormStart::suppressesRuleStart($item)) {
+            RuleStart::consume($item);
+            return;
+        }
         Engine::startFromRule($item);
+    }
+
+    /**
+     * Запрос на согласование идущего этапа не удаляется вручную («Удалить навсегда» в ленте,
+     * массовое действие, API): без него состав этапа не сходится, и этап не закрыть ни ответом,
+     * ни принудительно. Неотвеченные запросы маршрут снимает сам — при отказе, возврате,
+     * прерывании и принудительном закрытии. Проверка целостности — в любом режиме контроля.
+     */
+    public static function prePurgeValidation(CommonITILValidation $val): void
+    {
+        if (!is_array($val->input)) {
+            return;
+        }
+        if (Engine::dropInProgress()) {
+            // Маршрут снимает свои запросы; ядро, убирая опустевшую ступень, удаляет все запросы
+            // заявки (ITIL_ValidationStep::cleanDBonPurge). Чужие — не трогаем.
+            if (!Engine::isDropping($val)) {
+                $val->input = false;
+            }
+            return;
+        }
+        if (Engine::isInside()
+            || isset(self::$purging[$val::$itemtype . '#' . (int) ($val->fields[$val::$items_id] ?? 0)])) {
+            return; // удаляется вся заявка, которой принадлежит запрос
+        }
+        // Все привязки запроса — одной функцией: прежняя строка номеров, строки привязок
+        // согласования в заявке и в заявке отдела, любого вида (создан маршрутом, из формы, принят вручную).
+        $steps = Step::ownersOf($val->getType(), (int) $val->getID());
+        foreach ($steps as $step) {
+            if ($step->fields['state'] !== Step::RUNNING) {
+                continue;
+            }
+            $instance = $step->getInstance();
+            Violation::record($instance, $val->getType(), (int) $val->getID(), 'action_validation_purge', true,
+                'Удаление запроса на согласование идущего этапа отклонено.');
+            Session::addMessageAfterRedirect(htmlescape(sprintf(
+                'Запрос нельзя удалить: этап %d «%s» ещё идёт. Если согласование не нужно, '
+                . 'администратор маршрутов закроет этап принудительно.',
+                (int) $step->fields['ranking'],
+                (string) $step->fields['stage_name']
+            )), false, ERROR);
+            $val->input = false;
+            return;
+        }
     }
 
     public static function prePurgeItil(CommonITILObject $item): void
     {
+        // Вместе с заявкой удаляются и её запросы на согласование — их защита этому не мешает.
+        self::$purging[$item->getType() . '#' . (int) $item->getID()] = true;
         $instance = Instance::getForItem($item);
         if ($instance === null) {
             return;

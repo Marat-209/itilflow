@@ -50,10 +50,10 @@ class Instance extends CommonDBTM
     public static function getStateLabels(): array
     {
         return [
-            self::RUNNING => 'Выполняется',
-            self::DONE    => 'Завершён',
-            self::ABORTED => 'Прерван',
-            self::HALTED  => 'Остановлен',
+            self::RUNNING => Terms::IN_PROGRESS,
+            self::DONE    => Terms::PASSED,
+            self::ABORTED => Terms::ABORTED,
+            self::HALTED  => Terms::STOPPED,
         ];
     }
 
@@ -135,7 +135,7 @@ class Instance extends CommonDBTM
         }
         $inst = self::getForItem($item);
         if ($inst === null) {
-            if (StructuredUi::childStep($item) !== null) { return self::createTabEntry('Исход отдела'); }
+            if (StructuredUi::childStep($item) !== null) { return self::createTabEntry('Результат отдела'); }
             return Session::haveRight('plugin_itilflow_process', UPDATE)
                 ? self::createTabEntry('Маршрут этапов')
                 : '';
@@ -150,10 +150,13 @@ class Instance extends CommonDBTM
             }
         }
         // Счёт по этапам маршрута: у этапа с несколькими попытками учитывается последняя.
+        // «Не нужен по условию» проходить не нужно: такой этап не входит в счёт, и инициатор
+        // по числу не узнаёт о строках, которых не видит.
         $latest = [];
         foreach ($inst->getSteps() as $s) {
             $latest[(int) $s['plugin_itilflow_stages_id']] = $s;
         }
+        $latest = array_filter($latest, fn($s) => $s['state'] !== Step::NOT_NEEDED);
         $total = count($latest);
         $done = count(array_filter($latest, fn($s) => in_array($s['state'], [Step::DONE, Step::SKIPPED], true)));
         return self::createTabEntry('Маршрут этапов', $total > 0 ? "{$done}/{$total}" : 0);

@@ -21,7 +21,7 @@
 
 use Glpi\Plugin\Hooks;
 
-define('PLUGIN_ITILFLOW_VERSION', '1.10.0');
+define('PLUGIN_ITILFLOW_VERSION', '1.13.1');
 define('PLUGIN_ITILFLOW_MIN_GLPI', '11.0.0');
 define('PLUGIN_ITILFLOW_MAX_GLPI', '11.99.99');
 
@@ -30,6 +30,11 @@ function plugin_init_itilflow(): void
     global $PLUGIN_HOOKS;
 
     $PLUGIN_HOOKS[Hooks::CSRF_COMPLIANT]['itilflow'] = true;
+    // Невидимое штатное поле: точная связь известна только после создания назначения.
+    \Glpi\Form\Destination\FormDestinationManager::getInstance()->registerPluginCommonITILConfigField(
+        \Glpi\Form\Destination\FormDestinationTicket::class,
+        \GlpiPlugin\Itilflow\FormField::production()
+    );
 
     $H = 'GlpiPlugin\\Itilflow\\Hook';
 
@@ -38,6 +43,11 @@ function plugin_init_itilflow(): void
     ]);
     Plugin::registerClass(\GlpiPlugin\Itilflow\Instance::class, [
         'addtabon' => ['Ticket', 'Change', 'Problem'],
+    ]);
+    // Вкладка «Маршруты этапов» в форме профиля: права плагина выдаются штатно, сохраняет ядро
+    // (front/profile.form.php, право «Профили: изменение», ключ CSRF).
+    Plugin::registerClass(\GlpiPlugin\Itilflow\ProfileRights::class, [
+        'addtabon' => ['Profile'],
     ]);
 
     // --- слой 1: авторизация. Вызывается формой, Kanban, массовыми действиями, API.
@@ -82,6 +92,8 @@ function plugin_init_itilflow(): void
         'Ticket'  => [$H, 'postItilAdd'],
         'Change'  => [$H, 'postItilAdd'],
         'Problem' => [$H, 'postItilAdd'],
+        // Ответ инициатора на уточнение этапа согласования продолжает маршрут сам.
+        'ITILFollowup' => [$H, 'postFollowupAdd'],
     ];
 
     // Кнопка в ленте заявки. Вкладку профиля можно скрыть — это действие
@@ -92,6 +104,9 @@ function plugin_init_itilflow(): void
         'Ticket'  => [$H, 'prePurgeItil'],
         'Change'  => [$H, 'prePurgeItil'],
         'Problem' => [$H, 'prePurgeItil'],
+        // Запрос на согласование идущего этапа: без него этап не закрыть.
+        'TicketValidation' => [$H, 'prePurgeValidation'],
+        'ChangeValidation' => [$H, 'prePurgeValidation'],
     ];
 
     // --- перенос заявки между сущностями
@@ -118,7 +133,7 @@ function plugin_init_itilflow(): void
 function plugin_version_itilflow(): array
 {
     return [
-        'name'         => 'ITIL Flow — этапные маршруты',
+        'name'         => 'Маршруты этапов (itilflow)',
         'version'      => PLUGIN_ITILFLOW_VERSION,
         'author'       => 'itilflow contributors',
         'license'      => 'GPLv3+',

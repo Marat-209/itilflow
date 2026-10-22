@@ -7,6 +7,7 @@ trait RuntimeRead
 {
     public function getFromDB($ID)
     {
+        // В команде — текущее чтение; объект перечитается при её повторе (CurrentRead::load).
         return TransactionScope::hasActive()
             ? CurrentRead::load($this, (int) $ID) : parent::getFromDB($ID);
     }

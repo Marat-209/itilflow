@@ -5,14 +5,17 @@ namespace GlpiPlugin\Itilflow;
 use CommonDBTM;
 use Session;
 
-/** Журнал попыток действий вне текущего этапа. */
+/**
+ * Журнал маршрута: действия не по порядку этапов, остановки, просрочки,
+ * записи о согласовании из формы и о заявках формы без маршрута.
+ */
 class Violation extends CommonDBTM
 {
     public static $rightname = 'plugin_itilflow_process';
 
     public static function getTypeName($nb = 0)
     {
-        return $nb > 1 ? 'Нарушения маршрута' : 'Нарушение маршрута';
+        return $nb > 1 ? Terms::ROUTE_LOG : Terms::ROUTE_LOG_ENTRY;
     }
 
     public static function getIcon(): string
@@ -31,12 +34,15 @@ class Violation extends CommonDBTM
         int $items_id,
         string $action,
         bool $was_blocked,
-        string $message
+        string $message,
+        ?int $entities_id = null
     ): bool {
+        // 1.13: запись без запуска (заявка с формы без маршрута) — в организации заявки,
+        // чтобы её видел администратор маршрутов этой организации, а не только корня.
         $v = new self();
         return (int) $v->add([
             'plugin_itilflow_instances_id' => $instance ? $instance->getID() : 0,
-            'entities_id'                  => $instance ? (int) $instance->fields['entities_id'] : 0,
+            'entities_id'                  => $instance ? (int) $instance->fields['entities_id'] : max(0, (int) $entities_id),
             'users_id'                     => (int) (Session::getLoginUserID() ?: 0),
             'itemtype'                     => $itemtype,
             'items_id'                     => $items_id,
@@ -61,7 +67,7 @@ class Violation extends CommonDBTM
         ];
         $tab[] = [
             'id' => '3', 'table' => self::getTable(), 'field' => 'was_blocked',
-            'name' => 'Заблокировано', 'datatype' => 'bool',
+            'name' => 'Запрещено', 'datatype' => 'bool',
         ];
         $tab[] = [
             'id' => '4', 'table' => 'glpi_users', 'field' => 'name',

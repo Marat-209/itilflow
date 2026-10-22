@@ -4,7 +4,7 @@ namespace GlpiPlugin\Itilflow;
 
 use CommonITILObject;
 
-/** Отдельно показывает окончание этапов и штатное состояние исходной заявки. */
+/** Отдельно показывает окончание этапов и статус заявки в GLPI. */
 final class Completion
 {
     /**
@@ -27,8 +27,8 @@ final class Completion
         $status = (int) $item->fields['status'];
         if (in_array($status, $item::getClosedStatusArray(), true)) {
             return [
-                'title' => 'Этапы завершены, заявка закрыта',
-                'message' => 'В GLPI заявка имеет статус «Закрыта». Итоговый ответ и историю принятия решения смотрите в доступной вам штатной ленте заявки.',
+                'title' => 'Этапы пройдены, заявка закрыта',
+                'message' => 'Заявка в статусе «Закрыто». Ответ и историю смотрите в ленте заявки.',
                 'needs_resolution' => false,
                 'final_reply_verified' => false,
                 'solution_acceptance_verified' => false,
@@ -36,20 +36,20 @@ final class Completion
         }
         if (in_array($status, $item::getSolvedStatusArray(), true)) {
             return [
-                'title' => 'Этапы завершены, заявка решена',
+                'title' => 'Этапы пройдены, заявка решена',
                 'message' => $staff
-                    ? 'Заявка имеет статус «Решена». Проверьте итог; принятие решения и закрытие выполняются по правилам GLPI.'
-                    : 'Заявка имеет статус «Решена». Проверьте итог в ленте заявки; доступные действия определяются правилами обработки заявки.',
+                    ? 'Проверьте результат и примите решение.'
+                    : 'Заявка в статусе «Решена». Посмотрите ответ в ленте заявки.',
                 'needs_resolution' => false,
                 'final_reply_verified' => false,
                 'solution_acceptance_verified' => false,
             ];
         }
         return [
-            'title' => 'Этапы завершены, ожидается решение заявки',
+            'title' => 'Этапы пройдены, заявка ждёт решения',
             'message' => $staff
-                ? 'Проверьте, что заявителю дан понятный итоговый ответ, и оформите штатное решение заявки.'
-                : 'Работа по этапам завершена. Ответственному остаётся оформить итоговое решение вашей заявки.',
+                ? 'Добавьте решение заявки.'
+                : 'Работа по этапам закончена. Исполнитель добавит решение вашей заявки.',
             'needs_resolution' => true,
             'final_reply_verified' => false,
             'solution_acceptance_verified' => false,

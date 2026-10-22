@@ -17,12 +17,22 @@ $backToProcess = static function (int $processes_id): void {
 
 if (isset($_POST['add'])) {
     $stage->check(-1, CREATE, $_POST);
-    $stage->add($_POST);
+    // Не сохранилось — обратно на форму этапа: причина видна там, под полем.
+    if (!$stage->add($_POST)) {
+        Html::back();
+    }
     $backToProcess((int) $_POST['plugin_itilflow_processes_id']);
 } elseif (isset($_POST['update'])) {
     $stage->check((int) $_POST['id'], UPDATE);
-    $stage->update($_POST);
+    if (!$stage->update($_POST)) {
+        Html::back();
+    }
     $backToProcess((int) $_POST['plugin_itilflow_processes_id']);
+} elseif (isset($_POST['move'])) {
+    // Стрелки ↑ ↓ на вкладке «Этапы»: номер меняется с соседним этапом.
+    $stage->check((int) $_POST['id'], UPDATE);
+    Stage::move((int) $_POST['id'], $_POST['move'] === 'up' ? 'up' : 'down');
+    $backToProcess((int) $stage->fields['plugin_itilflow_processes_id']);
 } elseif (isset($_POST['purge'])) {
     $stage->check((int) $_POST['id'], PURGE);
     $pid = (int) $_POST['plugin_itilflow_processes_id'];

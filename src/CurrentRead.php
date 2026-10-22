@@ -8,6 +8,8 @@ final class CurrentRead
     public static function load(\CommonDBTM $object, int $id): bool
     {
         if (!TransactionScope::hasActive()) { return $object->getFromDB($id); }
+        // Прочитан в команде — при её повторе после отказа из-за блокировок перечитается (Engine::retrying).
+        Engine::touch($object);
         $rows = self::find($object, ['id' => $id], [], 1);
         if (count($rows) !== 1) { return false; }
         $object->fields = reset($rows);
@@ -44,11 +46,30 @@ final class CurrentRead
         $sql = 'SELECT * FROM ' . $DB->quoteName($object::getTable())
             . ($parts ? ' WHERE ' . implode(' AND ', $parts) : '')
             . ' ORDER BY ' . implode(',', $sort ?: [$DB->quoteName('id') . ' ASC'])
-            . ($limit !== null && $limit > 0 ? ' LIMIT ' . $limit : '') . ' FOR UPDATE';
+            . ($limit !== null && $limit > 0 ? ' LIMIT ' . $limit : '') . self::lockClause($object);
         $result = $DB->doQuery($sql);
         $rows = [];
         while ($row = $DB->fetchAssoc($result)) { $rows[(int) $row['id']] = $row; }
         return $rows;
+    }
+
+    /**
+     * Справочники GLPI (люди, группы, профили, замещения, правила), которые команда маршрута только
+     * читает, — общей блокировкой: она тоже даёт текущие данные, но две команды с общим согласующим
+     * или группой не ждут друг друга и не встают во взаимную блокировку (MySQL 8). Таблицы
+     * плагина, заявки и запросы согласования — по-прежнему исключительной: их команда меняет.
+     */
+    public const SHARED = [\User::class, \Group::class, \Group_User::class, \Profile_User::class, \ProfileRight::class,
+        \Profile::class, \Entity::class, \ValidatorSubstitute::class, \Rule::class, \RuleAction::class, \RuleCriteria::class,
+        \ITILValidationTemplate_Target::class];
+
+    /** Окончание запроса текущего чтения: общая (справочники) или исключительная блокировка строк. */
+    public static function lockClause(\CommonDBTM|string $object): string
+    {
+        foreach (self::SHARED as $class) {
+            if (is_a($object, $class, true)) { return ' LOCK IN SHARE MODE'; }
+        }
+        return ' FOR UPDATE';
     }
 
     private static function value($value): string

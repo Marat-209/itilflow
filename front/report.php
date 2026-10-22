@@ -1,6 +1,7 @@
 <?php
 
 use Glpi\Application\View\TemplateRenderer;
+use GlpiPlugin\Itilflow\Instance;
 use GlpiPlugin\Itilflow\Process;
 use GlpiPlugin\Itilflow\Report;
 
@@ -36,6 +37,8 @@ TemplateRenderer::getInstance()->display('@itilflow/report.html.twig', [
     'stages'    => $pid > 0 ? Report::byStage($pid) : [],
     'summary'   => $pid > 0 ? Report::summary($pid) : [],
     'modes'     => \GlpiPlugin\Itilflow\Stage::getModeLabels(),
+    // Состояния маршрута — словами, как на вкладке заявки, а не ключами done / running.
+    'states'    => Instance::getStateLabels(),
 ]);
 
 Html::footer();

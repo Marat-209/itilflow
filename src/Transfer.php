@@ -11,6 +11,16 @@ namespace GlpiPlugin\Itilflow;
  * имя и полное имя, по которым объект ищется в другой базе. Рабочих данных (заявки,
  * шаги, попытки, исходы, нарушения) и паролей в файле нет.
  *
+ * Формат 2 (1.11) — у этапа ещё списки согласующих: approver_users, approver_groups (номера
+ * сотрудников и групп; null — не заполнено, действуют прежние «группа / сотрудник») и
+ * approver_group_mode — как отвечает группа. Каждый номер списка — ссылка со сведениями
+ * в data_requirements, как группа и сотрудник этапа. Файл формата 1 читается: списки —
+ * null, группа — «любой участник». Раздел «Форма» маршрута и шаг согласования формы
+ * в файл добавит «Виза из формы» (форма — по uuid, назначение — выбором) в том же формате 2.
+ *
+ * Формат 3 (1.12): условия, ключи решений и политика неизвестного; вопросы по UUID
+ * только внутри сопоставленной формы. Рабочие ответы и ревизии в файл не входят.
+ *
  * Импорт — шаги импорта форм GLPI: предпросмотр → устранение проблем → импорт.
  * Предпросмотр ничего не пишет. Маршрут с тем же именем по умолчанию пропускается,
  * по выбору — создаётся копией. Маршруты создаются выключенными, существующие не
@@ -19,7 +29,8 @@ namespace GlpiPlugin\Itilflow;
 final class Transfer
 {
     public const FORMAT = 'itilflow-routes';
-    public const VERSION = 1;
+    /** Формат, который пишет этот выпуск; читаются все с 1 по этот. */
+    public const VERSION = 4;
     public const MAX_BYTES = 2097152;
 
     public const READY   = 'ready';   // «Готов к импорту»
@@ -34,21 +45,44 @@ final class Transfer
 
     private const ROUTE_KEYS = ['id', 'name', 'comment', 'itemtype', 'entities_id', 'is_recursive', 'is_active',
         'enforcement', 'block_resolution', 'public_log', 'helpdesk_tab', 'allow_withdraw', 'calendars_id',
-        'outcome_contract', 'stages', 'data_requirements'];
+        'outcome_contract', 'stages', 'data_requirements', 'forms_forms_id', 'forms_destinations_id'];
     private const ROUTE_FLAGS = ['is_recursive', 'is_active', 'block_resolution', 'public_log', 'helpdesk_tab', 'allow_withdraw'];
-    private const STAGE_KEYS = ['id', 'name', 'ranking', 'execution_mode', 'entity_strategy', 'entities_id_target',
-        'groups_id', 'users_id', 'itilcategories_id', 'slas_id', 'duration', 'is_optional', 'completion_comment',
-        'deadline_minutes', 'approval_percent', 'approver_source', 'ticket_status', 'on_reject',
-        'plugin_itilflow_stages_id_reject', 'content', 'department_result_source', 'negative_policy', 'return_targets'];
+    /** Поля этапа по версиям формата: в каждой — добавленные ею. */
+    private const STAGE_KEYS = [
+        1 => ['id', 'name', 'ranking', 'execution_mode', 'entity_strategy', 'entities_id_target',
+            'groups_id', 'users_id', 'itilcategories_id', 'slas_id', 'duration', 'is_optional', 'completion_comment',
+            'deadline_minutes', 'approval_percent', 'approver_source', 'ticket_status', 'on_reject',
+            'plugin_itilflow_stages_id_reject', 'content', 'department_result_source', 'negative_policy', 'return_targets', 'form_validationsteps_id'],
+        2 => ['approver_users', 'approver_groups', 'approver_group_mode'],
+        3 => ['run_if', 'decision_items', 'unknown_policy'],
+    ];
+    /** Списки согласующих этапа: поле => тип объекта GLPI. */
+    private const STAGE_LISTS = ['approver_users' => 'User', 'approver_groups' => 'Group'];
+    /** Больше номеров в одном списке файл не несёт: это не настройка для людей. */
+    private const MAX_LIST = 200;
     private const STAGE_INTS = ['entities_id_target', 'groups_id', 'users_id', 'itilcategories_id', 'slas_id',
-        'duration', 'deadline_minutes', 'ticket_status', 'plugin_itilflow_stages_id_reject'];
+        'duration', 'deadline_minutes', 'ticket_status', 'plugin_itilflow_stages_id_reject', 'form_validationsteps_id'];
     /** Ссылки этапа на объекты GLPI: поле => тип. Организация отдела — только «В указанной организации». */
     private const STAGE_REFS = ['entities_id_target' => 'Entity', 'groups_id' => 'Group', 'users_id' => 'User',
-        'itilcategories_id' => 'ITILCategory', 'slas_id' => 'SLA'];
+        'itilcategories_id' => 'ITILCategory', 'slas_id' => 'SLA', 'form_validationsteps_id' => 'ValidationStep'];
     /** Где ссылка видна администратору — подпись поля формы этапа. */
     private const REF_LABELS = ['entities_id' => 'организация маршрута', 'calendars_id' => 'календарь',
-        'entities_id_target' => 'организация заявки отдела', 'groups_id' => 'группа', 'users_id' => 'сотрудник',
-        'itilcategories_id' => 'категория', 'slas_id' => 'время до решения'];
+        'entities_id_target' => 'организация дочерней заявки', 'groups_id' => 'группа', 'users_id' => 'пользователь',
+        'itilcategories_id' => 'категория', 'slas_id' => 'время до решения',
+        'forms_forms_id' => 'форма', 'forms_destinations_id' => 'назначение формы', 'form_validationsteps_id' => 'этап согласования формы',
+        'run_if' => 'условие этапа', 'start_if' => 'Запускать, если', 'approver_users' => 'согласующий пользователь', 'approver_groups' => 'согласующая группа'];
+
+    /** Поля этапа файла версии $version — все, накопленные до неё. */
+    private static function stageKeys(int $version): array
+    {
+        $out = [];
+        foreach (self::STAGE_KEYS as $v => $keys) {
+            if ($v <= $version) {
+                array_push($out, ...$keys);
+            }
+        }
+        return $out;
+    }
 
     /* ================================================================ экспорт */
 
@@ -62,7 +96,14 @@ final class Transfer
     {
         $routes = [];
         foreach ($processes as $process) {
-            $routes[] = self::exportRoute($process);
+            try {
+                $routes[] = self::exportRoute($process);
+            } catch (TransferError $e) {
+                // Повреждённую настройку не угадываем и не теряем: называем маршрут, который поправить.
+                $message = $e->getMessage();
+                throw new TransferError(str_starts_with($message, 'Маршрут «') ? $message
+                    : sprintf('Маршрут «%s»: %s', (string) ($process->fields['name'] ?? ''), $message));
+            }
         }
         $data = [
             'format'         => self::FORMAT,
@@ -93,6 +134,10 @@ final class Transfer
     private static function exportRoute(Process $process): array
     {
         $p = $process->fields;
+        // «Запускать, если» проверяется первым, до чтения базы: повреждённая настройка — отказ
+        // с названием маршрута, а не файл без запуска по форме.
+        $start = self::definitionArray($p['start_if'] ?? null);
+        self::startShape($start, sprintf('Маршрут «%s», «Запускать, если»', (string) ($p['name'] ?? '')));
         $requirements = [];
         $need = static function (string $type, int $id) use (&$requirements): void {
             $requirements[TransferMapper::key($type, $id)] ??= self::requirement($type, $id);
@@ -100,6 +145,19 @@ final class Transfer
         $need('Entity', (int) $p['entities_id']);
         if ((int) $p['calendars_id'] > 0) {
             $need('Calendar', (int) $p['calendars_id']);
+        }
+        foreach (['forms_forms_id' => TransferMapper::FORM, 'forms_destinations_id' => TransferMapper::DESTINATION] as $field => $type) {
+            if ((int) ($p[$field] ?? 0) > 0) { $need($type, (int) $p[$field]); }
+        }
+        foreach ($start['rule']['clauses'] ?? [] as $clause) {
+            foreach (self::conditionRefs($clause) as [$type, $id]) {
+                if ($type === TransferMapper::QUESTION) {
+                    $form = self::requirement(TransferMapper::FORM, (int) ($p['forms_forms_id'] ?? 0));
+                    $q = $clause['question'];
+                    $requirements[TransferMapper::key($type, $id)] = ['itemtype' => $type, 'id' => $id, 'name' => $q['label'], 'uuid' => $q['uuid'],
+                        'forms_forms_id' => (int) ($p['forms_forms_id'] ?? 0), 'form_uuid' => $form['uuid'], 'descriptor' => $q];
+                } else { $need($type, $id); }
+            }
         }
         $stages = [];
         $all = $process->getStages();
@@ -121,9 +179,29 @@ final class Transfer
                 'negative_policy'    => (string) ($s['negative_policy'] ?? ''),
                 // Неверно записанные точки возврата не угадываются: в файле их нет, как «не задано».
                 'return_targets'     => ($s['return_targets'] ?? null) === null ? null : DefinitionSnapshot::targets($s['return_targets']),
+                'approver_group_mode' => (string) ($s['approver_group_mode'] ?? DefinitionSnapshot::GROUP_ANY),
             ];
+            foreach (['run_if', 'decision_items'] as $field) {
+                $row[$field] = self::definitionArray($s[$field] ?? null);
+            }
+            $row['unknown_policy'] = (string) ($s['unknown_policy'] ?? 'run');
+            foreach ($row['run_if']['clauses'] ?? [] as $clause) {
+                foreach (self::conditionRefs($clause) as [$type, $id]) {
+                    if ($type === TransferMapper::QUESTION) {
+                        $form = self::requirement(TransferMapper::FORM, (int) ($p['forms_forms_id'] ?? 0));
+                        $q = $clause['question'];
+                        $requirements[TransferMapper::key($type, $id)] = ['itemtype' => $type, 'id' => $id, 'name' => $q['label'], 'uuid' => $q['uuid'],
+                            'forms_forms_id' => (int) ($p['forms_forms_id'] ?? 0), 'form_uuid' => $form['uuid'], 'descriptor' => $q];
+                    } else { $need($type, $id); }
+                }
+            }
+            // Списки согласующих: как точки возврата — неверно записанные не угадываются (null).
+            foreach (array_keys(self::STAGE_LISTS) as $field) {
+                $list = DefinitionSnapshot::idList($s[$field] ?? null);
+                $row[$field] = is_array($list) ? $list : null;
+            }
             foreach (self::STAGE_INTS as $field) {
-                $row[$field] = (int) $s[$field];
+                $row[$field] = (int) ($s[$field] ?? 0);
             }
             // Удалённый этап остаётся в «Вернуться на этап» (удаление этапа чистит только точки
             // возврата) — ссылка в никуда в файл не идёт, как и точки возврата на чужие этапы.
@@ -142,7 +220,18 @@ final class Transfer
                     $row[$field] = 0;
                 }
             }
-            $stages[] = array_merge(array_flip(self::STAGE_KEYS), $row);
+            // Списки согласующих читает только согласование «Задан в этапе»: у остальных — не заполнены.
+            if (self::listsRead($row)) {
+                foreach (self::STAGE_LISTS as $field => $type) {
+                    foreach ($row[$field] ?? [] as $id) {
+                        $need($type, $id);
+                    }
+                }
+            } else {
+                $row['approver_users'] = $row['approver_groups'] = null;
+                $row['approver_group_mode'] = DefinitionSnapshot::GROUP_ANY;
+            }
+            $stages[] = array_merge(array_flip(self::stageKeys(self::VERSION)), $row);
         }
         $route = [
             'id'               => (int) $p['id'],
@@ -155,6 +244,9 @@ final class Transfer
             'outcome_contract' => (string) ($p['outcome_contract'] ?? 'legacy'),
             'stages'           => $stages,
             'data_requirements' => array_values($requirements),
+            'forms_forms_id' => (int) ($p['forms_forms_id'] ?? 0),
+            'forms_destinations_id' => (int) ($p['forms_destinations_id'] ?? 0),
+            'start_if' => $start,
         ];
         foreach (self::ROUTE_FLAGS as $flag) {
             $route[$flag] = (int) $p[$flag];
@@ -168,10 +260,18 @@ final class Transfer
         global $DB;
         $tree = TransferMapper::TYPES[$type] === 'completename';
         $req = ['itemtype' => $type, 'id' => $id, 'name' => ''] + ($tree ? ['completename' => ''] : []);
+        if ($type === TransferMapper::FORM) { $req['uuid'] = ''; }
+        if ($type === TransferMapper::DESTINATION) { $req += ['forms_forms_id' => 0, 'form_uuid' => '']; }
         $item = getItemForItemtype($type);
         if ($item instanceof \CommonDBTM) {
             foreach ($DB->request(['FROM' => $item::getTable(), 'WHERE' => ['id' => $id], 'LIMIT' => 1]) as $row) {
                 $req['name'] = (string) $row['name'];
+                if ($type === TransferMapper::FORM) { $req['uuid'] = (string) ($row['uuid'] ?? ''); }
+                if ($type === TransferMapper::DESTINATION) {
+                    $req['forms_forms_id'] = (int) $row['forms_forms_id'];
+                    $parent = self::requirement(TransferMapper::FORM, $req['forms_forms_id']);
+                    $req['form_uuid'] = $parent['uuid'];
+                }
                 if ($tree) {
                     $req['completename'] = (string) ($row['completename'] ?? $row['name']);
                 }
@@ -190,12 +290,31 @@ final class Transfer
     {
         $delegated = $stage['execution_mode'] === Stage::MODE_DELEGATED;
         return match ($field) {
+            'form_validationsteps_id' => $stage['execution_mode'] === Stage::MODE_APPROVAL && $stage['approver_source'] === 'form' && (int) $stage[$field] > 0,
             'entities_id_target' => $delegated && $stage['entity_strategy'] === 'fixed',
             'itilcategories_id', 'slas_id' => $delegated && (int) $stage[$field] > 0,
             'groups_id', 'users_id' => (int) $stage[$field] > 0
                 && !($stage['execution_mode'] === Stage::MODE_APPROVAL && $stage['approver_source'] !== Stage::APPROVER_FIXED),
             default => (int) $stage[$field] > 0,
         };
+    }
+
+    /** Списки согласующих читает только согласование «Задан в этапе»: только там их номера — ссылки. */
+    private static function listsRead(array $stage): bool
+    {
+        return $stage['execution_mode'] === Stage::MODE_APPROVAL && $stage['approver_source'] === Stage::APPROVER_FIXED;
+    }
+
+    /**
+     * Этап файла — в виде строки таблицы этапов: списки согласующих — JSON-строкой или NULL,
+     * как их хранит база и читает DefinitionSnapshot::approvers.
+     */
+    private static function dbRow(array $stage): array
+    {
+        foreach (array_merge(array_keys(self::STAGE_LISTS), ['run_if', 'decision_items']) as $field) {
+            $stage[$field] = $stage[$field] === null ? null : DefinitionSnapshot::encode($stage[$field]);
+        }
+        return $stage;
     }
 
     /* ================================================================ файл */
@@ -258,9 +377,10 @@ final class Transfer
         if (!is_array($data) || array_is_list($data) || ($data['format'] ?? null) !== self::FORMAT) {
             throw new TransferError('Это не файл маршрутов: его выгружает «Экспорт» в списке маршрутов этапов.');
         }
-        if (($data['version'] ?? null) !== self::VERSION) {
-            throw new TransferError(sprintf('Версия формата файла — %s, эта версия плагина читает версию %d. Обновите плагин.',
-                is_scalar($data['version'] ?? null) ? (string) $data['version'] : 'не указана', self::VERSION));
+        $version = $data['version'] ?? null;
+        if (!is_int($version) || $version < 1 || $version > self::VERSION) {
+            throw new TransferError(sprintf('Версия формата файла — %s, эта версия плагина читает версии с 1 по %d. Обновите плагин.',
+                is_scalar($version) ? (string) $version : 'не указана', self::VERSION));
         }
         self::keys($data, ['format', 'version', 'plugin_version', 'glpi_version', 'date', 'routes'], 'Файл');
         foreach (['plugin_version', 'glpi_version', 'date'] as $field) {
@@ -276,7 +396,7 @@ final class Transfer
         $route_ids = [];
         $stage_ids = [];
         foreach ($data['routes'] as $n => $route) {
-            $route = self::parseRoute($route, $n + 1, $stage_ids);
+            $route = self::parseRoute($route, $n + 1, $stage_ids, $version);
             if (isset($route_ids[$route['id']])) {
                 throw new TransferError(sprintf('Маршрут «%s»: номер %d в файле повторяется.', $route['name'], $route['id']));
             }
@@ -287,13 +407,18 @@ final class Transfer
             'date' => $data['date'], 'routes' => $routes];
     }
 
-    private static function parseRoute(mixed $route, int $n, array &$stage_ids): array
+    private static function parseRoute(mixed $route, int $n, array &$stage_ids, int $version): array
     {
         $where = 'Маршрут ' . $n;
         if (!is_array($route) || ($route !== [] && array_is_list($route))) {
             throw new TransferError($where . ': ожидается объект.');
         }
-        self::keys($route, self::ROUTE_KEYS, $where);
+        $route += ['forms_forms_id' => 0, 'forms_destinations_id' => 0];
+        self::keys($route, $version >= 4 ? array_merge(self::ROUTE_KEYS, ['start_if']) : self::ROUTE_KEYS, $where);
+        $route += ['start_if' => null];
+        self::startShape($route['start_if'], $where . ', «Запускать, если»');
+        self::int($route, 'forms_forms_id', $where, 0);
+        self::int($route, 'forms_destinations_id', $where, 0);
         self::string($route, 'name', $where, 255);
         $where = 'Маршрут «' . $route['name'] . '»';
         self::int($route, 'id', $where, 1);
@@ -310,7 +435,7 @@ final class Transfer
         // Требования: тип, номер, имя; у древовидных справочников ещё полное имя.
         if (!is_array($route['data_requirements']) || !array_is_list($route['data_requirements'])
             || count($route['data_requirements']) > self::MAX_REQUIREMENTS) {
-            throw new TransferError($where . ': список объектов GLPI (data_requirements) записан неверно.');
+            throw new TransferError($where . ': список объектов GLPI записан неверно.');
         }
         $requirements = [];
         foreach ($route['data_requirements'] as $req) {
@@ -318,7 +443,21 @@ final class Transfer
                 throw new TransferError($where . ': в списке объектов GLPI неизвестный тип.');
             }
             $tree = TransferMapper::TYPES[$req['itemtype']] === 'completename';
-            self::keys($req, $tree ? ['itemtype', 'id', 'name', 'completename'] : ['itemtype', 'id', 'name'], $where . ', объект GLPI');
+            $keys = $tree ? ['itemtype', 'id', 'name', 'completename'] : ['itemtype', 'id', 'name'];
+            if (in_array($req['itemtype'], [TransferMapper::FORM, TransferMapper::QUESTION], true)) { $keys[] = 'uuid'; }
+            if ($req['itemtype'] === TransferMapper::QUESTION) { array_push($keys, 'forms_forms_id', 'form_uuid', 'descriptor'); }
+            if ($req['itemtype'] === TransferMapper::DESTINATION) {
+                array_push($keys, 'forms_forms_id', 'form_uuid');
+            }
+            self::keys($req, $keys, $where . ', объект GLPI');
+            if (in_array($req['itemtype'], [TransferMapper::FORM, TransferMapper::QUESTION], true)) { self::string($req, 'uuid', $where, 255, true); }
+            if (in_array($req['itemtype'], [TransferMapper::DESTINATION, TransferMapper::QUESTION], true)) {
+                self::int($req, 'forms_forms_id', $where, 1); self::string($req, 'form_uuid', $where, 255, true);
+            }
+            if ($req['itemtype'] === TransferMapper::QUESTION) {
+                self::questionDescriptor($req['descriptor'], $where);
+                if ($req['descriptor']['id'] !== $req['id'] || $req['descriptor']['uuid'] !== $req['uuid']) { throw new TransferError($where . ': вопрос не совпадает со своими сведениями.'); }
+            }
             self::int($req, 'id', $where . ', объект GLPI', $req['itemtype'] === 'Entity' ? 0 : 1);
             self::string($req, 'name', $where . ', объект GLPI', 255, true);
             if ($tree) {
@@ -337,11 +476,15 @@ final class Transfer
         // Ошибки смысла одного маршрута (порядок, статус, ссылки между этапами) — не отказ всему
         // файлу, а «Не может быть импортирован» у этого маршрута: остальные переносятся.
         $problems = [];
+        if ($route['start_if'] !== null && ($route['forms_forms_id'] <= 0 || $route['itemtype'] !== 'Ticket'
+            || $route['outcome_contract'] !== DefinitionSnapshot::MODE)) {
+            $problems[] = 'Для запуска по ответам выберите форму заявки и маршрут заявок нового порядка.';
+        }
         $statuses = Stage::getStatusChoices((string) $route['itemtype']);
         $stages = [];
         $ranks = [];
         foreach ($route['stages'] as $i => $stage) {
-            $stage = self::parseStage($stage, $where . ', этап ' . ($i + 1));
+            $stage = self::parseStage($stage, $where . ', этап ' . ($i + 1), $version);
             $label = sprintf('Этап %d «%s»', $stage['ranking'], $stage['name']);
             if (isset($stage_ids[$stage['id']])) {
                 throw new TransferError($where . ', этап «' . $stage['name'] . '»: номер этапа ' . $stage['id'] . ' в файле повторяется.');
@@ -366,8 +509,17 @@ final class Transfer
             }
             foreach ($stage['return_targets'] ?? [] as $target) {
                 if (!isset($stages[$target])) {
-                    $problems[] = $label . ' — точка возврата: этапа нет в этом маршруте.';
+                    $problems[] = $label . ' — этап для возврата отсутствует в этом маршруте.';
                     break;
+                }
+            }
+        }
+        foreach ($stages as $stage) {
+            $prior = array_keys(array_filter($stages, static fn(array $s): bool => $s['ranking'] < $stage['ranking']));
+            array_push($problems, ...Condition::validate($stage['run_if'] ?? [], $prior));
+            foreach ($stage['run_if']['clauses'] ?? [] as $c) {
+                if ($c['source'] === 'decision' && !in_array($c['key'], array_column($stages[$c['stage_id']]['decision_items'] ?? [], 'key'), true)) {
+                    $problems[] = 'Вопрос этапа не найден.';
                 }
             }
         }
@@ -376,10 +528,44 @@ final class Transfer
         if ($route['calendars_id'] > 0) {
             $refs[] = ['Calendar', $route['calendars_id'], 'calendars_id', null];
         }
+        foreach (['forms_forms_id' => TransferMapper::FORM, 'forms_destinations_id' => TransferMapper::DESTINATION] as $field => $type) {
+            if ($route[$field] > 0) { $refs[] = [$type, $route[$field], $field, null]; }
+        }
+        if ($route['forms_destinations_id'] > 0) {
+            $dest = $requirements[TransferMapper::key(TransferMapper::DESTINATION, $route['forms_destinations_id'])] ?? [];
+            $form = $requirements[TransferMapper::key(TransferMapper::FORM, $route['forms_forms_id'])] ?? [];
+            if (($dest['forms_forms_id'] ?? 0) !== $route['forms_forms_id'] || !isset($form['uuid']) || ($dest['form_uuid'] ?? null) !== $form['uuid']) {
+                throw new TransferError($where . ': назначение не связано с указанной формой.');
+            }
+        }
         foreach ($stages as $stage) {
             foreach (self::STAGE_REFS as $field => $type) {
                 if (self::isRef($field, $stage)) {
                     $refs[] = [$type, $stage[$field], $field, $stage];
+                }
+            }
+            if (self::listsRead($stage)) {
+                foreach (self::STAGE_LISTS as $field => $type) {
+                    foreach ($stage[$field] ?? [] as $id) {
+                        $refs[] = [$type, $id, $field, $stage];
+                    }
+                }
+            }
+        }
+        $conditions = [['rule' => $route['start_if']['rule'] ?? null, 'field' => 'start_if', 'stage' => null]];
+        foreach ($stages as $stage) { $conditions[] = ['rule' => $stage['run_if'], 'field' => 'run_if', 'stage' => $stage]; }
+        foreach ($conditions as $condition) {
+            foreach ($condition['rule']['clauses'] ?? [] as $c) {
+                foreach (self::conditionRefs($c) as [$type, $id]) {
+                    $refs[] = [$type, $id, $condition['field'], $condition['stage']];
+                    if ($type === TransferMapper::QUESTION) {
+                        $req = $requirements[TransferMapper::key($type, $id)] ?? [];
+                        $form = $requirements[TransferMapper::key(TransferMapper::FORM, $route['forms_forms_id'])] ?? [];
+                        if (($req['forms_forms_id'] ?? 0) !== $route['forms_forms_id'] || ($req['form_uuid'] ?? null) !== ($form['uuid'] ?? null)
+                            || !is_array($req['descriptor'] ?? null)
+                            || $req['descriptor']['id'] !== $c['question']['id']
+                            || FormFacts::validateMapping($req['descriptor'], $c['question']) !== []) { throw new TransferError($where . ': вопрос условия не связан с формой маршрута.'); }
+                    }
                 }
             }
         }
@@ -398,15 +584,56 @@ final class Transfer
         $route['problems'] = array_values(array_unique($problems));
         uasort($stages, static fn(array $a, array $b): int => $a['ranking'] <=> $b['ranking']);
         $route['stages'] = array_values($stages);
+        $route['start_summary'] = self::startSummary($route);
         return $route;
     }
 
-    private static function parseStage(mixed $stage, string $where): array
+    /** Строгий формат файла; смысл и доступ к сопоставленной форме проверяются перед записью. */
+    private static function startShape(mixed $start, string $where): void
+    {
+        if ($start === null) { return; }
+        if (!is_array($start) || array_is_list($start)) { throw new TransferError($where . ': неверная настройка запуска. Выберите её заново.'); }
+        $decoded = StartRule::decode($start);
+        if (($decoded['mode'] ?? '') === StartRule::MODE_INVALID) { throw new TransferError($where . ': неверная настройка запуска. Выберите её заново.'); }
+        if ($decoded['mode'] === StartRule::MODE_ALWAYS) { return; }
+        if (!is_array($decoded['rule']['clauses'] ?? null) || count($decoded['rule']['clauses']) < 1
+            || count($decoded['rule']['clauses']) > 3) {
+            throw new TransferError($where . ': задайте от одного до трёх условий по ответам формы.');
+        }
+        foreach ($decoded['rule']['clauses'] ?? [] as $clause) {
+            if (!is_array($clause) || ($clause['source'] ?? '') !== 'form_answer') {
+                throw new TransferError($where . ': доступны только ответы выбранной формы. Поля заявки и ответы этапов для запуска не подходят.');
+            }
+        }
+        self::branchShape(['run_if' => $decoded['rule'], 'decision_items' => null, 'unknown_policy' => 'run'], $where);
+    }
+
+    private static function startSummary(array $route): string
+    {
+        $start = StartRule::decode($route['start_if'] ?? null);
+        // Те же слова, что в блоке «Запуск маршрута» формы маршрута (ConditionEditor::summary).
+        if ($start === null) { return 'не запускается по форме'; }
+        // Имена берём из файла, а не по исходным номерам в чужой базе.
+        $name = static function (string $type, int $id) use ($route): string {
+            $req = $route['data_requirements'][TransferMapper::key($type, $id)] ?? [];
+            foreach (['completename', 'name'] as $field) {
+                if (trim((string) ($req[$field] ?? '')) !== '') { return (string) $req[$field]; }
+            }
+            return 'без имени';
+        };
+        return StartRule::describe($start, $name)
+            . ((int) ($route['forms_destinations_id'] ?? 0) === 0 ? ' · Любое назначение формы, создающее заявку' : '');
+    }
+
+    private static function parseStage(mixed $stage, string $where, int $version): array
     {
         if (!is_array($stage) || ($stage !== [] && array_is_list($stage))) {
             throw new TransferError($where . ': ожидается объект.');
         }
-        self::keys($stage, self::STAGE_KEYS, $where);
+        $stage += ['form_validationsteps_id' => 0];
+        self::keys($stage, self::stageKeys($version), $where);
+        $stage += ['run_if' => null, 'decision_items' => null, 'unknown_policy' => 'run'];
+        self::branchShape($stage, $where);
         self::string($stage, 'name', $where, 255);
         $where .= ' «' . $stage['name'] . '»';
         self::int($stage, 'id', $where, 1);
@@ -428,15 +655,153 @@ final class Transfer
         if ($targets !== null) {
             if (!is_array($targets) || !array_is_list($targets) || count($targets) > self::MAX_STAGES
                 || count(array_unique($targets, SORT_REGULAR)) !== count($targets)) {
-                throw new TransferError($where . ': точки возврата записаны неверно.');
+                throw new TransferError($where . ': этапы для возврата записаны неверно.');
             }
             foreach ($targets as $t) {
                 if (!is_int($t) || $t < 1 || $t > self::INT_MAX) {
-                    throw new TransferError($where . ': точки возврата записаны неверно.');
+                    throw new TransferError($where . ': этапы для возврата записаны неверно.');
                 }
             }
         }
+        if ($version < 2) {
+            // Формат 1: списков нет — прежние «группа / сотрудник» читаются как список из одного.
+            return $stage + ['approver_users' => null, 'approver_groups' => null,
+                'approver_group_mode' => DefinitionSnapshot::GROUP_ANY];
+        }
+        foreach (self::STAGE_LISTS as $field => $type) {
+            $list = $stage[$field];
+            if ($list === null) {
+                continue;
+            }
+            if (!is_array($list) || !array_is_list($list) || count($list) > self::MAX_LIST
+                || count(array_unique($list, SORT_REGULAR)) !== count($list)) {
+                throw new TransferError(sprintf('%s: поле «%s» — список номеров записан неверно.', $where, $field));
+            }
+            foreach ($list as $id) {
+                if (!is_int($id) || $id < 1 || $id > self::INT_MAX) {
+                    throw new TransferError(sprintf('%s: поле «%s» — список номеров записан неверно.', $where, $field));
+                }
+            }
+        }
+        self::oneOf($stage, 'approver_group_mode', $where, [DefinitionSnapshot::GROUP_ANY, DefinitionSnapshot::GROUP_EACH]);
         return $stage;
+    }
+
+    /** Записанное определение не превращаем в пустое при повреждении JSON. */
+    private static function definitionArray(mixed $value): ?array
+    {
+        if ($value === null || $value === '') { return null; }
+        if (is_string($value)) {
+            try { $value = json_decode($value, true, 32, JSON_THROW_ON_ERROR); }
+            catch (\JsonException $e) { throw new TransferError('Условия или вопросы этапа записаны неверно.'); }
+        }
+        if (!is_array($value)) { throw new TransferError('Условия или вопросы этапа записаны неверно.'); }
+        return $value;
+    }
+
+    private static function questionDescriptor(mixed $q, string $where): void
+    {
+        if (!is_array($q)) { throw new TransferError($where . ': отсутствует описание вопроса.'); }
+        self::keys($q, array_merge(['id','uuid','label','native_type','type','multiple','options','itemtype','supported','reason'],
+            array_values(array_intersect(['required','conditional'], array_keys($q)))), $where);
+        foreach (['required','conditional'] as $flag) {
+            if (array_key_exists($flag, $q) && !is_bool($q[$flag])) { throw new TransferError($where . ': неверный признак вопроса.'); }
+        }
+        self::int($q, 'id', $where, 1);
+        foreach (['uuid','label','native_type','type'] as $field) { self::string($q, $field, $where, 1024, $field === 'label'); }
+        if (!is_bool($q['multiple']) || $q['supported'] !== true || $q['reason'] !== null
+            || !in_array($q['itemtype'], [null,'User','Group','ITILCategory'], true)
+            || !is_array($q['options']) || !array_is_list($q['options']) || count($q['options']) > 2000) {
+            throw new TransferError($where . ': неподдерживаемое описание вопроса.');
+        }
+        $seen = [];
+        foreach ($q['options'] as $option) {
+            if (!is_array($option)) { throw new TransferError($where . ': неверный вариант ответа.'); }
+            self::keys($option, ['key','label'], $where);
+            self::string($option, 'key', $where, 1024); self::string($option, 'label', $where, 4096, true);
+            if (isset($seen[$option['key']])) { throw new TransferError($where . ': повтор ключа варианта.'); }
+            $seen[$option['key']] = true;
+        }
+    }
+
+    private static function branchShape(array $s, string $where): void
+    {
+        self::oneOf($s, 'unknown_policy', $where, ['run','ask']);
+        $items = $s['decision_items'];
+        if (BranchConfiguration::decisionItems($items) === null) { throw new TransferError($where . ': вопросы этапа записаны неверно.'); }
+        if ($items !== null) {
+            if (!is_array($items) || !array_is_list($items) || count($items) > 4) { throw new TransferError($where . ': вопросы этапа записаны неверно.'); }
+            $keys = [];
+            foreach ($items as $item) {
+                if (!is_array($item)) { throw new TransferError($where . ': вопросы этапа записаны неверно.'); }
+                self::keys($item, ['key','label'], $where);
+                self::string($item, 'label', $where, 255);
+                if (!is_string($item['key']) || !preg_match('/^[a-zA-Z0-9_-]{1,64}$/D', $item['key']) || isset($keys[$item['key']])) { throw new TransferError($where . ': вопросы этапа записаны неверно.'); }
+                $keys[$item['key']] = true;
+            }
+        }
+        $rule = $s['run_if'];
+        if ($rule === null) { return; }
+        if (!is_array($rule)) { throw new TransferError($where . ': неверное условие.'); }
+        self::keys($rule, ['version','join','clauses'], $where);
+        if (!is_array($rule['clauses'])) { throw new TransferError($where . ': неверные условия.'); }
+        $prior = [];
+        foreach ($rule['clauses'] as $c) {
+            if (!is_array($c)) { throw new TransferError($where . ': неверное условие.'); }
+            $keys = match ($c['source'] ?? '') {
+                'decision' => ['stage_id','key'], 'stage_not_needed' => ['stage_id'],
+                'form_answer' => ['question_uuid','question'], 'ticket' => ['field'],
+                default => throw new TransferError($where . ': неизвестный источник условия.'),
+            };
+            self::keys($c, array_merge(['source','operator','value'], $keys), $where);
+            if (isset($c['stage_id'])) { $prior[] = $c['stage_id']; }
+            if ($c['source'] === 'form_answer') {
+                $singleErrors = Condition::validate(['version'=>1,'join'=>'all','clauses'=>[$c]], $prior);
+                if ($singleErrors) { throw new TransferError($where . ': ' . implode(' ', $singleErrors)); }
+                self::questionDescriptor($c['question'], $where);
+                if ($c['question']['type'] === 'choice' && is_array($c['value'])
+                    && array_diff($c['value'], array_column($c['question']['options'], 'key'))) { throw new TransferError($where . ': неизвестный вариант ответа.'); }
+                if ($c['question']['type'] === 'ref' && $c['value'] !== null) {
+                    $values = array_is_list($c['value']) ? $c['value'] : [$c['value']];
+                    foreach ($values as $value) {
+                        if (($value['itemtype'] ?? null) !== $c['question']['itemtype']) { throw new TransferError($where . ': тип ссылки не совпадает с вопросом.'); }
+                    }
+                }
+            }
+        }
+        $errors = Condition::validate($rule, $prior);
+        if ($errors) { throw new TransferError($where . ': ' . implode(' ', $errors)); }
+    }
+
+    /** Внешние ссылки условия; внутренний stage_id здесь намеренно отсутствует. */
+    private static function conditionRefs(array $c): array
+    {
+        $refs = [];
+        if ($c['source'] === 'form_answer') { $refs[] = [TransferMapper::QUESTION, $c['question']['id']]; }
+        if ($c['source'] === 'ticket' && $c['field'] === 'category_id') {
+            foreach (is_array($c['value']) ? $c['value'] : [$c['value']] as $id) {
+                if ($id > 0) { $refs[] = ['ITILCategory', $id]; }
+            }
+        }
+        elseif (is_array($c['value']) && isset($c['value']['itemtype'])) { $refs[] = [$c['value']['itemtype'], $c['value']['id']]; }
+        elseif (($c['question']['type'] ?? '') === 'ref' && is_array($c['value']) && array_is_list($c['value'])) {
+            foreach ($c['value'] as $value) { $refs[] = [$value['itemtype'], $value['id']]; }
+        }
+        return $refs;
+    }
+
+    /** Только после создания всех этапов: ни один исходный номер не сохраняется. */
+    private static function remapCondition(?array $rule, array $ids): ?array
+    {
+        if ($rule === null) { return null; }
+        foreach ($rule['clauses'] as &$c) {
+            if (isset($c['stage_id'])) {
+                if (!isset($ids[$c['stage_id']])) { throw new TransferError('Этап условия не сопоставлен.'); }
+                $c['stage_id'] = $ids[$c['stage_id']];
+            }
+        }
+        unset($c);
+        return $rule;
     }
 
     /** Ровно эти ключи: лишний или недостающий — файл другого формата. */
@@ -541,7 +906,9 @@ final class Transfer
                 continue;
             }
             $row = ['id' => $route['id'], 'name' => $route['name'], 'new_name' => $route['name'],
-                'status' => self::READY, 'details' => [], 'resolve' => false, 'copy' => null];
+                'status' => self::READY, 'details' => [], 'resolve' => false, 'copy' => null, 'choose' => 0,
+                'start_summary' => $route['start_summary'] ?? self::startSummary($route),
+                'start_questions' => self::startQuestions($route, $mapper)];
             if (self::nameTaken($route['name'], $taken)) {
                 if (!in_array($route['id'], $copies, true)) {
                     $row['status'] = self::EXISTS;
@@ -560,7 +927,8 @@ final class Transfer
                 $rows[] = $row;
                 continue;
             }
-            $count = [TransferMapper::MISSING => 0, TransferMapper::SEVERAL => 0, TransferMapper::BY_ID => 0, 'chosen' => 0, 'empty' => 0];
+            $count = [TransferMapper::MISSING => 0, TransferMapper::SEVERAL => 0, TransferMapper::CHOOSE => 0, TransferMapper::BY_ID => 0,
+                'chosen' => 0, 'empty' => 0];
             $map = [];
             foreach ($route['data_requirements'] as $key => $req) {
                 $r = $mapper->resolve($req);
@@ -572,14 +940,18 @@ final class Transfer
                     $count[$r['id'] === 0 && $req['itemtype'] !== 'Entity' ? 'empty' : 'chosen']++;
                 }
             }
-            if ($count[TransferMapper::MISSING] || $count[TransferMapper::SEVERAL]) {
+            if ($count[TransferMapper::MISSING] || $count[TransferMapper::SEVERAL] || $count[TransferMapper::CHOOSE]) {
                 $row['status'] = self::INVALID;
                 $row['resolve'] = true;
+                $row['choose'] = self::choiceOnly($count);
                 if ($count[TransferMapper::MISSING]) {
                     $row['details'][] = sprintf('Не найдено объектов GLPI: %d.', $count[TransferMapper::MISSING]);
                 }
                 if ($count[TransferMapper::SEVERAL]) {
                     $row['details'][] = sprintf('Найдено несколько, нужно выбрать: %d.', $count[TransferMapper::SEVERAL]);
+                }
+                if ($count[TransferMapper::CHOOSE]) {
+                    $row['details'][] = sprintf('Назначение формы и этап согласования — выберите из списка: %d.', $count[TransferMapper::CHOOSE]);
                 }
             } else {
                 $blockers = self::blockers($route, $map);
@@ -610,6 +982,16 @@ final class Transfer
     }
 
     /**
+     * Сколько выбрать вручную, если всё остальное нашлось: тогда в предпросмотре «Нужно выбрать: N»,
+     * а не «Не может быть импортирован». Импорт такой маршрут по-прежнему не принимает. 0 — чего-то нет в базе.
+     */
+    public static function choiceOnly(array $count): int
+    {
+        if ((int) ($count[TransferMapper::MISSING] ?? 0) > 0) { return 0; }
+        return (int) ($count[TransferMapper::SEVERAL] ?? 0) + (int) ($count[TransferMapper::CHOOSE] ?? 0);
+    }
+
+    /**
      * Ссылки маршрута, которые не сопоставились сами, — для шага «Устранять проблемы».
      * Как FormSerializer::listIssues, плюс найденные по номеру и выбранные ранее: их можно поменять.
      *
@@ -627,16 +1009,40 @@ final class Transfer
             $name = (string) ($req[TransferMapper::TYPES[$req['itemtype']]] ?? '');
             $out[] = [
                 'itemtype'    => $req['itemtype'],
+                // Тип назначения формы GLPI 11.0.8 по-русски не называет («Destination»).
+                'type_label'  => $req['itemtype'] === TransferMapper::DESTINATION ? 'Назначение формы' : null,
                 'original_id' => $req['id'],
                 'label'       => ($name !== '' ? $name : 'без имени') . ' (' . $req['id'] . ')',
                 'state'       => $r['state'],
                 'id'          => $r['id'],
                 'candidates'  => $r['candidates'],
+                'mandatory'   => TransferMapper::mandatory($req['itemtype']),
+                'explicit'    => in_array($req['itemtype'], [TransferMapper::DESTINATION, TransferMapper::QUESTION, 'ValidationStep'], true),
                 'more'        => count($r['candidates']) >= TransferMapper::CANDIDATES,
                 'uses'        => $route['uses'][$key] ?? [],
+                // Форма ещё не выбрана: её вопросы, назначение и этап согласования появятся после нового предпросмотра.
+                'form_pending' => $req['itemtype'] === TransferMapper::FORM && $r['state'] !== TransferMapper::REPLACED,
             ];
         }
         return $out;
+    }
+
+    /** Сопоставление всех вопросов запуска, включая найденные автоматически. Только названия. */
+    public static function startQuestions(array $route, TransferMapper $mapper): array
+    {
+        $out = [];
+        foreach ($route['start_if']['rule']['clauses'] ?? [] as $clause) {
+            $key = TransferMapper::key(TransferMapper::QUESTION, $clause['question']['id']);
+            if (isset($out[$key])) { continue; }
+            $req = $route['data_requirements'][$key] ?? null;
+            if ($req === null) { continue; }
+            $resolved = $mapper->resolve($req);
+            $label = (string) ($resolved['candidates'][$resolved['id']] ?? '');
+            $suffix = ' (' . $resolved['id'] . ')';
+            if (str_ends_with($label, $suffix)) { $label = substr($label, 0, -strlen($suffix)); }
+            $out[$key] = ['label' => (string) $req['name'], 'mapped_label' => $label, 'state' => $resolved['state']];
+        }
+        return array_values($out);
     }
 
     /** Маршрут файла по номеру. */
@@ -687,16 +1093,47 @@ final class Transfer
      */
     private static function blockers(array $route, array $map): array
     {
-        [$process, $stages] = self::mapped($route, $map);
+        try { [$process, $stages] = self::mapped($route, $map); }
+        catch (TransferError $e) { return [$e->getMessage()]; }
         $out = [];
+        $start = StartRule::decode($process['start_if'] ?? null);
+        if ($start !== null) {
+            if ($process['forms_forms_id'] <= 0 || $process['itemtype'] !== 'Ticket'
+                || $process['outcome_contract'] !== DefinitionSnapshot::MODE) {
+                $out[] = 'Для запуска по ответам сопоставьте форму заявки и выберите маршрут заявок нового порядка.';
+            } else {
+                $error = FormConfiguration::inputError($process, true);
+                if ($error !== null) { $out[] = $error; }
+                array_push($out, ...StartRule::validate($start, FormFacts::questionCatalog($process['forms_forms_id'])));
+            }
+        }
         foreach ($stages as $s) {
             $label = sprintf('Этап %d «%s»', $s['ranking'], $s['name']);
+            $durationError = Deadline::durationError((int) $s['deadline_minutes'], (int) $process['calendars_id']);
+            if ($durationError !== null) { $out[] = $label . ' — ' . $durationError; }
+            // SLA дочерней заявки — по календарю её организации, как при сохранении этапа и у движка.
+            if ($s['execution_mode'] === Stage::MODE_DELEGATED && (int) $s['slas_id'] > 0) {
+                $slaError = Deadline::slaError((int) $s['slas_id'], Stage::childCalendar($s, $process));
+                if ($slaError !== null) { $out[] = $label . ' — ' . $slaError; }
+            }
             $runtime = $s['execution_mode'] === Stage::MODE_APPROVAL && $s['approver_source'] !== Stage::APPROVER_FIXED;
-            if (!$runtime && $s['groups_id'] === 0 && $s['users_id'] === 0) {
-                $out[] = $label . ' — не выбран исполнитель: группа или сотрудник.';
+            if ($s['execution_mode'] === Stage::MODE_APPROVAL && $s['approver_source'] === 'form'
+                && ($process['forms_forms_id'] <= 0 || ($process['forms_destinations_id'] <= 0 && $start === null) || $s['form_validationsteps_id'] <= 0)) {
+                $out[] = $label . ' — явно сопоставьте форму, её назначение и этап согласования.';
+            }
+            // Согласование со списками (формат 2): исполнитель — списки, а не прежние поля.
+            $lists = self::listsRead($s) ? DefinitionSnapshot::approvers(self::dbRow($s)) : null;
+            $by_lists = $lists !== null && !$lists['legacy'];
+            $who = $by_lists ? $lists['users'] !== [] || $lists['groups'] !== [] : $s['groups_id'] !== 0 || $s['users_id'] !== 0;
+            if (!$runtime && !$who) {
+                $out[] = $label . ($s['execution_mode'] === Stage::MODE_APPROVAL ? ' — ' . Stage::CHOOSE_APPROVERS
+                    : ' — не выбран исполнитель: группа или пользователь.');
+            }
+            if (!$by_lists && Stage::approverConflict($s)) {
+                $out[] = $label . ' — согласование «Задан в этапе»: выбраны и группа, и пользователь, оставьте что-то одно.';
             }
             if ($s['execution_mode'] === Stage::MODE_DELEGATED && $s['entity_strategy'] === 'by_group' && $s['groups_id'] === 0) {
-                $out[] = $label . ' — заявка отдела «В организации группы», а группа не выбрана.';
+                $out[] = $label . ' — дочерняя заявка «В организации группы», а группа не выбрана.';
             }
         }
         if ($out || $stages === [] || $process['outcome_contract'] !== DefinitionSnapshot::MODE) {
@@ -704,8 +1141,10 @@ final class Transfer
         }
         $rows = [];
         foreach ($stages as $s) {
+            $s = self::dbRow($s);
             $s['plugin_itilflow_processes_id'] = $route['id'];
             $s['return_targets'] = $s['return_targets'] === null ? null : DefinitionSnapshot::encode($s['return_targets']);
+            // Ступень формы уже сопоставлена и явно подтверждена.
             $rows[] = $s;
         }
         $reason = Readiness::firstSnapshotReason($process + ['id' => $route['id'], 'version' => 1], $rows);
@@ -734,11 +1173,23 @@ final class Transfer
             $process[$flag] = $route[$flag];
         }
         $process['is_active'] = 0; // включает администратор после проверки
+        $process['forms_forms_id'] = $route['forms_forms_id'] > 0 ? $ref(TransferMapper::FORM, $route['forms_forms_id']) : 0;
+        $process['forms_destinations_id'] = $route['forms_destinations_id'] > 0 ? $ref(TransferMapper::DESTINATION, $route['forms_destinations_id']) : 0;
+        $start = $route['start_if'] ?? null;
+        if (isset($start['rule'])) { $start['rule'] = self::mapRule($start['rule'], $process['forms_forms_id'], $ref); }
+        $process['start_if'] = $start === null ? null : DefinitionSnapshot::encode($start);
         $stages = [];
         foreach ($route['stages'] as $s) {
             foreach (self::STAGE_REFS as $field => $type) {
                 $s[$field] = self::isRef($field, $s) ? $ref($type, $s[$field]) : 0;
             }
+            // Номера списков — этой базы; «оставлено пустым» (0) из списка убирается.
+            foreach (self::STAGE_LISTS as $field => $type) {
+                $s[$field] = !self::listsRead($s) || $s[$field] === null ? null
+                    : array_values(array_unique(array_filter(array_map(static fn(int $id): int => $ref($type, $id), $s[$field]),
+                        static fn(int $id): bool => $id > 0)));
+            }
+            $s['run_if'] = self::mapRule($s['run_if'], $process['forms_forms_id'], $ref);
             // Как Stage::validateInput: у задачи нового порядка пустое «при отказе» — «остановить».
             if ($route['outcome_contract'] === DefinitionSnapshot::MODE && $s['execution_mode'] === Stage::MODE_INLINE
                 && !in_array($s['negative_policy'], [Stage::REJECT_BLOCK, Stage::REJECT_ABORT], true)) {
@@ -747,6 +1198,62 @@ final class Transfer
             $stages[] = $s;
         }
         return [$process, $stages];
+    }
+
+    /** Общий перенос внешних ссылок условий запуска и этапов. */
+    private static function mapRule(?array $rule, int $formId, \Closure $ref): ?array
+    {
+        if ($rule === null) { return null; }
+        foreach ($rule['clauses'] as &$c) {
+            if ($c['source'] === 'form_answer') {
+                $id = $ref(TransferMapper::QUESTION, $c['question']['id']);
+                $target = null;
+                foreach (FormFacts::questionCatalog($formId) as $q) { if ($q['id'] === $id) { $target = $q; break; } }
+                if ($target === null) { throw new TransferError('Сопоставленный вопрос формы недоступен. Выберите его заново.'); }
+                if (FormFacts::validateMapping($c['question'], $target, [$c['question_uuid'] => $target['uuid']]) !== []) {
+                    throw new TransferError('Тип или варианты сопоставленного вопроса изменились. Задайте условие заново.');
+                }
+                $c['question'] = $target; $c['question_uuid'] = $target['uuid'];
+            }
+            $c['value'] = self::mapValue($c, $ref);
+        }
+        unset($c);
+        return $rule;
+    }
+
+    /**
+     * Значение условия с номерами этой базы: категория заявки (число или список «любая из»),
+     * пользователь, группа, категория вопроса формы (объект или список «любой из»). Сравнения
+     * без значения (null) и значения без ссылок — как есть. Два исходных объекта, сопоставленные
+     * с одним, в списке остаются одним: список без повторов, как его сохраняет редактор.
+     */
+    private static function mapValue(array $c, \Closure $ref): mixed
+    {
+        $value = $c['value'] ?? null;
+        if ($c['source'] === 'ticket' && $c['field'] === 'category_id') {
+            $category = static function (int $id) use ($ref): int {
+                if ($id === 0) { return 0; }
+                $mapped = $ref('ITILCategory', $id);
+                if ($mapped <= 0) { throw new TransferError('Категория условия не сопоставлена. Выберите её в списке.'); }
+                return $mapped;
+            };
+            return is_array($value) ? array_values(array_unique(array_map($category, $value))) : $category($value);
+        }
+        $object = static function (array $v) use ($ref): array {
+            $v['id'] = $ref($v['itemtype'], $v['id']);
+            if ($v['id'] <= 0) { throw new TransferError('Объект условия не сопоставлен. Выберите его в списке.'); }
+            return $v;
+        };
+        if (is_array($value) && isset($value['itemtype'])) { return $object($value); }
+        if (($c['question']['type'] ?? '') === 'ref' && is_array($value) && array_is_list($value)) {
+            $out = [];
+            foreach ($value as $v) {
+                $v = $object($v);
+                $out[$v['itemtype'] . '#' . $v['id']] = $v;
+            }
+            return array_values($out);
+        }
+        return $value;
     }
 
     /* ================================================================ импорт */
@@ -782,6 +1289,7 @@ final class Transfer
                     } catch (\Throwable $ignored) {
                     }
                 }
+                TransactionScope::assertHealthy();
                 $created = [];
                 if ($e instanceof TransferError) {
                     $error = $e->getMessage();
@@ -822,6 +1330,8 @@ final class Transfer
             $map[$key] = $r['id'];
         }
         [$input, $stages] = self::mapped($route, $map);
+        $blockers = self::blockers($route, $map);
+        if ($blockers !== []) { throw new TransferError(implode(' ', $blockers)); }
         $input['name'] = $name;
         $probe = $input; // can() дополняет ввод — в add() идёт исходный
         if (!(new Process())->can(-1, CREATE, $probe)) {
@@ -833,9 +1343,17 @@ final class Transfer
         if ($pid <= 0) {
             throw new TransferError(sprintf('Маршрут «%s» не создан: %s', $name, self::lastError($errors)));
         }
+        $savedProcess = new Process();
+        if (!$savedProcess->getFromDB($pid)
+            || Condition::encode(self::definitionArray($savedProcess->fields['start_if'] ?? null)) !== Condition::encode(self::definitionArray($input['start_if']))) {
+            throw new TransferError('Настройка запуска после импорта не совпадает с файлом. Изменения отменены.');
+        }
         $ids = [];
         foreach ($stages as $s) {
-            $stage = array_diff_key($s, array_flip(['id', 'return_targets', 'plugin_itilflow_stages_id_reject']));
+            $stage = array_diff_key(self::dbRow($s), array_flip(['id', 'return_targets', 'plugin_itilflow_stages_id_reject']));
+            $stage['run_if'] = null;
+            $stage['decision_items'] = null;
+            $stage['unknown_policy'] = 'run';
             $stage['plugin_itilflow_processes_id'] = $pid;
             $stage['plugin_itilflow_stages_id_reject'] = 0;
             if ($s['return_targets'] !== null) {
@@ -849,7 +1367,10 @@ final class Transfer
             $ids[$s['id']] = $sid;
         }
         foreach ($stages as $s) {
-            $set = [];
+            $set = ['decision_items' => $s['decision_items'] === null ? null : DefinitionSnapshot::encode($s['decision_items']),
+                'unknown_policy' => $s['unknown_policy']];
+            $rule = self::remapCondition($s['run_if'], $ids);
+            $set['run_if'] = $rule === null ? null : DefinitionSnapshot::encode($rule);
             if ($s['return_targets']) {
                 $set['return_targets'] = DefinitionSnapshot::encode(array_map(static fn(int $t): int => $ids[$t], $s['return_targets']));
             }
@@ -858,9 +1379,25 @@ final class Transfer
             }
             $errors = count($_SESSION['MESSAGE_AFTER_REDIRECT'][ERROR] ?? []);
             if ($set && !(new Stage())->update(['id' => $ids[$s['id']]] + $set)) {
-                throw new TransferError(sprintf('Маршрут «%s», этап %d «%s»: точки возврата не сохранены: %s',
+                throw new TransferError(sprintf('Маршрут «%s», этап %d «%s»: ссылки и условия не сохранены: %s',
                     $name, $s['ranking'], $s['name'], self::lastError($errors)));
             }
+        }
+        // Успешный update не доказывает сохранение DTO: проверяем прочитанное определение.
+        foreach ($stages as $s) {
+            $savedStage = new Stage();
+            if (!$savedStage->getFromDB($ids[$s['id']])
+                || Condition::encode(BranchConfiguration::decode($savedStage->fields['run_if'] ?? null)) !== Condition::encode(self::remapCondition($s['run_if'], $ids) ?? [])
+                || Condition::encode(BranchConfiguration::decisionItems($savedStage->fields['decision_items'] ?? null)) !== Condition::encode($s['decision_items'] ?? [])
+                || ($savedStage->fields['unknown_policy'] ?? '') !== $s['unknown_policy']) {
+                throw new TransferError('Определение условий после импорта не совпадает с файлом.');
+            }
+        }
+        if ($input['outcome_contract'] === DefinitionSnapshot::MODE) {
+            $saved = new Process();
+            if (!$saved->getFromDB($pid)) { throw new TransferError('Импортированный маршрут не прочитан.'); }
+            $reason = Readiness::firstSnapshotReason($saved->fields, $saved->getStages());
+            if ($reason !== null) { throw new TransferError($reason); }
         }
         return $pid;
     }
@@ -871,7 +1408,7 @@ final class Transfer
         $list = array_slice($_SESSION['MESSAGE_AFTER_REDIRECT'][ERROR] ?? [], $before);
         $text = $list ? trim(html_entity_decode(strip_tags((string) end($list)), ENT_QUOTES | ENT_HTML5, 'UTF-8')) : '';
         // Общая фраза формы «…Обновите страницу» на шаге импорта сбивает: причина — в журнале.
-        if ($text === '' || str_starts_with($text, 'Изменение определения не подтверждено')) {
+        if ($text === '' || str_contains($text, 'Обновите страницу')) {
             return 'ошибка записи в базу — подробности в журнале itilflow.log.';
         }
         return $text;

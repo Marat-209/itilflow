@@ -1,6 +1,7 @@
 {# Импорт маршрутов, шаг 3 — «Устранять проблемы». Как templates/pages/admin/form/import/step3_resolve_issues.html.twig
    GLPI 11: тип, исходное значение, замена из списка GLPI. Сверх того — где ссылка в маршруте, найденные
-   несколько — списком найденных, найденное по номеру — на проверку. «-----» — оставить пустым. #}
+   несколько — списком найденных, найденное по номеру — на проверку. Условия запуска и вопросы
+   показываются вместе с соответствиями в выбранной форме. #}
 {% extends "layout/page_without_tabs.html.twig" %}
 {% import 'components/form/fields_macros.html.twig' as fields %}
 
@@ -16,6 +17,14 @@
         'several':  'Найдено несколько — выберите один.',
         'by_id':    'Найдено по номеру и имени — проверьте, тот ли это объект.',
         'replaced': 'Выбрано вручную.',
+        'choose':   'Выберите из списка.',
+    } %}
+    {% set question_states = {
+        'found': 'Найдено автоматически',
+        'missing': 'Выберите вопрос',
+        'several': 'Найдено несколько — выберите вопрос',
+        'by_id': 'Проверьте выбранный вопрос',
+        'replaced': 'Выбрано вручную',
     } %}
     <form method="POST" action="{{ action }}?step=preview">
         <input type="hidden" name="_glpi_csrf_token" value="{{ csrf_token() }}" />
@@ -23,10 +32,23 @@
             <div class="card-header py-3 px-4">
                 <h3 class="card-title">Устранять проблемы — {{ route.name }}</h3>
             </div>
+            <div class="card-body py-3 px-4">
+                <div><strong>Запуск маршрута:</strong> {{ route.start_summary }}</div>
+                {% if route.start_questions is not empty %}
+                    <div class="small mt-2">Вопросы запуска: из файла → в выбранной форме</div>
+                    <ul class="small mb-0 ps-3">
+                        {% for question in route.start_questions %}
+                            <li>
+                                {{ question.label }} → {{ question.mapped_label is not empty ? question.mapped_label : 'Вопрос не выбран' }}
+                                <span class="d-block text-muted">{{ question_states[question.state]|default('Проверьте сопоставление') }}</span>
+                            </li>
+                        {% endfor %}
+                    </ul>
+                {% endif %}
+            </div>
             {% if issues is empty %}
                 <div class="card-body py-3 px-4">
-                    Все объекты GLPI найдены. Если маршрут не может быть импортирован, причина — в самом маршруте:
-                    исправьте его в исходной базе и выгрузите заново.
+                    Все объекты найдены. Ошибка в самом маршруте — исправьте и выгрузите заново.
                 </div>
             {% else %}
                 <table class="table table-card mb-0">
@@ -45,7 +67,7 @@
                                 <td class="px-4 align-middle">
                                     <div class="d-flex align-items-center">
                                         <i class="me-2 {{ issue.itemtype|itemtype_icon }}" aria-hidden="true"></i>
-                                        <span>{{ issue.itemtype|itemtype_name }}</span>
+                                        <span>{{ issue.type_label ?? issue.itemtype|itemtype_name }}</span>
                                     </div>
                                 </td>
                                 <td class="px-4 align-middle">
@@ -58,14 +80,14 @@
                                 <td class="px-4">
                                     <input type="hidden" name="replacements[{{ index }}][itemtype]" value="{{ issue.itemtype }}" />
                                     <input type="hidden" name="replacements[{{ index }}][original_id]" value="{{ issue.original_id }}" />
-                                    {% if issue.state == 'several' and not issue.more %}
+                                    {% if issue.explicit or (issue.state == 'several' and not issue.more) %}
                                         <select class="form-select" name="{{ field }}"
                                                 aria-label="Заменить на — {{ issue.label }}">
                                             {% if issue.itemtype != 'Entity' %}
-                                                <option value="0">-----</option>
+                                                <option value="0">{{ issue.mandatory ? "Выберите и подтвердите объект" : "-----" }}</option>
                                             {% endif %}
                                             {% for id, label in issue.candidates %}
-                                                <option value="{{ id }}">{{ label }}</option>
+                                                <option value="{{ id }}" {{ issue.id == id ? "selected" : "" }}>{{ label }}</option>
                                             {% endfor %}
                                         </select>
                                     {% else %}
@@ -91,7 +113,10 @@
                     </tbody>
                 </table>
                 <div class="card-body py-2 px-4">
-                    «-----» — оставить пустым. Этапу без группы и сотрудника нужен исполнитель, иначе маршрут не импортируется.
+                    {% if issues|filter(i => i.form_pending|default(false))|length > 0 %}
+                        <p>Сначала выберите форму в таблице и снова откройте предпросмотр — тогда появятся её вопросы, назначение и этап согласования.</p>
+                    {% endif %}
+                    <p class="mb-0">«-----» — оставить пустым; этапу без группы и пользователя укажите исполнителя.</p>
                 </div>
             {% endif %}
         </div>

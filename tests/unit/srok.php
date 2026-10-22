@@ -85,4 +85,111 @@ ok(Deadline::label(360, 540) === '6 ч', 'подпись часов');
 ok(Deadline::label(45, 540) === '45 мин', 'подпись минут');
 ok(Deadline::label(0, 540) === '—', 'без срока — прочерк');
 
+// Проверяем границы и вызовы календаря/SLA без базы. Заменители возвращают результат ядра;
+// его реальные календарные расчёты здесь не проверяются.
+class Calendar
+{
+    public static bool $found = true;
+    public static bool $working = true;
+    public static mixed $due = null;
+    public static array $calls = [];
+    public function getFromDB($id): bool { self::$calls[] = ['load', $id]; return self::$found; }
+    public function hasAWorkingDay(): bool { return self::$working; }
+    public function computeEndDate($start, $seconds): mixed
+    {
+        self::$calls[] = ['compute', $start, $seconds];
+        if (self::$due instanceof Throwable) { throw self::$due; }
+        return self::$due;
+    }
+}
+class SLA
+{
+    public static bool $found = true;
+    public static mixed $due = null;
+    public static bool $inherit = true;
+    public static array $calls = [];
+    private int $calendar = 17;
+    public function getFromDB($id): bool { self::$calls[] = ['load', $id]; return self::$found; }
+    public function setTicketCalendar($id): void
+    {
+        self::$calls[] = ['ticket_calendar', $id];
+        if (self::$inherit) { $this->calendar = $id; }
+    }
+    public function computeDate($start): mixed
+    {
+        self::$calls[] = ['compute', $start, $this->calendar];
+        if (self::$due instanceof Throwable) { throw self::$due; }
+        return self::$due;
+    }
+}
+
+$zone = date_default_timezone_get();
+$hadClock = array_key_exists('glpi_currenttime', $_SESSION ?? []);
+$savedClock = $_SESSION['glpi_currenttime'] ?? null;
+try {
+    date_default_timezone_set('UTC');
+    $_SESSION['glpi_currenttime'] = '2026-10-21 12:00:00';
+    ok(Deadline::storable(null), 'отсутствие срока разрешено');
+    ok(Deadline::storable('2038-01-18 03:14:07'), 'граница с запасом ровно сутки разрешена');
+    ok(!Deadline::storable('2038-01-18 03:14:08'), 'на секунду меньше запаса суток — отказ');
+    ok(!Deadline::storable(Deadline::STORAGE_LIMIT_UTC), 'секунда предела TIMESTAMP без запаса суток запрещена');
+    ok(!Deadline::storable('2038-01-19 03:14:08'), 'секунда после предела TIMESTAMP запрещена');
+    ok(!Deadline::storable('1970-01-01 00:00:00') && Deadline::storable('1970-01-01 00:00:01'), 'нижняя граница TIMESTAMP тоже проверена');
+    $invalid = ['', '0000-00-00 00:00:00', '2030-02-31 00:00:00', '2030-01-01 24:00:00', 'tomorrow', "2030-01-01 00:00:00\0"];
+    ok(!array_filter($invalid, [Deadline::class, 'storable']), 'неправильная дата не нормализуется и не становится бессрочной');
+    date_default_timezone_set('Europe/Moscow');
+    ok(Deadline::storable('2038-01-18 06:14:07') && !Deadline::storable('2038-01-18 06:14:08'), 'локальная дата сравнивается с UTC-пределом, Москва');
+    date_default_timezone_set('America/New_York');
+    ok(Deadline::storable('2038-01-17 22:14:07') && !Deadline::storable('2038-01-17 22:14:08'), 'отрицательное UTC-смещение тоже учитывается');
+    date_default_timezone_set('UTC');
+    ok(Deadline::durationError(0, 0) === null, 'нулевая длительность остаётся без срока');
+    ok(Deadline::durationError(-1, 0) !== null, 'отрицательная длительность не становится бессрочной');
+    ok(Deadline::durationError(30 * 1440, 0) === null, 'обычный срок проходит без календаря');
+    ok(Deadline::durationError(5000 * 1440, 0) !== null, '5000 дней без календаря отклоняются при сохранении');
+    $_SESSION['glpi_currenttime'] = '2038-01-18 03:13:07';
+    ok(Deadline::durationError(1, 0) === null, 'вычисленная граничная минута проходит');
+    $_SESSION['glpi_currenttime'] = '2038-01-18 03:13:08';
+    ok(Deadline::durationError(1, 0) !== null, 'тот же срок при позднем запуске отклоняется');
+    $_SESSION['glpi_currenttime'] = '2026-10-21 12:00:00';
+    Calendar::$calls = [];
+    ok(Deadline::durationError(2147483647, 7) !== null && Calendar::$calls === [],
+        'непомещающийся круглосуточный минимум отклонён без загрузки и обхода календаря');
+    Calendar::$due = '2038-01-18 03:14:07';
+    ok(Deadline::durationError(60, 7) === null
+        && Calendar::$calls === [['load', 7], ['compute', '2026-10-21 12:00:00', 3600]], 'календарь получает время запуска и секунды, граничный результат принят');
+    Calendar::$due = '2038-01-18 03:14:08';
+    ok(Deadline::durationError(60, 7) !== null, 'короткий рабочий срок с дальней календарной датой отклонён');
+    Calendar::$due = null;
+    ok(Deadline::durationError(60, 7) !== null, 'ошибка календаря NULL не разрешает бессрочный этап');
+    Calendar::$due = new RuntimeException('calendar failure');
+    ok(Deadline::durationError(60, 7) !== null, 'исключение календаря даёт отказ словами');
+    Calendar::$working = false;
+    ok(Deadline::durationError(60, 7) === null, 'календарь без рабочих дней считает круглосуточно, как движок');
+    Calendar::$working = true;
+    Calendar::$found = false;
+    ok(Deadline::durationError(60, 7) === null, 'отсутствующий календарь считает круглосуточно, как движок');
+    ok(Deadline::slaError(0, 0) === null, 'невыбранный SLA разрешён');
+    SLA::$calls = [];
+    SLA::$due = '2030-01-01 00:00:00';
+    ok(Deadline::slaError(5, 9) === null
+        && SLA::$calls === [['load', 5], ['ticket_calendar', 9], ['compute', '2026-10-21 12:00:00', 9]], 'SLA рассчитывает ядро с календарём дочерней заявки и текущим временем');
+    SLA::$calls = [];
+    SLA::$inherit = false;
+    ok(Deadline::slaError(5, 9) === null && SLA::$calls[2][2] === 17, 'собственный календарь SLA не заменяется календарём маршрута');
+    SLA::$due = '2040-06-29 12:00:00';
+    ok(Deadline::slaError(5, 9) !== null, 'дальний результат SLA не допускается до создания дочерней');
+    SLA::$due = null;
+    ok(Deadline::slaError(5, 9) !== null, 'SLA без вычисленной даты не считается проверенным');
+    SLA::$due = new RuntimeException('sla failure');
+    ok(Deadline::slaError(5, 9) !== null, 'ошибка вычисления SLA даёт отказ словами');
+    SLA::$found = false;
+    ok(Deadline::slaError(5, 9) !== null, 'удалённый SLA не пропускается');
+    $_SESSION['glpi_currenttime'] = 'не дата';
+    ok(Deadline::durationError(1, 0) !== null, 'неверное время запуска не подменяется текущим временем сервера');
+} finally {
+    date_default_timezone_set($zone);
+    if ($hadClock) { $_SESSION['glpi_currenttime'] = $savedClock; }
+    else { unset($_SESSION['glpi_currenttime']); }
+}
+
 itog();

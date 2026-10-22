@@ -1,0 +1,132 @@
+{# Схема — дополнительный просмотр. Полный смысл линий доступен текстом. #}
+{% macro gutter(scheme, index, side) %}
+  <span class="ifsc-gutter ifsc-{{ side }}" aria-hidden="true" style="width:{{ ((side == 'left' ? scheme.left_lanes : scheme.right_lanes) * 12)|number_format(0, '.', '') }}px">
+  {% for edge in scheme.edges %}
+    {% set first = min(edge.from_index, edge.to_index) %}
+    {% set last = max(edge.from_index, edge.to_index) %}
+    {% if edge.side == side and index >= first and index <= last and first != last %}
+      <span class="ifsc-line {{ edge.kind == 'return' ? 'ifsc-return' : (edge.kind == 'reject' ? 'ifsc-reject' : (edge.kind == 'history' ? 'ifsc-history' : 'ifsc-bypass')) }}" style="{{ side == 'left' ? 'right' : 'left' }}:{{ (edge.lane * 12 + 6)|number_format(0, '.', '') }}px;top:{{ index == first ? '28px' : '0' }};bottom:{{ index == last ? 'calc(100% - 28px)' : '0' }}"></span>
+      {% if index == edge.from_index or index == edge.to_index %}
+      <span class="ifsc-arm {{ edge.kind == 'return' ? 'ifsc-return' : (edge.kind == 'reject' ? 'ifsc-reject' : (edge.kind == 'history' ? 'ifsc-history' : 'ifsc-bypass')) }} {{ index == edge.to_index ? 'ifsc-arrival' : '' }}" style="width:{{ (edge.lane * 12 + 6)|number_format(0, '.', '') }}px"></span>
+      {% endif %}
+    {% endif %}
+  {% endfor %}
+  </span>
+{% endmacro %}
+<style>
+.ifsc { --ifsc-surface:var(--tblr-bg-surface,#fff); color:var(--tblr-body-color,#1f2937); font-size:.875rem; line-height:1.45; padding:1rem; max-width:68rem; min-width:0; }
+.ifsc * { box-sizing:border-box; }
+.ifsc h2 { font-size:1.25rem; margin:0 0 .25rem; overflow-wrap:anywhere; }
+.ifsc p { margin:.25rem 0 .65rem; }
+.ifsc a { color:var(--tblr-link-color,#1759a3); text-decoration:underline; overflow-wrap:anywhere; }
+.ifsc a:focus-visible,.ifsc summary:focus-visible { outline:3px solid var(--tblr-primary,#206bc4); outline-offset:3px; }
+.ifsc-notice { border:1px solid currentColor; border-left:4px solid var(--tblr-orange,#d86a00); padding:.5rem .75rem; margin:.5rem 0; }
+.ifsc-rules { padding-left:1.25rem; margin:.5rem 0; }
+.ifsc-legend { padding:.5rem .75rem; border:1px solid var(--tblr-border-color,#ccd2da); border-radius:.4rem; margin:.75rem 0; }
+.ifsc-legend summary,.ifsc-text summary { cursor:pointer; font-weight:600; padding:.25rem 0; }
+.ifsc-legend p { margin:.4rem 0 0; }
+.ifsc-list { list-style:none; margin:1rem 0 0; padding:0; max-width:48rem; }
+.ifsc-row { display:flex; position:relative; min-width:0; padding-bottom:1.25rem; break-inside:avoid; }
+.ifsc-gutter { display:block; position:relative; flex-shrink:0; margin-bottom:-1.25rem; }
+.ifsc-line { position:absolute; border-left:2px solid currentColor; }
+.ifsc-arm { position:absolute; top:27px; border-top:2px solid currentColor; }
+.ifsc-left .ifsc-arm { right:0; } .ifsc-right .ifsc-arm { left:0; }
+.ifsc-return { color:var(--tblr-orange,#b86100); }
+.ifsc-line.ifsc-return { border-left-style:dashed; } .ifsc-arm.ifsc-return { border-top-style:dashed; }
+.ifsc-reject { color:var(--tblr-red,#c23232); }
+.ifsc-bypass { color:var(--tblr-blue,#206bc4); }
+.ifsc-history { color:var(--tblr-teal,#087e65); border-width:3px; }
+.ifsc-arrival::after { content:""; position:absolute; top:-5px; border:4px solid transparent; }
+.ifsc-left .ifsc-arrival::after { right:-1px; border-left-color:currentColor; border-right:0; }
+.ifsc-right .ifsc-arrival::after { left:-1px; border-right-color:currentColor; border-left:0; }
+.ifsc-card { flex:1; min-width:0; position:relative; border:1px solid var(--tblr-border-color,#bbc4ce); border-left:4px solid var(--tblr-teal,#087e65); border-radius:.4rem; background:var(--ifsc-surface); padding:.65rem .75rem; overflow-wrap:anywhere; }
+.ifsc-card.ifsc-approval { border-left-color:var(--tblr-purple,#9c39b4); }
+.ifsc-card.ifsc-delegated { border-left-color:var(--tblr-azure,#2582c4); }
+.ifsc-card.ifsc-conditional { border-top-style:dashed; border-right-style:dashed; border-bottom-style:dashed; }
+.ifsc-card.ifsc-skipped { border-style:dashed; }
+.ifsc-card.ifsc-refused { border-color:var(--tblr-red,#c23232); border-width:2px; border-left-width:4px; }
+.ifsc-card.ifsc-current { border-width:3px; border-left-width:5px; border-color:var(--tblr-primary,#206bc4); }
+.ifsc-row:not(:last-child) .ifsc-card::after { content:"↓"; position:absolute; left:calc(50% - .35em); bottom:-1.4rem; height:1.25rem; color:var(--tblr-body-color,#1f2937); font-weight:700; }
+.ifsc-heading { display:flex; gap:.5rem; align-items:baseline; flex-wrap:wrap; margin:0 0 .3rem; font-size:1rem; }
+.ifsc-number { border:1px solid var(--tblr-border-color,#bbc4ce); border-radius:1rem; padding:0 .4rem; font-size:.8rem; }
+.ifsc-kind { font-size:.8rem; }
+.ifsc-state { font-weight:700; margin-top:.3rem; }
+.ifsc-state-icon { display:inline-block; min-width:1.4em; text-align:center; border:1px solid currentColor; border-radius:50%; margin-right:.3em; }
+.ifsc-condition,.ifsc-transition { margin-top:.35rem; }
+.ifsc-problems { margin:.4rem 0 0; padding-left:1.1rem; }
+.ifsc-text { margin-top:.75rem; }
+.ifsc-table { width:100%; border-collapse:collapse; table-layout:fixed; margin-top:.5rem; }
+.ifsc-table th,.ifsc-table td { border:1px solid var(--tblr-border-color,#bbc4ce); text-align:left; padding:.45rem; vertical-align:top; overflow-wrap:anywhere; }
+.ifsc-table th:first-child { width:28%; }
+.ifsc-empty { padding:1rem; border:1px dashed currentColor; }
+@media (max-width:575px) {
+ .ifsc { padding:.5rem; }
+ .ifsc-card { padding:.5rem; }
+ .ifsc-table,.ifsc-table tbody,.ifsc-table tr,.ifsc-table td,.ifsc-table th { display:block; width:100%!important; }
+ .ifsc-table thead { display:none; }
+ .ifsc-table caption { display:block; width:100%; caption-side:top; }
+ .ifsc-table td { border-top:0; }
+ .ifsc-table tr { margin-bottom:.5rem; }
+}
+@media print {
+ .ifsc { color:#000; background:#fff; padding:0; max-width:none; font-size:10pt; }
+ .ifsc-card { background:#fff; border-color:#555; }
+ .ifsc-list { max-width:none; }
+ .ifsc-row { break-inside:avoid; page-break-inside:avoid; }
+ .ifsc a { color:#000; text-decoration:none; }
+ .ifsc-legend,.ifsc-text summary { display:none; }
+ .ifsc-text > :not(summary) { display:block!important; }
+ .ifsc-text .ifsc-table { display:table!important; }
+ .ifsc-text { display:none; }
+ .ifsc-line,.ifsc-arm { color:#333; }
+ .ifsc-notice { border-color:#555; }
+ .ifsc-table th,.ifsc-table td { border-color:#777; }
+}
+</style>
+<section class="ifsc" aria-label="Схема маршрута">
+  <h2>{{ scheme.title }}</h2>
+  {% if scheme.subtitle %}<p>{{ scheme.subtitle }}</p>{% endif %}
+  <p>Этапов: {{ scheme.rows|length }}.</p>
+  {% if scheme.summary %}<ul class="ifsc-rules">{% for rule in scheme.summary %}<li>{{ rule }}</li>{% endfor %}</ul>{% endif %}
+  {% for notice in scheme.notices %}<p class="ifsc-notice">{{ notice }}</p>{% endfor %}
+  {% if scheme.hidden_edges > 0 %}<p class="ifsc-notice">Не все линии нарисованы — см. таблицу ниже.</p>{% endif %}
+    {% set has_history = false %}{% set has_return = false %}{% set has_reject = false %}{% set has_bypass = false %}{% set has_condition = false %}{% set has_current = false %}
+  {% for edge in scheme.edges %}{% if edge.kind == 'return' %}{% set has_return = true %}{% elseif edge.kind == 'reject' %}{% set has_reject = true %}{% elseif edge.kind == 'history' %}{% set has_history = true %}{% elseif edge.kind == 'bypass' %}{% set has_bypass = true %}{% endif %}{% endfor %}
+  {% for row in scheme.rows %}{% if row.is_conditional %}{% set has_condition = true %}{% endif %}{% if row.is_current %}{% set has_current = true %}{% endif %}{% endfor %}
+  {% if scheme.rows|length > 1 or has_return or has_reject or has_bypass or has_condition or has_current or has_history %}
+  <details class="ifsc-legend"><summary>Обозначения схемы</summary><p>
+    {% if scheme.rows|length > 1 %}Стрелка вниз — следующий этап. {% endif %}
+    {% if has_history %}Толстая сплошная линия слева — выполненный возврат из истории. {% endif %}
+    {% if has_return %}Пунктирная линия слева — возврат на уточнение. {% endif %}
+    {% if has_reject %}Сплошная линия слева — переход при отказе. {% endif %}
+    {% if has_bypass %}Линия справа — обход условного этапа. {% endif %}
+    {% if has_condition %}Пунктирная рамка — этап с условием. {% endif %}
+    {% if has_current %}Текущий этап отмечен словом «Сейчас» и толстой рамкой.{% endif %}
+  </p></details>
+  {% endif %}
+  {% if scheme.rows is empty %}<p class="ifsc-empty">В маршруте пока нет этапов.</p>{% else %}
+  <ol class="ifsc-list" role="list">
+    {% for row in scheme.rows %}
+    <li class="ifsc-row">
+      {{ _self.gutter(scheme, loop.index0, 'left') }}
+      <div class="ifsc-card {{ row.mode == 'approval' ? 'ifsc-approval' : (row.mode == 'delegated' ? 'ifsc-delegated' : 'ifsc-inline') }} {{ row.is_conditional ? 'ifsc-conditional' : '' }} {{ row.is_current ? 'ifsc-current' : '' }} {{ row.state in ['skipped', 'not_needed', 'notrun', 'withdrawn'] ? 'ifsc-skipped' : (row.state in ['rejected', 'refused', 'aborted'] ? 'ifsc-refused' : '') }}"{% if row.is_current %} aria-current="step"{% endif %}>
+        <h3 class="ifsc-heading"><span class="ifsc-number">{{ row.ranking }}</span>{% if row.url %}<a href="{{ row.url }}">{{ row.name }}</a>{% else %}<span>{{ row.name }}</span>{% endif %}</h3>
+        <div class="ifsc-kind">{{ row.mode_label }}{% if row.deadline_label %} · {{ row.deadline_label }}{% endif %}</div>
+        {% if row.actor_label %}<div>Кто: {{ row.actor_label }}</div>{% endif %}
+        {% if row.state_label or row.is_current %}<div class="ifsc-state"><span class="ifsc-state-icon" aria-hidden="true">{{ row.is_current ? '▶' : (row.state == 'done' ? '✓' : (row.state in ['rejected', 'refused', 'aborted'] ? '×' : (row.state in ['not_needed', 'skipped', 'notrun', 'withdrawn'] ? '—' : (row.state == 'clarification' ? '↶' : '○')))) }}</span>{% if row.is_current %}Сейчас{% if row.state_label %} · {% endif %}{% endif %}{{ row.state_label }}</div>{% endif %}
+        {% for text in row.meta %}<div>{{ text }}</div>{% endfor %}
+        {% if row.condition_text %}<div class="ifsc-condition">Условие: {{ row.condition_text }}</div>{% endif %}
+        <div class="ifsc-transition">{{ row.transition_text }}</div>
+        {% if row.problems %}<ul class="ifsc-problems">{% for problem in row.problems %}<li>{{ problem }}</li>{% endfor %}</ul>{% endif %}
+      </div>
+      {{ _self.gutter(scheme, loop.index0, 'right') }}
+    </li>
+    {% endfor %}
+  </ol>
+  <details class="ifsc-text"><summary>Все переходы таблицей</summary>
+    <table class="ifsc-table"><caption>Текстовое описание схемы</caption><thead><tr><th scope="col">Этап</th><th scope="col">Порядок и условия</th></tr></thead><tbody>
+    {% for row in scheme.rows %}<tr><th scope="row">{{ row.ranking }}. {{ row.name }}</th><td>{% if row.condition_text %}<div>Условие: {{ row.condition_text }}</div>{% endif %}{{ row.transition_text }}{% if row.state_label %}<div>{{ row.state_label }}</div>{% endif %}</td></tr>{% endfor %}
+    </tbody></table>
+  </details>
+  {% endif %}
+</section>

@@ -75,32 +75,32 @@ final class StructuredAccess
         $instance = $step->getInstance();
         if ((!$replay && self::context($step) === null) || $instance === null
             || DefinitionSnapshot::load($instance) === null || Authorizer::contextError($instance) !== null) {
-            return 'Ответ не относится к текущей попытке.';
+            return 'Этап уже изменился. Обновите страницу.';
         }
         $stage = $step->getStage();
         if ($step->fields['execution_mode'] === Stage::MODE_DELEGATED) {
             $item = self::child($step);
             if ($item === null || Authorizer::itemError($item, READ) !== null) {
-                return 'Объект отдела недоступен.';
+                return 'Дочерняя заявка недоступна.';
             }
             if (($stage->fields['department_result_source'] ?? '') === 'assignee_action') {
                 return Authorizer::itemError($item, UPDATE) === null && Authorizer::isAssignee($item)
-                    ? null : 'Не подтверждён текущий исполнитель отдела.';
+                    ? null : 'Вы не исполнитель дочерней заявки.';
             }
             if (!$clarification) {
-                return 'Исход этого отдела определяется штатным согласованием.';
+                return 'Результат этого отдела даёт согласование в дочерней заявке.';
             }
         } elseif ($step->fields['execution_mode'] === Stage::MODE_APPROVAL && $clarification) {
             $item = $step->getInstance()?->getItilItem();
             if ($item === null || Authorizer::itemError($item, READ) !== null) {
-                return 'Объект согласования недоступен.';
+                return 'Заявка недоступна.';
             }
         } else {
-            return 'Для этого режима ответ отдела не предусмотрен.';
+            return 'На этом этапе ответа отдела нет.';
         }
         $rows = self::roster($step);
         if (!$replay && self::nativeAggregate($step) !== null) {
-            return 'Сначала требуется перенести сохранённый окончательный ответ согласования.';
+            return 'Сначала перенесите ответ согласующего: «Перенести ответ согласующего» в меню этапа.';
         }
         if ($rows !== null) {
             foreach ($rows as $row) {
@@ -111,7 +111,7 @@ final class StructuredAccess
                 }
             }
         }
-        return 'Не подтверждён адресный запрос согласования.';
+        return 'Вы не согласующий по этому запросу.';
     }
 
     /** Не позволяет новой команде обойти ещё не перенесённый окончательный native результат. */
@@ -122,20 +122,40 @@ final class StructuredAccess
             && ($stage->fields['department_result_source'] ?? '') !== 'native_validation') { return null; }
         $rows = self::roster($step, TransactionScope::hasActive());
         $need = (int) ($step->fields['approval_percent_snapshot'] ?? 0);
-        if (!$rows || $need < 1 || $need > 100) { return 'unconfirmed'; }
-        $accepted = $refused = 0;
+        if (!$rows || $need < ($step->hasExternalBindings() ? 0 : 1) || $need > 100) { return 'unconfirmed'; }
+        return self::decide($step, $rows, $need);
+    }
+
+    /**
+     * Исход этапа по полному составу запросов и порогу.
+     *
+     * У запуска со снимком схемы 2 (1.11) у прохода этапа своя ступень GLPI, и исход считается
+     * тем же правилом, что ядро считает её итог (ValidationLadder::status): отказ маршрута —
+     * «Отклонено» и у GLPI. У запусков, начатых раньше, — прежнее правило целых процентов:
+     * идущие заявки доходят по тем правилам, с которыми начали.
+     *
+     * @param array<int,array> $rows строки запросов с полем status
+     */
+    public static function decide(Step $step, array $rows, int $need): ?string
+    {
+        $accepted = $refused = $waiting = 0;
         foreach ($rows as $row) {
-            $accepted += (int) $row['status'] === \CommonITILValidation::ACCEPTED ? 1 : 0;
-            $refused += (int) $row['status'] === \CommonITILValidation::REFUSED ? 1 : 0;
+            match ((int) $row['status']) {
+                \CommonITILValidation::ACCEPTED => $accepted++,
+                \CommonITILValidation::REFUSED => $refused++,
+                default => $waiting++,
+            };
         }
-        return intdiv($accepted * 100, count($rows)) >= $need ? Outcome::COMPLETED
-            : (intdiv((count($rows) - $refused) * 100, count($rows)) < $need ? Outcome::REFUSED : null);
+        $instance = $step->getInstance();
+        return $step->hasExternalBindings() || ($instance !== null && DefinitionSnapshot::schemaOf($instance) >= 2)
+            ? ValidationLadder::outcome($accepted, $refused, $waiting, $need)
+            : ValidationLadder::legacyOutcome($accepted, $refused, count($rows), $need);
     }
 
     public static function validationError(\CommonITILValidation $v, Step $step): ?string
     {
         if (self::context($step) === null || !CurrentRead::load($v, (int) $v->getID())) {
-            return 'Согласование не относится к текущей попытке.';
+            return 'Это согласование уже не относится к этапу. Обновите страницу.';
         }
         $item = $step->fields['execution_mode'] === Stage::MODE_DELEGATED
             ? self::child($step) : $step->getInstance()?->getItilItem();
@@ -143,7 +163,7 @@ final class StructuredAccess
         if ($item === null || Authorizer::itemError($item, READ) !== null || $rows === null
             || !isset($rows[$v->getID()]) || $rows[$v->getID()]['_type'] !== $v->getType()
             || !ValidationAuthority::canAnswer($v) || !$v->can($v->getID(), UPDATE)) {
-            return 'Нет полномочия на это согласование.';
+            return 'Вы не согласующий по этому запросу.';
         }
         return null;
     }
@@ -156,6 +176,19 @@ final class StructuredAccess
         if ($step->fields['execution_mode'] === Stage::MODE_APPROVAL) {
             $rows = $step->validationRoster();
             if ($rows === null) { return null; }
+            if ($step->hasExternalBindings()) {
+                $item = $step->getInstance()?->getItilItem();
+                $first = reset($rows); $nativeId = (int) $first['itils_validationsteps_id'];
+                if (!$item instanceof \Ticket) { return null; }
+                $all = CurrentRead::find(new \TicketValidation(), ['tickets_id' => $item->getID(), 'itils_validationsteps_id' => $nativeId]);
+                $expected = array_map('intval', array_keys($rows)); $actual = array_map('intval', array_keys($all));
+                sort($expected); sort($actual);
+                $native = $item::getValidationStepInstance();
+                if ($actual !== $expected || $native === null || !CurrentRead::load($native, $nativeId)
+                    || ($native->fields['itemtype'] ?? '') !== 'Ticket'
+                    || (int) ($native->fields['items_id'] ?? 0) !== (int) $item->getID()
+                    || (int) $native->fields['minimal_required_validation_percent'] !== (int) $step->fields['approval_percent_snapshot']) { return null; }
+            }
             ksort($rows);
             foreach ($rows as &$row) {
                 if ($locking) {
@@ -213,7 +246,7 @@ final class StructuredAccess
     {
         $item = $instance->getItilItem();
         if (!Authorizer::isAdministrator() && ($item === null || !Authorizer::isAssignee($item))) {
-            return 'Уточнение подтверждает исполнитель основной заявки или администратор процессов.';
+            return 'Продолжить маршрут после уточнения может исполнитель основной заявки или администратор маршрутов.';
         }
         return self::manageError($instance, true);
     }
@@ -226,7 +259,7 @@ final class StructuredAccess
             || $item === null || Authorizer::itemError($item, UPDATE) !== null
             || in_array((int) $item->fields['status'], array_merge($item::getSolvedStatusArray(),
                 $item::getClosedStatusArray()), true)) {
-            return 'Управление этой попыткой недоступно.';
+            return 'Управлять маршрутом сейчас нельзя: он уже изменился или у вас нет права. Обновите страницу.';
         }
         return null;
     }
@@ -241,18 +274,18 @@ final class StructuredAccess
             || (int) $outcome->fields['plugin_itilflow_instances_id'] !== (int) $instance->getID()
             || (int) $outcome->fields['plugin_itilflow_steps_id'] !== (int) $step->getID()
             || (int) $outcome->fields['attempt_id'] !== (int) $step->fields['attempt_id']
-            || $outcome->fields['artifact_itemtype'] !== $step->fields['artifact_itemtype']
+            || (string) $outcome->fields['artifact_itemtype'] !== (string) ($step->fields['artifact_itemtype'] ?? '')
             || (int) $outcome->fields['artifact_items_id'] !== (int) $step->fields['artifact_items_id']) {
-            return 'Сохранённый исход недоступен.';
+            return 'Результат этапа недоступен. Обновите страницу.';
         }
         $item = $step->fields['execution_mode'] === Stage::MODE_DELEGATED ? self::child($step) : $parent;
         if ($item === null || Authorizer::itemError($item, READ) !== null) {
-            return 'Недостаточно прав для пояснения.';
+            return 'Нет права ответить инициатору.';
         }
         $source = (int) $outcome->fields['users_id'] > 0
             && (int) $outcome->fields['users_id'] === (int) \Session::getLoginUserID();
         $assignee = $step->fields['execution_mode'] === Stage::MODE_DELEGATED
             && Authorizer::itemError($item, UPDATE) === null && Authorizer::isAssignee($item);
-        return $source || $assignee ? null : 'Пояснение даёт автор исхода или текущий исполнитель отдела.';
+        return $source || $assignee ? null : 'Ответить инициатору может тот, кто отметил результат, или исполнитель дочерней заявки.';
     }
 }

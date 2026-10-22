@@ -1,0 +1,439 @@
+{#
+   Общий редактор условий: «Когда выполнять» этапа
+   и «Запускать, если» маршрута. Подключение:
+      {{ include('@itilflow/condition_editor.html.twig', editor) }}
+   где editor = ConditionEditor::view(scope, prefix, mode, rule, process, stage, stages);
+   можно добавить draft_url — адрес пересчёта без сохранения (front/draft.php): тогда
+   фразы, кратко в заголовке и ошибки обновляются сразу, а форма получает событие
+   «itilflow:draft» с ответом сервера.
+   Поля ввода отправляются под именем prefix и разбираются ConditionEditor::parse.
+   Пустых условий заранее нет: блоки сверх выбранных скрыты и отключены, их не отправляют.
+   Скрипт — внутри IIFE, без глобальных имён: редактор бывает на странице маршрута и этапа.
+#}
+{% set rid = 'itilflow-ce-' ~ random() %}
+{% set p = prefix %}
+{% set empty_clause = {'what': '', 'kind': '', 'op': '', 'ops': [], 'values': [], 'items': [], 'itemtype': null,
+   'days': '', 'number': '', 'phrase': '', 'unavailable': null, 'keep': null} %}
+<div class="itilflow-ce" id="{{ rid }}" data-scope="{{ scope }}" data-prefix="{{ prefix }}"
+     data-ce-operators="{{ operators|json_encode }}" {% if draft_url is defined and draft_url %}data-draft-url="{{ draft_url }}"{% endif %}>
+   <style>
+      .itilflow-ce .itilflow-ce-band { display: flex; flex-wrap: wrap; gap: .5rem; align-items: baseline; font-weight: 600; margin: .25rem 0 .5rem; }
+      .itilflow-ce .itilflow-ce-band .itilflow-ce-sum { font-weight: 400; color: var(--tblr-secondary); }
+      .itilflow-ce .itilflow-ce-opts { display: grid; gap: .35rem; margin-bottom: .5rem; }
+      .itilflow-ce .itilflow-ce-opt { display: flex; gap: .5rem; align-items: flex-start; padding: .4rem .6rem; border: 1px solid var(--tblr-border-color); border-radius: 6px; cursor: pointer; margin: 0; }
+      .itilflow-ce .itilflow-ce-opt:has(input:checked) { border-color: var(--tblr-primary); background: var(--tblr-primary-lt, rgba(32, 107, 196, .06)); }
+      .itilflow-ce .itilflow-ce-opt input { margin-top: .2rem; flex: none; }
+      .itilflow-ce .itilflow-ce-opt .itilflow-ce-t { font-weight: 600; display: block; }
+      .itilflow-ce .itilflow-ce-opt .itilflow-ce-d { color: var(--tblr-secondary); font-size: .85em; display: block; }
+      .itilflow-ce fieldset.itilflow-ce-clause { border: 1px solid var(--tblr-border-color); border-radius: 6px; padding: .4rem .6rem .6rem; margin: .5rem 0; min-width: 0; }
+      .itilflow-ce .itilflow-ce-hd { display: flex; justify-content: space-between; align-items: center; gap: .5rem; font-weight: 600; margin-bottom: .25rem; }
+      .itilflow-ce .itilflow-ce-cond { display: grid; grid-template-columns: minmax(0, 1.25fr) minmax(0, .8fr) minmax(0, 1.2fr); gap: .5rem; align-items: start; }
+      .itilflow-ce .itilflow-ce-k { display: block; font-size: .85em; color: var(--tblr-secondary); margin-bottom: .15rem; }
+      .itilflow-ce .itilflow-ce-phrase { margin-top: .4rem; padding: .25rem .5rem; border-radius: 4px; background: var(--tblr-bg-surface-secondary, rgba(0, 0, 0, .03)); }
+      .itilflow-ce .itilflow-ce-phrase:empty, .itilflow-ce .itilflow-ce-error:empty { display: none; }
+      .itilflow-ce .itilflow-ce-stale { opacity: .55; }
+      .itilflow-ce .itilflow-ce-choices { max-height: 11rem; overflow: auto; border: 1px solid var(--tblr-border-color); border-radius: 4px; padding: .25rem .5rem; }
+      .itilflow-ce fieldset.itilflow-ce-value { border: 0; padding: 0; margin: 0; min-width: 0; }
+      @media (max-width: 767.98px) { .itilflow-ce .itilflow-ce-cond { grid-template-columns: minmax(0, 1fr); } }
+      [data-glpi-theme-dark="1"] .itilflow-ce .itilflow-ce-k, [data-glpi-theme-dark="1"] .itilflow-ce .itilflow-ce-d,
+      [data-glpi-theme-dark="1"] .itilflow-ce .itilflow-ce-sum { color: color-mix(in srgb, var(--tblr-body-color) 80%, var(--tblr-bg-surface)); }
+   </style>
+
+   <div class="itilflow-ce-band" id="{{ rid }}-title">
+      <span>{{ title }}</span>
+      <span class="itilflow-ce-sum" data-ce-summary>{{ summary }}</span>
+   </div>
+   <div class="itilflow-ce-opts" role="radiogroup" aria-labelledby="{{ rid }}-title">
+      {% for m in modes %}
+         <label class="itilflow-ce-opt">
+            <input type="radio" class="form-check-input" name="{{ p }}[mode]" value="{{ m.value }}" data-ce-mode
+                   {% if mode == m.value %}checked{% endif %}>
+            <span><span class="itilflow-ce-t">{{ m.label }}</span><span class="itilflow-ce-d">{{ m.hint }}</span></span>
+         </label>
+      {% endfor %}
+   </div>
+
+   <fieldset class="border-0 p-0 m-0" data-ce-area {% if mode != 'if' %}hidden disabled{% endif %} style="min-width:0">
+      <div class="mb-2 d-flex flex-wrap gap-3 align-items-center" data-ce-join {% if clauses|length < 2 %}hidden{% endif %}>
+         <span class="fw-semibold" id="{{ rid }}-join">Нужны</span>
+         <span role="radiogroup" aria-labelledby="{{ rid }}-join" class="d-flex flex-wrap gap-3">
+            <label class="form-check mb-0"><input class="form-check-input" type="radio" name="{{ p }}[join]" value="all" {% if join != 'any' %}checked{% endif %}
+               {% if mode != 'if' %}disabled{% endif %}>
+               <span class="form-check-label">все условия</span></label>
+            <label class="form-check mb-0"><input class="form-check-input" type="radio" name="{{ p }}[join]" value="any" {% if join == 'any' %}checked{% endif %}
+               {% if mode != 'if' %}disabled{% endif %}>
+               <span class="form-check-label">хотя бы одно</span></label>
+         </span>
+      </div>
+
+      {% for i in 0..(max - 1) %}
+         {% set c = clauses[i] ?? empty_clause %}
+         {% set shown = clauses[i] is defined %}
+         {# Поле отправляется, только когда видны и редактор условий, и этот блок, и это значение. #}
+         {% set on = mode == 'if' and shown %}
+         {% set n = p ~ '[clauses][' ~ i ~ ']' %}
+         {% set vkey = 'none' %}
+         {% if c.unavailable is not null and c.keep is not null %}{% set vkey = 'keep' %}
+         {% elseif c.kind == 'choice' and c.op in ['in', 'not_in'] %}{% set vkey = 'choice:' ~ c.what %}
+         {% elseif c.kind in ['user', 'group', 'object', 'category'] and c.op in ['in', 'not_in', 'ne'] %}{% set vkey = 'items:' ~ c.itemtype %}
+         {% elseif c.kind == 'date' and c.op in ['before_days', 'after_days'] %}{% set vkey = 'days' %}
+         {% elseif c.kind == 'number' and c.op != 'unknown' %}{% set vkey = 'number' %}
+         {% endif %}
+         <fieldset class="itilflow-ce-clause" data-ce-clause="{{ i }}" {% if not shown %}hidden disabled{% endif %}>
+            <div class="itilflow-ce-hd">
+               <span data-ce-num>Условие {{ i + 1 }}</span>
+               <button type="button" class="btn btn-sm btn-outline-secondary" data-ce-remove>Убрать условие</button>
+            </div>
+            <div class="itilflow-ce-cond">
+               <div>
+                  <label class="itilflow-ce-k" for="{{ rid }}-what-{{ i }}">Что проверяем</label>
+                  <select class="form-select" id="{{ rid }}-what-{{ i }}" name="{{ n }}[what]" data-ce-what {% if not on %}disabled{% endif %}>
+                     <option value="" data-kind="">— выберите —</option>
+                     {% if c.unavailable is not null %}
+                        <optgroup label="Сейчас выбрано">
+                           <option value="{{ c.what }}" data-kind="{{ c.kind }}" data-ops="{{ c.ops|json_encode }}" selected>⚠ {{ c.unavailable }}</option>
+                        </optgroup>
+                     {% endif %}
+                     {% for g in sources %}
+                        <optgroup label="{{ g.label }}">
+                           {% for o in g.options %}
+                              <option value="{{ o.value }}" data-kind="{{ o.kind }}" {% if o.disabled ?? false %}disabled{% endif %}
+                                      {% if c.unavailable is null and o.value != '' and o.value == c.what %}selected{% endif %}>{{ o.label }}</option>
+                           {% endfor %}
+                        </optgroup>
+                     {% endfor %}
+                  </select>
+               </div>
+               <div>
+                  <label class="itilflow-ce-k" for="{{ rid }}-op-{{ i }}">Сравнение</label>
+                  <select class="form-select" id="{{ rid }}-op-{{ i }}" name="{{ n }}[op]" data-ce-op {% if not on or c.ops is empty %}disabled{% endif %}>
+                     {% for o in c.ops %}
+                        <option value="{{ o[0] }}" {% if o[0] == c.op %}selected{% endif %}>{{ o[1] }}</option>
+                     {% else %}
+                        <option value="">—</option>
+                     {% endfor %}
+                  </select>
+               </div>
+               <div>
+                  <span class="itilflow-ce-k" id="{{ rid }}-v-{{ i }}">Значение</span>
+                  <fieldset class="itilflow-ce-value" data-ce-value="none" {% if vkey != 'none' %}hidden disabled{% endif %}>
+                     <div class="form-text mt-1">значение не нужно</div>
+                  </fieldset>
+                  <fieldset class="itilflow-ce-value" data-ce-value="keep" {% if vkey != 'keep' %}hidden disabled{% endif %}>
+                     <input type="hidden" name="{{ n }}[keep]" value="{{ c.keep }}" {% if not (on and vkey == 'keep') %}disabled{% endif %}>
+                     <div class="form-text mt-1">как было; новое условие по типу заявки не задаётся</div>
+                  </fieldset>
+                  {% for token, options in choices %}
+                     {% set mine = c.what == token %}
+                     <fieldset class="itilflow-ce-value" data-ce-value="choice:{{ token }}" {% if vkey != 'choice:' ~ token %}hidden disabled{% endif %}
+                               aria-labelledby="{{ rid }}-v-{{ i }}">
+                        <div class="itilflow-ce-choices">
+                           {% for o in options %}
+                              <label class="form-check mb-1">
+                                 <input class="form-check-input" type="checkbox" name="{{ n }}[values][]" value="{{ o.key }}"
+                                        {% if mine and o.key in c.values %}checked{% endif %}
+                                        {% if not (on and vkey == 'choice:' ~ token) %}disabled{% endif %}>
+                                 <span class="form-check-label">{{ o.label }}</span>
+                              </label>
+                           {% endfor %}
+                        </div>
+                     </fieldset>
+                  {% endfor %}
+                  {% for itemtype in ['User', 'Group', 'ITILCategory'] %}
+                     {% set picked = c.itemtype == itemtype ? c.items : [] %}
+                     {% set tags = on and vkey == 'items:' ~ itemtype ? {} : {'disabled': 'disabled'} %}
+                     <fieldset class="itilflow-ce-value" data-ce-value="items:{{ itemtype }}" {% if vkey != 'items:' ~ itemtype %}hidden disabled{% endif %}
+                               aria-labelledby="{{ rid }}-v-{{ i }}">
+                        {% if itemtype == 'User' %}
+                           {{ call('User::dropdown', [{'name': n ~ '[items][]', 'value': picked, 'multiple': true, 'right': 'all',
+                              'entity': -1, 'display': false, 'width': '100%', 'rand': random(), 'specific_tags': tags}])|raw }}
+                        {% else %}
+                           {{ call(itemtype ~ '::dropdown', [{'name': n ~ '[items][]', 'value': picked, 'multiple': true, 'addicon': false,
+                              'entity': -1, 'display': false, 'width': '100%', 'rand': random(), 'specific_tags': tags}])|raw }}
+                        {% endif %}
+                     </fieldset>
+                  {% endfor %}
+                  <fieldset class="itilflow-ce-value" data-ce-value="days" {% if vkey != 'days' %}hidden disabled{% endif %}>
+                     <div class="d-flex align-items-center gap-2">
+                        <input type="number" class="form-control" style="max-width:7rem" min="1" max="3660" step="1"
+                               name="{{ n }}[days]" value="{{ c.days }}" aria-labelledby="{{ rid }}-v-{{ i }}"
+                               {% if not (on and vkey == 'days') %}disabled{% endif %}>
+                        <span class="text-muted small">дн. после подачи</span>
+                     </div>
+                  </fieldset>
+                  <fieldset class="itilflow-ce-value" data-ce-value="number" {% if vkey != 'number' %}hidden disabled{% endif %}>
+                     <input type="text" inputmode="decimal" class="form-control" name="{{ n }}[number]" value="{{ c.number }}"
+                            aria-labelledby="{{ rid }}-v-{{ i }}" {% if not (on and vkey == 'number') %}disabled{% endif %}>
+                  </fieldset>
+               </div>
+            </div>
+            <div class="itilflow-ce-phrase" data-ce-phrase aria-live="polite">{{ c.phrase }}</div>
+            <div class="itilflow-ce-error text-danger small mt-1" data-ce-error></div>
+         </fieldset>
+      {% endfor %}
+
+      <div class="d-flex flex-wrap align-items-center gap-2 mt-1">
+         <button type="button" class="btn btn-outline-primary" data-ce-add {% if not can_add %}disabled{% endif %}>+ Добавить условие</button>
+         <span class="text-muted small" data-ce-limit>{{ can_add ? 'До трёх условий.' : 'Больше трёх условий нельзя.' }}</span>
+      </div>
+      <div class="text-danger small mt-1" data-ce-general></div>
+      {% for note in notes %}
+         <div class="form-text">{{ note }}</div>
+      {% endfor %}
+   </fieldset>
+</div>
+<script>
+(function () {
+   'use strict';
+   var root = document.getElementById('{{ rid }}');
+   if (!root) {
+      return;
+   }
+   var operators = JSON.parse(root.getAttribute('data-ce-operators') || '{}');
+   var area = root.querySelector('[data-ce-area]');
+   var joinBox = root.querySelector('[data-ce-join]');
+   var addBtn = root.querySelector('[data-ce-add]');
+   var limit = root.querySelector('[data-ce-limit]');
+   var general = root.querySelector('[data-ce-general]');
+   var summary = root.querySelector('[data-ce-summary]');
+   var form = root.closest('form');
+   var draftUrl = root.getAttribute('data-draft-url');
+   var askable = ['choice', 'flag', 'user', 'group', 'object', 'text', 'file', 'date', 'number', 'bool'];
+
+   function mode() {
+      var r = root.querySelector('input[data-ce-mode]:checked');
+      return r ? r.value : '';
+   }
+   // Блоки условий в порядке на странице: в нём их и отправляет браузер, и читает сервер.
+   function all() {
+      return Array.prototype.slice.call(root.querySelectorAll('[data-ce-clause]'));
+   }
+   function shown() {
+      return all().filter(function (c) { return !c.hidden; });
+   }
+   function picked(box) {
+      var s = box.querySelector('[data-ce-what]');
+      return s.selectedIndex >= 0 ? s.options[s.selectedIndex] : null;
+   }
+   function kindOf(box) {
+      var o = picked(box);
+      return o ? (o.getAttribute('data-kind') || '') : '';
+   }
+   function valueKey(box) {
+      var o = picked(box), kind = kindOf(box), op = box.querySelector('[data-ce-op]').value;
+      var what = o ? o.value : '';
+      if (o && o.getAttribute('data-ops') && box.querySelector('[data-ce-value="keep"] input').value !== '') {
+         return 'keep';
+      }
+      if (kind === 'choice' && (op === 'in' || op === 'not_in')) {
+         return 'choice:' + what;
+      }
+      if (['user', 'group', 'object', 'category'].indexOf(kind) >= 0 && ['in', 'not_in', 'ne'].indexOf(op) >= 0) {
+         return 'items:' + ({user: 'User', group: 'Group', object: 'ITILCategory', category: 'ITILCategory'})[kind];
+      }
+      if (kind === 'date' && (op === 'before_days' || op === 'after_days')) {
+         return 'days';
+      }
+      if (kind === 'number' && op !== 'unknown') {
+         return 'number';
+      }
+      return 'none';
+   }
+   function fillOps(box) {
+      var sel = box.querySelector('[data-ce-op]');
+      var o = picked(box);
+      var list = o && o.getAttribute('data-ops') ? JSON.parse(o.getAttribute('data-ops')) : (operators[kindOf(box)] || []);
+      sel.textContent = '';
+      list.forEach(function (x) {
+         var opt = document.createElement('option');
+         opt.value = x[0];
+         opt.textContent = x[1];
+         sel.appendChild(opt);
+      });
+      if (!list.length) {
+         var none = document.createElement('option');
+         none.value = '';
+         none.textContent = '—';
+         sel.appendChild(none);
+      }
+   }
+   function controls(el, on) {
+      el.querySelectorAll('input, select, textarea').forEach(function (c) {
+         if (c.disabled !== !on) {
+            c.disabled = !on;
+         }
+      });
+   }
+   function unknownPossible() {
+      if (mode() !== 'if') {
+         return false;
+      }
+      return shown().some(function (box) { return askable.indexOf(kindOf(box)) >= 0; });
+   }
+   // Отправляется только видимое: у каждого скрытого поля свой disabled — как рисует сервер.
+   function sync() {
+      var on = mode() === 'if';
+      area.hidden = !on;
+      area.disabled = !on;
+      controls(joinBox, on);
+      var boxes = all();
+      boxes.forEach(function (box) {
+         var live = on && !box.hidden;
+         box.disabled = !live;
+         box.querySelector('[data-ce-what]').disabled = !live;
+         var op = box.querySelector('[data-ce-op]');
+         op.disabled = !live || !op.querySelector('option:not([value=""])');
+         var key = valueKey(box);
+         box.querySelectorAll('[data-ce-value]').forEach(function (v) {
+            var act = v.getAttribute('data-ce-value') === key;
+            v.hidden = !act;
+            v.disabled = !(live && act);
+            controls(v, live && act);
+         });
+      });
+      var list = shown();
+      list.forEach(function (box, n) {
+         box.querySelector('[data-ce-num]').textContent = 'Условие ' + (n + 1);
+      });
+      joinBox.hidden = list.length < 2;
+      addBtn.disabled = list.length >= boxes.length;
+      limit.textContent = list.length >= boxes.length ? 'Больше трёх условий нельзя.' : 'До трёх условий.';
+      root.setAttribute('data-ce-unknown', unknownPossible() ? '1' : '0');
+      root.dispatchEvent(new CustomEvent('itilflow:condition-layout', {bubbles: true, detail: {unknown: unknownPossible(), mode: mode()}}));
+   }
+   function stale(box) {
+      var ph = box.querySelector('[data-ce-phrase]');
+      ph.classList.add('itilflow-ce-stale');
+      box.querySelector('[data-ce-error]').textContent = '';
+   }
+   function reveal() {
+      var box = all().filter(function (c) { return c.hidden; })[0];
+      if (!box) {
+         return;
+      }
+      // Новое условие — всегда внизу, под уже заданными.
+      var last = shown().slice(-1)[0];
+      var after = last || joinBox;
+      if (after.nextElementSibling !== box) {
+         after.parentNode.insertBefore(box, after.nextElementSibling);
+      }
+      box.hidden = false;
+      var what = box.querySelector('[data-ce-what]');
+      what.disabled = false;
+      what.value = '';
+      fillOps(box);
+      box.querySelector('[data-ce-phrase]').textContent = '';
+      box.querySelector('[data-ce-error]').textContent = '';
+      sync();
+      what.focus();
+   }
+   function remove(box) {
+      var next = shown().filter(function (c) { return c !== box; })[0];
+      box.hidden = true;
+      sync();
+      (next ? next.querySelector('[data-ce-what]') : addBtn).focus();
+      schedule();
+   }
+
+   root.addEventListener('change', function (e) {
+      var t = e.target;
+      var box = t.closest ? t.closest('[data-ce-clause]') : null;
+      if (t.hasAttribute('data-ce-mode')) {
+         if (mode() === 'if' && !shown().length) {
+            reveal();
+         }
+         sync();
+         return;
+      }
+      if (box && t.hasAttribute('data-ce-what')) {
+         fillOps(box);
+         // У даты — «через 5 дней», если число ещё не задано.
+         var days = box.querySelector('[data-ce-value="days"] input');
+         if (kindOf(box) === 'date' && days && days.value === '') {
+            days.value = '5';
+         }
+         stale(box);
+         sync();
+      } else if (box && t.hasAttribute('data-ce-op')) {
+         stale(box);
+         sync();
+      }
+   });
+   root.addEventListener('click', function (e) {
+      var t = e.target.closest ? e.target.closest('button') : null;
+      if (!t) {
+         return;
+      }
+      if (t.hasAttribute('data-ce-add')) {
+         reveal();
+         schedule();
+      } else if (t.hasAttribute('data-ce-remove')) {
+         remove(t.closest('[data-ce-clause]'));
+      }
+   });
+
+   // Пересчёт без сохранения: фразы, кратко и ошибки — с сервера, теми же словами, что после сохранения.
+   var timer = null;
+   var seq = 0;
+   function apply(data) {
+      var mine = data && data.editors ? data.editors[root.getAttribute('data-prefix')] : null;
+      if (!mine) {
+         return;
+      }
+      summary.textContent = mine.summary || '';
+      general.textContent = (mine.general || []).join(' ');
+      shown().forEach(function (box) {
+         var i = box.getAttribute('data-ce-clause');
+         var ph = box.querySelector('[data-ce-phrase]');
+         ph.textContent = (mine.phrases || {})[i] || '';
+         ph.classList.remove('itilflow-ce-stale');
+         box.querySelector('[data-ce-error]').textContent = (mine.errors || {})[i] || '';
+      });
+   }
+   function send() {
+      if (!form || !draftUrl || !window.fetch || !window.FormData) {
+         return;
+      }
+      var mySeq = ++seq;
+      var body = new FormData(form);
+      body.append('_itilflow_draft', root.getAttribute('data-scope'));
+      body.append('_itilflow_draft_prefix', root.getAttribute('data-prefix'));
+      var token = form.querySelector('input[name="_glpi_csrf_token"]');
+      window.fetch(draftUrl, {
+         method: 'POST',
+         body: body,
+         credentials: 'same-origin',
+         headers: {'X-Requested-With': 'XMLHttpRequest', 'X-Glpi-Csrf-Token': token ? token.value : ''}
+      }).then(function (r) {
+         return r.ok ? r.json() : Promise.reject(r.status);
+      }).then(function (data) {
+         if (mySeq !== seq) {
+            return;
+         }
+         apply(data);
+         form.dispatchEvent(new CustomEvent('itilflow:draft', {detail: data}));
+      }).catch(function () {
+         if (mySeq === seq) {
+            general.textContent = 'Не удалось пересчитать без сохранения. Сохраните, чтобы увидеть итог.';
+         }
+      });
+   }
+   function schedule() {
+      if (!draftUrl) {
+         return;
+      }
+      clearTimeout(timer);
+      timer = setTimeout(send, 450);
+   }
+   if (form && draftUrl) {
+      form.addEventListener('change', schedule);
+      form.addEventListener('input', schedule);
+      if (window.jQuery) {
+         // Списки GLPI (select2) сообщают о выборе событием jQuery.
+         window.jQuery(form).on('change', 'select', schedule);
+      }
+   }
+
+   sync();
+})();
+</script>

@@ -1,0 +1,166 @@
+{#
+   Блоки на форме этапа: «Когда выполнять» и «Вопросы этапа».
+   branch — BranchConfiguration::editor; rand — номер формы; draft_url — пересчёт без сохранения.
+   У «Согласования из формы» условия нет: вместо редактора — строка, поля редактора не отправляются.
+   «Если ответа нет» — только когда в условиях есть ответы формы или вопросы этапов.
+   Вопросы этапа — кнопкой, до четырёх; пустых полей заранее нет.
+#}
+{% set mode = item.fields['execution_mode'] ?? 'inline' %}
+<div class="col-12 mb-3" id="itilflow-branches-{{ rand }}" data-itilflow-branches>
+   <input type="hidden" name="_branch_present" value="1">
+
+   <div data-itilflow-branch-fixed {% if not branch.form_approval %}hidden{% endif %}>
+      <div class="fw-semibold mb-1">Когда выполнять</div>
+      <div class="alert alert-secondary py-2 mb-2">Условия нет: запрос на согласование уходит при отправке формы.</div>
+   </div>
+   <div data-itilflow-branch-editor {% if branch.form_approval %}hidden{% endif %}>
+      {{ include('@itilflow/condition_editor.html.twig', branch.editor|merge({'draft_url': draft_url ?? ''})) }}
+      <div class="mt-2" data-itilflow-unknown {% if not branch.unknown_possible %}hidden{% endif %}>
+         <label class="form-label fw-semibold mb-1" for="itilflow-unknown-{{ rand }}">Если ответа нет</label>
+         <select class="form-select" style="max-width:24rem" id="itilflow-unknown-{{ rand }}" name="_branch_unknown"
+                 {% if not branch.unknown_possible or branch.form_approval %}disabled{% endif %}>
+            <option value="run" {% if branch.unknown_policy != 'ask' %}selected{% endif %}>выполнять этап</option>
+            <option value="ask" {% if branch.unknown_policy == 'ask' %}selected{% endif %}>спросить исполнителя заявки</option>
+         </select>
+         <div class="form-text" data-itilflow-unknown-hint="run" {% if branch.unknown_policy == 'ask' %}hidden{% endif %}>
+            Ответа нет, если заявка не из формы или вопрос скрыт.
+         </div>
+         <div class="form-text" data-itilflow-unknown-hint="ask" {% if branch.unknown_policy != 'ask' %}hidden{% endif %}>
+            Решит исполнитель (у согласования — администратор маршрутов).
+         </div>
+      </div>
+   </div>
+
+   <div class="d-flex flex-wrap gap-2 align-items-baseline fw-semibold mt-3 mb-1">
+      <span>Вопросы этапа</span>
+      <span class="fw-normal text-muted" data-itilflow-questions-sum>{% set nq = branch.items|length %}{{ nq == 0 ? 'нет' : nq ~ ' ' ~ (nq == 1 ? 'вопрос' : (nq < 5 ? 'вопроса' : 'вопросов')) }}</span>
+   </div>
+   {% for i in 0..3 %}
+      {% set it = branch.items[i] ?? null %}
+      <div class="mb-2" data-itilflow-question {% if it is null %}hidden{% endif %}>
+         <div class="d-flex gap-2 align-items-start">
+            <input type="hidden" name="_decision_rows[{{ i }}][key]" value="{{ it.key ?? '' }}" {% if it is null %}disabled{% endif %}>
+            <input type="text" class="form-control" name="_decision_rows[{{ i }}][label]" value="{{ it.label ?? '' }}" maxlength="255"
+                   aria-label="Вопрос этапа {{ i + 1 }}" placeholder="Например: Нужно дополнительное согласование?"
+                   {% if it is null %}disabled{% endif %}>
+            {# На ответ опирается условие этапа ниже — убрать вопрос нельзя, пока условие не изменено. #}
+            {% set nuzhen = it is not null and branch.refs[it.key] is defined %}
+            <button type="button" class="btn btn-outline-secondary" data-itilflow-question-remove aria-label="Убрать вопрос {{ i + 1 }}"
+                    {% if nuzhen %}disabled aria-describedby="itilflow-q-ref-{{ rand }}-{{ i }}"{% endif %}>Убрать</button>
+         </div>
+         {% if nuzhen %}
+            <div class="form-text" id="itilflow-q-ref-{{ rand }}-{{ i }}">Нужен этапу {{ branch.refs[it.key] }} — сначала измените его условие.</div>
+         {% endif %}
+      </div>
+   {% endfor %}
+   <div class="d-flex flex-wrap gap-2 align-items-center">
+      <button type="button" class="btn btn-outline-primary" data-itilflow-question-add {% if branch.items|length >= 4 %}disabled{% endif %}>+ Добавить вопрос</button>
+      <span class="text-muted small" data-itilflow-questions-limit>{{ branch.items|length >= 4 ? 'Больше четырёх вопросов нельзя.' : 'До четырёх вопросов «да / нет».' }}</span>
+   </div>
+   <div class="form-text" data-itilflow-questions-who="approval" {% if mode != 'approval' %}hidden{% endif %}>
+      Отвечает согласующий вместе с «Одобрить».
+   </div>
+   <div class="form-text" data-itilflow-questions-who="other" {% if mode == 'approval' %}hidden{% endif %}>
+      Отвечает исполнитель при завершении этапа.
+   </div>
+</div>
+<script>
+(function () {
+   'use strict';
+   var box = document.getElementById('itilflow-branches-{{ rand }}');
+   var form = box ? box.closest('form') : null;
+   if (!box || !form) {
+      return;
+   }
+   var fixed = box.querySelector('[data-itilflow-branch-fixed]');
+   var editor = box.querySelector('[data-itilflow-branch-editor]');
+   var unknown = box.querySelector('[data-itilflow-unknown]');
+   var unknownSelect = unknown.querySelector('select');
+   var rows = Array.prototype.slice.call(box.querySelectorAll('[data-itilflow-question]'));
+   var add = box.querySelector('[data-itilflow-question-add]');
+   var limit = box.querySelector('[data-itilflow-questions-limit]');
+   var sum = box.querySelector('[data-itilflow-questions-sum]');
+   var unknownShown = !unknown.hidden;
+
+   function checked(name) {
+      var el = form.querySelector('input[name="' + name + '"]:checked');
+      return el ? el.value : '';
+   }
+   function editorControls(on) {
+      editor.querySelectorAll('input, select, textarea').forEach(function (c) { c.disabled = !on; });
+   }
+   // «Согласование из формы» — без условия: поля редактора не уходят, правило станет «Всегда».
+   function formApproval(init) {
+      var isForm = checked('execution_mode') === 'approval' && checked('approver_source') === 'form';
+      if (isForm === editor.hidden && !(init && isForm)) {
+         syncUnknown();
+         return;
+      }
+      fixed.hidden = !isForm;
+      editor.hidden = isForm;
+      if (isForm) {
+         editorControls(false);
+      } else {
+         editorControls(true);
+         var radio = editor.querySelector('input[data-ce-mode]:checked');
+         if (radio) {
+            radio.dispatchEvent(new Event('change', {bubbles: true}));
+         }
+      }
+      syncUnknown();
+   }
+   function syncUnknown() {
+      unknown.hidden = !unknownShown;
+      unknownSelect.disabled = !unknownShown || editor.hidden;
+      unknown.querySelectorAll('[data-itilflow-unknown-hint]').forEach(function (h) {
+         h.hidden = h.getAttribute('data-itilflow-unknown-hint') !== unknownSelect.value;
+      });
+   }
+   function questions() {
+      var shown = rows.filter(function (r) { return !r.hidden; });
+      add.disabled = shown.length >= rows.length;
+      limit.textContent = shown.length >= rows.length ? 'Больше четырёх вопросов нельзя.' : 'До четырёх вопросов «да / нет».';
+      var n = shown.length;
+      sum.textContent = n ? n + ' ' + (n === 1 ? 'вопрос' : (n < 5 ? 'вопроса' : 'вопросов')) : 'нет';
+      var mode = checked('execution_mode');
+      box.querySelectorAll('[data-itilflow-questions-who]').forEach(function (h) {
+         h.hidden = (h.getAttribute('data-itilflow-questions-who') === 'approval') !== (mode === 'approval');
+      });
+   }
+   box.addEventListener('itilflow:condition-layout', function (e) {
+      unknownShown = !!(e.detail && e.detail.unknown);
+      syncUnknown();
+   });
+   unknownSelect.addEventListener('change', syncUnknown);
+   add.addEventListener('click', function () {
+      var row = rows.filter(function (r) { return r.hidden; })[0];
+      if (!row) {
+         return;
+      }
+      row.hidden = false;
+      row.querySelectorAll('input').forEach(function (c) { c.disabled = false; c.value = ''; });
+      questions();
+      row.querySelector('input[type="text"]').focus();
+   });
+   box.addEventListener('click', function (e) {
+      var btn = e.target.closest ? e.target.closest('[data-itilflow-question-remove]') : null;
+      if (!btn || btn.disabled) {
+         return;
+      }
+      var row = btn.closest('[data-itilflow-question]');
+      row.hidden = true;
+      row.querySelectorAll('input').forEach(function (c) { c.disabled = true; });
+      questions();
+      add.focus();
+      form.dispatchEvent(new Event('change', {bubbles: true}));
+   });
+   form.addEventListener('change', function (e) {
+      if (e.target && (e.target.name === 'execution_mode' || e.target.name === 'approver_source')) {
+         formApproval();
+         questions();
+      }
+   });
+   formApproval(true);
+   questions();
+})();
+</script>

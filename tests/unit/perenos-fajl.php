@@ -106,7 +106,7 @@ ok(array_keys($r['data_requirements']) === ['Entity#0', 'Entity#3', 'Group#7', '
     'нужные сведения об объектах — по ключу «тип#номер»', implode(', ', array_keys($r['data_requirements'])));
 ok(($r['uses']['Group#7'] ?? []) === ['этап 20 «Этап 20» — группа'], 'у ссылки — где она в маршруте',
     json_encode($r['uses']['Group#7'] ?? null, JSON_UNESCAPED_UNICODE));
-ok(($r['uses']['Entity#3'] ?? []) === ['этап 20 «Этап 20» — организация заявки отдела'], 'организация отдела «В указанной организации» — ссылка');
+ok(($r['uses']['Entity#3'] ?? []) === ['этап 20 «Этап 20» — организация дочерней заявки'], 'организация отдела «В указанной организации» — ссылка');
 ok(array_keys($f['routes'][1]['data_requirements']) === ['Entity#3', 'Group#7'], 'у второго маршрута — только его объекты');
 ok(Transfer::parse("\xEF\xBB\xBF" . json(fajl()))['routes'][1]['name'] === 'Прежний порядок', 'метка порядка байтов в начале не мешает');
 $lishnee = fajl();
@@ -119,7 +119,8 @@ $plohie = [
     'не JSON' => ['маршруты', 'не файл JSON'],
     'список вместо объекта' => ['[]', 'не файл маршрутов'],
     'чужой формат' => [json(['format' => 'glpi-forms'] + fajl()), 'не файл маршрутов'],
-    'другая версия' => [json(array_replace(fajl(), ['version' => 2])), 'Версия формата файла — 2'],
+    'версия новее плагина' => [json(array_replace(fajl(), ['version' => 5])), 'Версия формата файла — 5, эта версия плагина читает версии с 1 по 4. Обновите плагин.'],
+    'версия 0' => [json(array_replace(fajl(), ['version' => 0])), 'Версия формата файла — 0'],
     'версия строкой' => [json(array_replace(fajl(), ['version' => '1'])), 'Версия формата'],
     'нет маршрутов' => [json(array_replace(fajl(), ['routes' => []])), 'нет маршрутов'],
     'глубокая вложенность' => [str_repeat('[', 100) . str_repeat(']', 100), 'не файл JSON'],
@@ -146,8 +147,8 @@ $plohie += [
     'порог больше 100' => [$izm(static function (&$d) { $d['routes'][0]['stages'][0]['approval_percent'] = 150; }), '«approval_percent»'],
     'инструкция больше 64 КБ' => [$izm(static function (&$d) { $d['routes'][0]['stages'][0]['content'] = str_repeat('a', 70000); }), 'до 64 КБ'],
     'повтор номера этапа в файле' => [$izm(static function (&$d) { $d['routes'][1]['stages'][0]['id'] = 51; }), 'номер этапа 51 в файле повторяется'],
-    'точки возврата строкой' => [$izm(static function (&$d) { $d['routes'][0]['stages'][0]['return_targets'] = '[51]'; }), 'точки возврата записаны неверно'],
-    'повтор точки возврата' => [$izm(static function (&$d) { $d['routes'][0]['stages'][0]['return_targets'] = [51, 51]; }), 'точки возврата записаны неверно'],
+    'точки возврата строкой' => [$izm(static function (&$d) { $d['routes'][0]['stages'][0]['return_targets'] = '[51]'; }), 'этапы для возврата записаны неверно'],
+    'повтор точки возврата' => [$izm(static function (&$d) { $d['routes'][0]['stages'][0]['return_targets'] = [51, 51]; }), 'этапы для возврата записаны неверно'],
     'ссылка без сведений' => [$izm(static function (&$d) { $d['routes'][0]['stages'][2]['users_id'] = 10; }), 'нет сведений об объекте GLPI User#10'],
     'организация маршрута без сведений' => [$izm(static function (&$d) { $d['routes'][1]['entities_id'] = 0; }), 'нет сведений об объекте GLPI Entity#0'],
     'неизвестный тип в сведениях' => [$izm(static function (&$d) { $d['routes'][0]['data_requirements'][] = ['itemtype' => 'Profile', 'id' => 4, 'name' => 'Super-Admin']; }), 'неизвестный тип'],
@@ -169,7 +170,7 @@ $smysl = [
     'неизвестный статус 99 у изменения' => [static function (&$d) { $d['routes'][1]['stages'][0]['ticket_status'] = 99; }, 1, 'статус, который выставляет этап'],
     'одинаковый порядок' => [static function (&$d) { $d['routes'][0]['stages'][2]['ranking'] = 10; }, 0, 'Два этапа с порядком 10.'],
     'порядок 0' => [static function (&$d) { $d['routes'][0]['stages'][2]['ranking'] = 0; }, 0, 'порядок должен быть больше нуля'],
-    'точка возврата на этап другого маршрута' => [static function (&$d) { $d['routes'][0]['stages'][0]['return_targets'] = [61]; }, 0, 'точка возврата: этапа нет в этом маршруте'],
+    'точка возврата на этап другого маршрута' => [static function (&$d) { $d['routes'][0]['stages'][0]['return_targets'] = [61]; }, 0, 'этап для возврата отсутствует в этом маршруте'],
     '«Вернуться на этап» — нет этапа' => [static function (&$d) { $d['routes'][1]['stages'][1]['plugin_itilflow_stages_id_reject'] = 999; }, 1, '«Вернуться на этап»: этапа нет в этом маршруте'],
 ];
 foreach ($smysl as $chto => [$f, $nomer, $zhdem]) {
@@ -200,7 +201,75 @@ try {
     ok(false, 'поля, которые этап не читает, — не ссылки: сведений не нужно', $e->getMessage());
 }
 
-// 5. Поля запроса.
+// 5. Формат 1 (до 1.11) читается: списков согласующих нет — прежние «группа / сотрудник».
+$r = Transfer::parse(json(fajl()))['routes'][0];
+$e10 = $r['stages'][0];
+ok(Transfer::VERSION === 4, 'этот выпуск пишет формат 4');
+ok(array_key_exists('approver_users', $e10) && $e10['approver_users'] === null && $e10['approver_groups'] === null
+    && $e10['approver_group_mode'] === 'any', 'формат 1: списки не заполнены, группа — «любой участник»');
+$d = fajl();
+$d['routes'][0]['stages'][0]['approver_users'] = [9];
+ok(str_contains(prichina(json($d)), 'лишнее поле «approver_users»'), 'формат 1 строго: поле формата 2 — лишнее');
+
+// 6. Формат 2: списки согласующих — ссылки со сведениями, как группа и сотрудник этапа.
+function fajl2(): array
+{
+    $d = fajl();
+    $d['version'] = 2;
+    foreach ($d['routes'] as $i => $route) {
+        foreach ($route['stages'] as $j => $s) {
+            $d['routes'][$i]['stages'][$j] = $s + ['approver_users' => null, 'approver_groups' => null, 'approver_group_mode' => 'any'];
+        }
+    }
+    // Этап 30 нового порядка — согласование «Указан в этапе» со списком сотрудников.
+    $d['routes'][0]['stages'][2] = array_replace($d['routes'][0]['stages'][2], ['execution_mode' => 'approval',
+        'users_id' => 0, 'approver_users' => [9, 12], 'approver_group_mode' => 'each']);
+    $d['routes'][0]['data_requirements'][] = ['itemtype' => 'User', 'id' => 12, 'name' => 'petrov'];
+    return $d;
+}
+try {
+    $r = Transfer::parse(json(fajl2()))['routes'][0];
+    $e30 = $r['stages'][2];
+    ok($e30['approver_users'] === [9, 12] && $e30['approver_groups'] === null && $e30['approver_group_mode'] === 'each',
+        'формат 2: списки и ответ группы читаются как есть');
+    ok(isset($r['data_requirements']['User#9'], $r['data_requirements']['User#12']), 'номера списка — ссылки со сведениями');
+    ok(($r['uses']['User#12'] ?? []) === ['этап 30 «Этап 30» — согласующий пользователь'], 'у ссылки списка — где она',
+        json_encode($r['uses']['User#12'] ?? null, JSON_UNESCAPED_UNICODE));
+} catch (\Throwable $e) {
+    ok(false, 'правильный файл формата 2 читается', $e->getMessage());
+}
+$izm2 = static function (callable $f): string {
+    $d = fajl2();
+    $f($d);
+    return json($d);
+};
+foreach ([
+    'нет поля формата 2' => [$izm2(static function (&$d) { unset($d['routes'][0]['stages'][1]['approver_group_mode']); }), 'нет поля «approver_group_mode»'],
+    'список с нулём' => [$izm2(static function (&$d) { $d['routes'][0]['stages'][2]['approver_users'] = [0]; }), '«approver_users» — список номеров записан неверно'],
+    'список с повтором' => [$izm2(static function (&$d) { $d['routes'][0]['stages'][2]['approver_users'] = [9, 9]; }), 'список номеров записан неверно'],
+    'номер строкой' => [$izm2(static function (&$d) { $d['routes'][0]['stages'][2]['approver_users'] = ['9']; }), 'список номеров записан неверно'],
+    'список — объект' => [$izm2(static function (&$d) { $d['routes'][0]['stages'][2]['approver_groups'] = ['a' => 7]; }), '«approver_groups» — список номеров записан неверно'],
+    'список строкой JSON' => [$izm2(static function (&$d) { $d['routes'][0]['stages'][2]['approver_users'] = '[9]'; }), 'список номеров записан неверно'],
+    'неизвестный ответ группы' => [$izm2(static function (&$d) { $d['routes'][0]['stages'][2]['approver_group_mode'] = 'all'; }), '«approver_group_mode» — недопустимое значение'],
+    'номер списка без сведений' => [$izm2(static function (&$d) { $d['routes'][0]['stages'][2]['approver_users'] = [9, 13]; }), 'нет сведений об объекте GLPI User#13'],
+    'группа списка без сведений' => [$izm2(static function (&$d) { $d['routes'][0]['stages'][2]['approver_groups'] = [70]; }), 'нет сведений об объекте GLPI Group#70'],
+] as $chto => [$json, $zhdem]) {
+    $p = prichina($json);
+    ok($p !== '' && str_contains($p, $zhdem) && !str_starts_with($p, 'ОШИБКА PHP'), 'плохой файл формата 2: ' . $chto, $p === '' ? 'принят' : $p);
+}
+// Списки читает только согласование «Указан в этапе»: у остальных номера — не ссылки.
+$d = fajl2();
+$d['routes'][0]['stages'][1]['approver_users'] = [55]; // согласование «при прохождении»
+$d['routes'][0]['stages'][0]['approver_groups'] = [56]; // заявка отдела
+try {
+    $r = Transfer::parse(json($d))['routes'][0];
+    ok(!isset($r['data_requirements']['User#55']) && !isset($r['data_requirements']['Group#56']),
+        'списки, которые этап не читает, — не ссылки: сведений не нужно');
+} catch (\Throwable $e) {
+    ok(false, 'списки, которые этап не читает, — не ссылки: сведений не нужно', $e->getMessage());
+}
+
+// 7. Поля запроса.
 ok(Transfer::requestIds(['3', 4, 'x', '-1', '5.0', '3', ['7']]) === [3, 4], 'номера из запроса — только целые, без повторов');
 ok(Transfer::requestIds('12') === [12], 'один номер строкой');
 ok(Transfer::requestReplacements([
@@ -213,5 +282,103 @@ ok(Transfer::requestReplacements([
 ok(Transfer::requestReplacements('[{"itemtype":"Group","original_id":7,"replacement_id":8},{"itemtype":"X","original_id":1,"replacement_id":1}]')
     === [['Group', 7, 8]], 'прежние замены — одним полем JSON');
 ok(Transfer::requestReplacements('не json') === [] && Transfer::requestReplacements('[[[[[1]]]]]') === [], 'испорченное поле замен — пусто, без ошибки');
+
+// Старый формат 2, UUID формы и обязательные сведения назначения.
+$old = Transfer::parse(json(fajl2()))['routes'][0];
+ok($old['forms_forms_id'] === 0 && $old['forms_destinations_id'] === 0
+    && $old['stages'][0]['form_validationsteps_id'] === 0, 'прежний формат 2: отсутствующие поля формы равны нулю');
+$fd = fajl2();
+$fd['routes'][0]['forms_forms_id'] = 91;
+$fd['routes'][0]['forms_destinations_id'] = 92;
+$fd['routes'][0]['data_requirements'][] = ['itemtype' => \GlpiPlugin\Itilflow\TransferMapper::FORM, 'id' => 91, 'name' => 'Форма', 'uuid' => 'source-uuid'];
+$fd['routes'][0]['data_requirements'][] = ['itemtype' => \GlpiPlugin\Itilflow\TransferMapper::DESTINATION, 'id' => 92, 'name' => 'Назначение', 'forms_forms_id' => 91, 'form_uuid' => 'source-uuid'];
+ok(prichina(json($fd)) === '', 'формат 2: сведения формы и назначения читаются');
+$mapped = new ReflectionMethod(Transfer::class, 'mapped');
+$route = Transfer::parse(json($fd))['routes'][0];
+[$process] = $mapped->invoke(null, $route, [\GlpiPlugin\Itilflow\TransferMapper::FORM . '#91' => 901, \GlpiPlugin\Itilflow\TransferMapper::DESTINATION . '#92' => 902]);
+ok($process['forms_forms_id'] === 901 && $process['forms_destinations_id'] === 902, 'перенос сохраняет сопоставленные номера формы/назначения, не исходные');
+foreach ([
+    'чужой родитель' => static function (&$f) { $f['routes'][0]['data_requirements'][array_key_last($f['routes'][0]['data_requirements'])]['forms_forms_id'] = 93; },
+    'другой UUID родителя' => static function (&$f) { $f['routes'][0]['data_requirements'][array_key_last($f['routes'][0]['data_requirements'])]['form_uuid'] = 'other'; },
+    'лишнее поле требования' => static function (&$f) { $f['routes'][0]['data_requirements'][array_key_last($f['routes'][0]['data_requirements'])]['trusted'] = true; },
+    'нет UUID формы' => static function (&$f) { unset($f['routes'][0]['data_requirements'][count($f['routes'][0]['data_requirements']) - 2]['uuid']); },
+    'номер формы строкой' => static function (&$f) { $f['routes'][0]['forms_forms_id'] = '91'; },
+] as $label => $change) {
+    $bad = $fd; $change($bad); $reason = prichina(json($bad));
+    ok($reason !== '' && !str_starts_with($reason, 'ОШИБКА PHP'), 'форма отклонена: ' . $label, $reason);
+}
+
+$fd['routes'][0]['stages'][1]['approver_source'] = 'form';
+$fd['routes'][0]['stages'][1]['form_validationsteps_id'] = 8;
+$fd['routes'][0]['data_requirements'][] = ['itemtype' => 'ValidationStep', 'id' => 8, 'name' => 'Подтверждение'];
+$route = Transfer::parse(json($fd))['routes'][0];
+[, $stages] = $mapped->invoke(null, $route, ['ValidationStep#8' => 80]);
+ok($stages[0]['form_validationsteps_id'] === 80 && $stages[0]['approver_source'] === 'form', 'ступень формы переносится по подтверждённому mapping; источник остаётся form');
+$bad = $fd; array_pop($bad['routes'][0]['data_requirements']);
+ok(str_contains(prichina(json($bad)), 'ValidationStep#8'), 'без сведений ступень формы не переносится');
+
+// Формат 3 переносит определения, но не ответы и рабочие попытки.
+$f3 = fajl(); $f3['version'] = 3;
+foreach ($f3['routes'] as &$r) {
+    foreach ($r['stages'] as &$s) { $s += ['approver_users'=>null,'approver_groups'=>null,'approver_group_mode'=>'any',
+        'run_if'=>null,'decision_items'=>null,'unknown_policy'=>'run']; }
+    unset($s);
+}
+unset($r);
+$f3['routes'][0]['stages'][1]['decision_items'] = [['key'=>'approved','label'=>'Можно продолжить']];
+$f3['routes'][0]['stages'][0]['run_if'] = ['version'=>1,'join'=>'all','clauses'=>[
+    ['source'=>'decision','stage_id'=>51,'key'=>'approved','operator'=>'eq','value'=>true],
+    ['source'=>'ticket','field'=>'category_id','operator'=>'eq','value'=>11],
+]];
+$r3 = Transfer::parse(json($f3))['routes'][0];
+ok($r3['problems'] === [], 'формат 3: решение более раннего этапа и категория читаются');
+[, $mapped3] = $mapped->invoke(null, $r3, ['ITILCategory#11'=>111]);
+ok($mapped3[1]['run_if']['clauses'][1]['value'] === 111, 'категория условия получает номер целевой базы');
+$remap = new ReflectionMethod(Transfer::class, 'remapCondition');
+$rule3 = $remap->invoke(null, $r3['stages'][1]['run_if'], [51=>501,52=>502]);
+ok($rule3['clauses'][0]['stage_id'] === 501 && $rule3['clauses'][0]['key'] === 'approved', 'второй проход меняет stage_id и сохраняет ключ решения');
+try { $remap->invoke(null, $r3['stages'][1]['run_if'], [52=>502]); ok(false, 'неполная карта этапов запрещена'); }
+catch (TransferError $e) { ok(true, 'неполная карта этапов запрещена'); }
+foreach ([
+    'лишнее поле условия'=>static function (&$f) { $f['routes'][0]['stages'][0]['run_if']['code']='php'; },
+    'строка вместо bool'=>static function (&$f) { $f['routes'][0]['stages'][0]['run_if']['clauses'][0]['value']='true'; },
+    'повтор ключа решения'=>static function (&$f) { $f['routes'][0]['stages'][1]['decision_items'][]=$f['routes'][0]['stages'][1]['decision_items'][0]; },
+    'неизвестная политика'=>static function (&$f) { $f['routes'][0]['stages'][0]['unknown_policy']='else'; },
+] as $label=>$change) { $bad=$f3; $change($bad); ok(prichina(json($bad)) !== '', 'формат 3 отклоняет: '.$label); }
+$bad=$f3; $bad['routes'][0]['stages'][0]['run_if']['clauses'][0]['key']='missing';
+ok(Transfer::parse(json($bad))['routes'][0]['problems'] !== [], 'ключ решения обязан существовать');
+$bad=$f3; $bad['routes'][0]['stages'][0]['run_if']['clauses'][0]['stage_id']=53;
+ok(Transfer::parse(json($bad))['routes'][0]['problems'] !== [], 'условие не ссылается на последующий этап');
+$old=Transfer::parse(json(fajl()))['routes'][0]['stages'][0];
+ok($old['run_if'] === null && $old['decision_items'] === null && $old['unknown_policy']==='run', 'форматы 1/2 не приобретают новые условия');
+
+$q = ['id'=>71,'uuid'=>'question-uuid','label'=>'Согласие','native_type'=>'synthetic_bool','type'=>'bool',
+    'multiple'=>false,'options'=>[],'itemtype'=>null,'supported'=>true,'reason'=>null];
+$fq=$f3;
+$fq['routes'][0]['forms_forms_id']=70;
+$fq['routes'][0]['data_requirements'][]=['itemtype'=>'Glpi\\Form\\Form','id'=>70,'name'=>'Форма','uuid'=>'form-uuid'];
+$fq['routes'][0]['data_requirements'][]=['itemtype'=>'Glpi\\Form\\Question','id'=>71,'name'=>$q['label'],'uuid'=>$q['uuid'],
+    'forms_forms_id'=>70,'form_uuid'=>'form-uuid','descriptor'=>$q];
+$fq['routes'][0]['stages'][0]['run_if']['clauses']=[['source'=>'form_answer','question_uuid'=>$q['uuid'],'question'=>$q,'operator'=>'eq','value'=>true]];
+$parsed=Transfer::parse(json($fq));
+ok(isset($parsed['routes'][0]['data_requirements']['Glpi\\Form\\Question#71']), 'вопрос условия требует переносимых сведений');
+foreach ([
+    'чужая форма вопроса'=>static function (&$f) { $f['routes'][0]['data_requirements'][7]['forms_forms_id']=99; },
+    'чужой UUID формы'=>static function (&$f) { $f['routes'][0]['data_requirements'][7]['form_uuid']='foreign'; },
+    'UUID вопроса не равен UUID ссылки'=>static function (&$f) { $f['routes'][0]['stages'][0]['run_if']['clauses'][0]['question_uuid']='other'; },
+    'ответы не входят в descriptor'=>static function (&$f) { $f['routes'][0]['data_requirements'][7]['descriptor']['answers']=['private']; },
+] as $label=>$change) { $bad=$fq; $change($bad); ok(prichina(json($bad)) !== '', 'вопрос отклонён: '.$label); }
+$target=$q; $target['id']=171; $target['uuid']='clone-uuid';
+ok(\GlpiPlugin\Itilflow\FormFacts::validateMapping($q,$target)!==[], 'новый UUID после clone требует явного выбора');
+ok(\GlpiPlugin\Itilflow\FormFacts::validateMapping($q,$target,[$q['uuid']=>$target['uuid']])===[], 'явный выбор разрешает совместимый clone вопроса');
+$target['type']='number';
+ok(\GlpiPlugin\Itilflow\FormFacts::validateMapping($q,$target,[$q['uuid']=>$target['uuid']])!==[], 'явный выбор не отменяет совместимость типов');
+
+$listFile=$f3;
+$listFile['routes'][0]['stages'][0]['run_if']['clauses'][1]['operator']='in';
+$listFile['routes'][0]['stages'][0]['run_if']['clauses'][1]['value']=[0,11];
+$listRoute=Transfer::parse(json($listFile))['routes'][0];
+[, $listStages]=$mapped->invoke(null,$listRoute,['ITILCategory#11'=>111]);
+ok($listStages[1]['run_if']['clauses'][1]['value']===[0,111], 'список категорий remap сохраняет отсутствие категории нулём');
 
 itog();

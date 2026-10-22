@@ -19,7 +19,7 @@
    <div class="d-flex justify-content-between align-items-start mb-3">
       <div>
          <h2>Лист согласования</h2>
-         <div class="muted">Маршрут «{{ header.process }}», редакция {{ header.version }}</div>
+         <div class="muted">Маршрут «{{ header.process }}»</div>
       </div>
       <div class="no-print">
          <button class="btn btn-sm btn-primary" onclick="window.print();">
@@ -36,10 +36,20 @@
          <td>{{ header.entity }}</td>
       </tr>
       <tr>
-         <th>Заявитель</th>
+         <th>Инициатор заявки</th>
          <td>{{ header.requester|default('—') }}</td>
          <th>Состояние маршрута</th>
-         <td>{{ header.state }} ({{ header.progress }})</td>
+         <td><div>{{ header.state }}</div>
+            {# Одна строка: нулевые счётчики не показываются. #}
+            {% set p = header.required_progress %}
+            <div class="muted">{{ header.progress }} · нужно пройти: {{ p.required }}
+               {%- if p.not_needed %} · не нужны по условию: {{ p.not_needed }}{% endif %}
+               {%- if p.undetermined %} · зависят от условий: {{ p.undetermined }}{% endif %}
+               {%- if p.skipped_before_start %} · пропущены до начала: {{ p.skipped_before_start }}{% endif %}
+               {%- if p.interrupted %} · не закончены: {{ p.interrupted }}{% endif %}
+               {%- if p.not_run|default(0) %} · не выполнялись: {{ p.not_run }}{% endif %}
+               {%- if p.history %} · прежних попыток: {{ p.history }}{% endif %}</div>
+         </td>
       </tr>
       <tr>
          <th>Начат</th>
@@ -54,14 +64,14 @@
          <tr>
             <th class="num">№</th>
             <th>Этап</th>
-            <th>Режим</th>
-            <th>Ответственный</th>
+            <th>Как выполняется</th>
+            <th>Исполнитель</th>
             <th>Начат</th>
             <th>Срок</th>
             <th>Завершён</th>
-            <th>Длит.</th>
+            <th>Длительность</th>
             <th>Результат</th>
-            <th>Отчёт о выполнении</th>
+            <th>Что сделано</th>
          </tr>
       </thead>
       <tbody>
@@ -79,10 +89,11 @@
                {% if r.approver_set_by %}
                   <div class="swap">согласующего указал: {{ r.approver_set_by }}</div>
                   {% if r.approver_reason %}
-                     <div class="muted">основание: {{ r.approver_reason }}</div>
+                     <div class="muted">причина: {{ r.approver_reason }}</div>
                   {% endif %}
                {% endif %}
                {% if r.closed_by %}<div class="muted">закрыл: {{ r.closed_by }}</div>{% endif %}
+               {% for line in r.approval|default([]) %}<div class="muted">{{ line }}</div>{% endfor %}
             </td>
             <td>{{ r.date_start|default('—') }}</td>
             <td class="{{ r.overdue ? 'late' : '' }}">{{ r.date_due|default('—') }}</td>
@@ -90,6 +101,9 @@
             <td>{{ r.duration|default('—') }}</td>
             <td class="{{ r.overdue ? 'late' : '' }}">
                {{ r.result }}{% if r.overdue %} · просрочен{% endif %}
+               {% if r.approver_comment|default('') %}<div class="muted">Комментарий согласующего: {{ r.approver_comment }}</div>{% endif %}
+               {% if r.why|default('') %}<div class="muted">{{ r.why }}</div>{% endif %}
+               {% for line in r.decisions|default([]) %}<div class="muted">{{ line }}</div>{% endfor %}
             </td>
             <td>{{ r.comment|default('—') }}</td>
          </tr>

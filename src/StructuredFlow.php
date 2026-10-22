@@ -14,14 +14,14 @@ trait StructuredFlow
     }
 
     /** Сравнение квитанции идёт под тем же lock, что и изменение экземпляра. */
+    /** $actor — автор команды, если это не вошедший: ответ инициатора письмом (сеанс сборщика почты). */
     private static function structuredCommand(Instance $instance, string $action, string $key,
-        int $expected_attempt, array $payload, callable $operation): array
+        int $expected_attempt, array $payload, callable $operation, ?int $actor = null): array
     {
-        if (!preg_match('/^[a-f0-9]{64}$/D', $key) || $expected_attempt <= 0
-            || (int) \Session::getLoginUserID() <= 0) {
+        $actor ??= (int) \Session::getLoginUserID();
+        if (!preg_match('/^[a-f0-9]{64}$/D', $key) || $expected_attempt <= 0 || $actor <= 0) {
             return self::structuredResult('rejected', $instance);
         }
-        $actor = (int) \Session::getLoginUserID();
         $digest = hash('sha256', DefinitionSnapshot::encode([$action, $expected_attempt, $payload]));
         $result = self::structuredResult('unknown', $instance);
         $rejected = false;
@@ -65,7 +65,7 @@ trait StructuredFlow
                 return self::structuredResult($apply() ? 'applied' : 'rejected', $instance, $step);
             });
         if ($result['status'] === 'rejected' && $denial === null) {
-            self::msg('Команда отклонена. Обновите карточку и проверьте текущую попытку и полномочия.', ERROR);
+            self::msg('Действие не выполнено: страница устарела или у вас нет права. Обновите страницу.', ERROR);
         }
         return in_array($result['status'], ['applied', 'already_applied'], true);
     }
@@ -80,6 +80,39 @@ trait StructuredFlow
             return $step->getFromDB((int) $payload[0])
                 && (int) $step->fields['plugin_itilflow_instances_id'] === (int) $instance->getID()
                 && Authorizer::replayStepError($step, substr($action, 5)) === null;
+        }
+        if (in_array($action, ['save_decision', 'choose_condition'], true)) {
+            $step = new Step();
+            if (!$step->getFromDB((int) ($payload[0] ?? 0)) || (int) $step->fields['plugin_itilflow_instances_id'] !== (int) $instance->getID()) { return false; }
+            $item = $instance->getItilItem();
+            if ($item === null || Authorizer::itemError($item, $action === 'save_decision' ? READ : UPDATE) !== null) { return false; }
+            if ($action === 'save_decision') {
+                foreach (Decision::read($step)['history'] as $entry) {
+                    if ((int) ($entry['actor'] ?? 0) === (int) \Session::getLoginUserID()) { return true; }
+                }
+            }
+            if ($action === 'choose_condition' && ($payload[1] ?? '') === 'skip'
+                && ($step->fields['execution_mode'] === Stage::MODE_APPROVAL || ($step->getStage()?->fields['department_result_source'] ?? '') === 'native_validation')) { return Authorizer::isAdministrator(); }
+            return Authorizer::isAdministrator() || Authorizer::isAssignee($item) || ($action === 'save_decision' && Decision::canWrite($step));
+        }
+        if ($action === 'adopt_existing') {
+            $step = new Step();
+            if (!$step->getFromDB((int) ($payload[0] ?? 0))
+                || (int) $step->fields['plugin_itilflow_instances_id'] !== (int) $instance->getID()) { return false; }
+            $rows = $step->validationRoster();
+            if ($rows === null) { return false; }
+            $answered = count(array_filter($rows, static fn(array $r): bool => (int) $r['status'] !== 2)) > 0;
+            $confirmation = $payload[3] ?? null;
+            if ($confirmation !== null && !is_string($confirmation)) { return false; }
+            if ($answered || $confirmation !== null) {
+                $native = \Ticket::getValidationStepInstance();
+                $first = reset($rows);
+                if ($native === null || !$first || !CurrentRead::load($native, (int) $first['itils_validationsteps_id'])
+                    || !ManualAdoptionConfirmation::accepts(array_values(CurrentRead::find(new \TicketValidation(), [
+                        'tickets_id' => (int) $first['tickets_id'], 'itils_validationsteps_id' => (int) $first['itils_validationsteps_id'],
+                    ])), $native->fields, $confirmation)) { return false; }
+            }
+            return Authorizer::formAdoptionError($step, $answered, true) === null;
         }
         if ($action === 'activate_attempt') {
             return StructuredAccess::activateError($instance) === null;
@@ -103,18 +136,21 @@ trait StructuredFlow
     }
 
     public static function departmentOutcome(Step $step, string $outcome, string $reason,
-        string $public_summary, string $command_key, int $expected_attempt): array
+        string $public_summary, string $command_key, int $expected_attempt, ?int $decision_revision = null, ?array $decision_answers = null): array
     {
         $instance = $step->getInstance();
         if ($instance === null) { return ['status' => 'rejected']; }
         $reason = trim(strip_tags($reason));
         $public_summary = trim(strip_tags($public_summary));
         return self::structuredCommand($instance, 'department_outcome', $command_key, $expected_attempt,
-            [$step->getID(), $outcome, $reason, $public_summary], static function () use ($instance, $step,
-                $outcome, $reason, $public_summary, $command_key): array {
+            array_merge([$step->getID(), $outcome, $reason, $public_summary], Decision::items($step) === [] ? [] : [$decision_revision, $decision_answers]), static function () use ($instance, $step,
+                $outcome, $reason, $public_summary, $command_key, $decision_revision, $decision_answers): array {
                 if (StructuredAccess::answerError($step) !== null
                     || !in_array($outcome, [Outcome::COMPLETED, Outcome::REFUSED], true)
                     || ($outcome === Outcome::REFUSED && $reason === '') || $public_summary === '') {
+                    return self::structuredResult('rejected', $instance);
+                }
+                if (!self::prepareDecisionForOutcome($step, $decision_revision, $decision_answers, $outcome === Outcome::COMPLETED)) {
                     return self::structuredResult('rejected', $instance);
                 }
                 $record = self::recordStructuredOutcome($instance, $step, $outcome, 'assignee_action',
@@ -143,19 +179,20 @@ trait StructuredFlow
     }
 
     public static function requestClarification(Step $step, int $target_stage, string $reason,
-        string $public_summary, string $command_key, int $expected_attempt): array
+        string $public_summary, string $command_key, int $expected_attempt, ?int $decision_revision = null): array
     {
         $instance = $step->getInstance();
         if ($instance === null) { return ['status' => 'rejected']; }
         $reason = trim(strip_tags($reason));
         $public_summary = trim(strip_tags($public_summary));
         return self::structuredCommand($instance, 'request_clarification', $command_key, $expected_attempt,
-            [$step->getID(), $target_stage, $reason, $public_summary], static function () use ($instance,
-                $step, $target_stage, $reason, $public_summary, $command_key): array {
+            array_merge([$step->getID(), $target_stage, $reason, $public_summary], Decision::items($step) === [] ? [] : [$decision_revision]), static function () use ($instance,
+                $step, $target_stage, $reason, $public_summary, $command_key, $decision_revision): array {
                 if (StructuredAccess::answerError($step, true) !== null || $reason === '' || $public_summary === ''
                     || !self::structuredTargetAllowed($step, $target_stage)) {
                     return self::structuredResult('rejected', $instance);
                 }
+                if (!self::prepareDecisionForOutcome($step, $decision_revision, null, false)) { return self::structuredResult('rejected', $instance); }
                 $record = self::recordStructuredOutcome($instance, $step, Outcome::CLARIFICATION,
                     'clarification', '', 0, (int) \Session::getLoginUserID(), $reason, $public_summary, $command_key);
                 self::closeStructuredAttempt($instance, $step, Attempt::RETURNED);
@@ -193,12 +230,159 @@ trait StructuredFlow
     public static function activateAttempt(Instance $instance, string $subject_summary,
         string $reason, string $command_key, int $expected_attempt): array
     {
+        return self::continueAttempt($instance, $subject_summary, $reason, $command_key, $expected_attempt, false);
+    }
+
+    /**
+     * Продолжится ли маршрут от ответа инициатора сам. Уточнение вернул этап согласования — у основной
+     * заявки нет исполнителя, который нажал бы «Продолжить». Согласующие «Задан в этапе» получат
+     * запрос заново по настройке этапа; «Согласование из формы» и «Указывает исполнитель» — только
+     * если известны адресаты прошлого прохода этапа ($targetsKnown, Engine::repeatPlan). Иначе и при
+     * уточнении от исполнителя задачи или отдела — «Продолжить» нажимает человек.
+     */
+    public static function continuesOnAnswer(?string $sourceMode, string $approverSource = Stage::APPROVER_FIXED, bool $targetsKnown = false): bool
+    {
+        return $sourceMode === Stage::MODE_APPROVAL && ($approverSource === Stage::APPROVER_FIXED || $targetsKnown);
+    }
+
+    /**
+     * Этот запуск ждёт ответа инициатора и продолжится от его комментария сам. Решает этап, с которого
+     * маршрут продолжится: согласование «из формы» / «укажет исполнитель» получит запросы само, только
+     * если это тот же этап, что вернул на уточнение, и адресаты его снятых запросов известны (planFrom).
+     */
+    public static function answerContinues(Instance $instance): bool
+    {
+        $attempt = DefinitionSnapshot::enabled($instance) ? Attempt::current($instance) : null;
+        if ($attempt === null || $attempt->fields['state'] !== Attempt::WAITING_INPUT) { return false; }
+        $source = new Step();
+        if ((int) ($attempt->fields['source_step_id'] ?? 0) <= 0 || !$source->getFromDB((int) $attempt->fields['source_step_id'])) { return false; }
+        $targetId = (int) ($attempt->fields['target_stage_id'] ?? 0);
+        $target = DefinitionSnapshot::stage($instance, $targetId);
+        if ($target === null) { return false; }
+        $kind = ($target->fields['execution_mode'] ?? '') === Stage::MODE_APPROVAL
+            ? (string) ($target->fields['approver_source'] ?? Stage::APPROVER_FIXED) : Stage::APPROVER_FIXED;
+        $item = $instance->getItilItem();
+        $known = $kind !== Stage::APPROVER_FIXED && $item !== null
+            && (int) $source->fields['plugin_itilflow_stages_id'] === $targetId
+            && self::planFrom($source, $item)['targets'] !== [];
+        return self::continuesOnAnswer((string) ($source->fields['execution_mode'] ?? ''), $kind, $known);
+    }
+
+    /**
+     * Комментарий годится как ответ инициатора: публичный, автор — инициатор заявки, и он же вошёл.
+     * Письмо из сборщика почты (сеанс автоматического действия, без вошедшего) — тоже: автор там —
+     * инициатор, найденный ядром по адресу отправителя, как и для самого комментария. Подделать
+     * сеанс автоматического действия из браузера нельзя; поля формы (_mailgate, users_id) — можно,
+     * поэтому без сеанса cron они не учитываются.
+     */
+    public static function answerAuthor(array $fields, array $input, int $sessionUser, bool $cron): int
+    {
+        $author = (int) ($fields['users_id'] ?? 0);
+        if (!empty($fields['is_private']) || $author <= 0) { return 0; }
+        if ($author === $sessionUser) { return $author; }
+        return $cron && !empty($input['_mailgate']) ? $author : 0;
+    }
+
+    /**
+     * Публичный комментарий инициатора к заявке, которая ждёт его ответа на уточнение этапа
+     * согласования: маршрут продолжается с отмеченного этапа — согласующим снова уходит запрос.
+     * Повтор того же комментария ничего не делает (ключ команды — по номеру комментария).
+     * Не продолжается сам — запись в журнал маршрута для администратора. Инициатору служебных
+     * сообщений не показывается, своя запись в ленту не пишется: его ответ уже там.
+     */
+    public static function initiatorAnswered(\ITILFollowup $followup): void
+    {
+        $instance = null;
+        try {
+            self::initiatorAnsweredOnce($followup, $instance);
+        } catch (\Throwable $e) {
+            // Комментарий уже сохранён ядром: исключение в ядро не выпускаем (HTTP 500 у инициатора).
+            self::hookFailed($e, $instance, 'continue_failed',
+                'Инициатор ответил на уточнение, но маршрут сам не продолжился. Проверьте этап и нажмите «Продолжить».');
+        }
+    }
+
+    /**
+     * Сбой обработчика события ядра: строка в itilflow.log; если маршрут уже известен — запись журнала
+     * маршрута для администратора. Людям — без ошибки: маршрут ждёт, есть «Продолжить» и догоняющая сверка.
+     * Ничего не бросает, даже при потерянной транзакции.
+     */
+    public static function hookFailed(\Throwable $error, ?Instance $instance, string $action, string $message): void
+    {
+        try {
+            \Toolbox::logInFile('itilflow', sprintf("Обработчик маршрута не завершён (%s): %s: %s\n", $action, get_class($error),
+                mb_substr($error->getMessage(), 0, 500)), true, false);
+        } catch (\Throwable) {}
+        if ($instance === null || (int) $instance->getID() <= 0) { return; }
+        try {
+            Violation::record($instance, (string) $instance->fields['itemtype'], (int) $instance->fields['items_id'], $action, false, $message);
+        } catch (\Throwable) {}
+    }
+
+    /** Тело initiatorAnswered; $instance — маршрут, как только ясно, что это ответ инициатора на уточнение. */
+    private static function initiatorAnsweredOnce(\ITILFollowup $followup, ?Instance &$known): void
+    {
+        $type = (string) ($followup->fields['itemtype'] ?? '');
+        if (!in_array($type, ['Ticket', 'Change', 'Problem'], true)) { return; }
+        $author = self::answerAuthor($followup->fields, is_array($followup->input ?? null) ? $followup->input : [],
+            (int) \Session::getLoginUserID(), \Session::isCron());
+        if ($author <= 0) { return; }
+        $item = new $type();
+        if (!$item->getFromDB((int) ($followup->fields['items_id'] ?? 0)) || !$item->isUser(\CommonITILActor::REQUESTER, $author)) { return; }
+        $instance = Instance::getForItem($item);
+        $attempt = $instance !== null && DefinitionSnapshot::enabled($instance) ? Attempt::current($instance) : null;
+        if ($attempt === null || $attempt->fields['state'] !== Attempt::WAITING_INPUT) { return; }
+        $known = $instance;
+        $text = trim(html_entity_decode(strip_tags((string) ($followup->fields['content'] ?? '')), ENT_QUOTES | ENT_HTML5, 'UTF-8'));
+        if ($text === '' || !self::answerContinues($instance)) {
+            self::journalAnswer($instance, 'initiator_answered', 'Инициатор ответил на уточнение. Продолжите маршрут: «Продолжить».');
+            return;
+        }
+        $was = self::$quiet;
+        $wasActor = self::$proxyActor;
+        self::$quiet = true;
+        // Письмо: вошедшего нет, этап переводит автор письма (answerAuthor уже проверил сеанс сборщика).
+        if ((int) \Session::getLoginUserID() <= 0) { self::$proxyActor = $author; }
+        try {
+            $result = self::continueAttempt($instance, mb_substr($text, 0, 4000), 'Ответ инициатора в ленте заявки.',
+                hash('sha256', 'initiator_answer:' . $followup->getID()), (int) $instance->fields['current_attempt_id'], true, $author);
+        } finally {
+            self::$quiet = $was;
+            self::$proxyActor = $wasActor;
+        }
+        if (!in_array($result['status'] ?? '', ['applied', 'already_applied'], true)) {
+            $instance->getFromDB($instance->getID());
+            self::journalAnswer($instance, 'continue_failed',
+                'Инициатор ответил на уточнение, но маршрут сам не продолжился. Проверьте этап и нажмите «Продолжить».');
+        }
+    }
+
+    /** Запись журнала маршрута об ответе инициатора; сбой записи не мешает его комментарию. */
+    private static function journalAnswer(Instance $instance, string $action, string $message): void
+    {
+        try {
+            Violation::record($instance, (string) $instance->fields['itemtype'], (int) $instance->fields['items_id'], $action, false, $message);
+        } catch (\Throwable) {
+            TransactionScope::assertHealthy();
+        }
+    }
+
+    private static function continueAttempt(Instance $instance, string $subject_summary, string $reason,
+        string $command_key, int $expected_attempt, bool $byInitiator, int $actor = 0): array
+    {
         $subject_summary = trim(strip_tags($subject_summary));
         $reason = trim(strip_tags($reason));
         return self::structuredCommand($instance, 'activate_attempt', $command_key, $expected_attempt,
-            [$subject_summary, $reason], static function () use ($instance, $subject_summary, $reason): array {
+            [$subject_summary, $reason], static function () use ($instance, $subject_summary, $reason, $byInitiator): array {
                 $attempt = Attempt::current($instance);
-                if (StructuredAccess::activateError($instance) !== null || $attempt === null
+                $item = $instance->getItilItem();
+                $allowed = $byInitiator
+                    // Инициатор продолжает только то, что продолжится от его ответа, и только живую заявку.
+                    ? self::answerContinues($instance) && $item !== null && empty($item->fields['is_deleted'])
+                        && Authorizer::contextError($instance) === null
+                        && !in_array((int) $item->fields['status'], array_merge($item::getSolvedStatusArray(), $item::getClosedStatusArray()), true)
+                    : StructuredAccess::activateError($instance) === null;
+                if (!$allowed || $attempt === null
                     || $attempt->fields['state'] !== Attempt::WAITING_INPUT || $subject_summary === '' || $reason === '') {
                     return self::structuredResult('rejected', $instance);
                 }
@@ -210,10 +394,19 @@ trait StructuredFlow
                 self::mustUpdate($attempt, ['id' => $attempt->getID(), 'state' => Attempt::RUNNING,
                     'subject_summary' => $subject_summary, 'date_start' => self::now()]);
                 self::mustUpdate($instance, ['id' => $instance->getID(), 'state' => Instance::RUNNING, 'date_end' => null]);
-                self::structuredFollowup($instance, 'Уточнение подтверждено. Начата новая попытка: ' . $subject_summary);
+                if ($byInitiator) {
+                    // Ответ инициатора уже в ленте его комментарием: служебную запись от его имени не пишем,
+                    // продолжение — в журнале маршрута.
+                    if (!Violation::record($instance, (string) $instance->fields['itemtype'], (int) $instance->fields['items_id'],
+                        'initiator_answered', false, 'Инициатор ответил комментарием — маршрут продолжился сам.')) {
+                        throw new \RuntimeException('Запись журнала маршрута не сохранена.');
+                    }
+                } else {
+                    self::structuredFollowup($instance, 'Инициатор ответил, маршрут продолжается: ' . $subject_summary);
+                }
                 self::advance($instance);
                 return self::structuredResult('applied', $instance);
-            });
+            }, $actor > 0 ? $actor : null);
     }
 
     public static function explainOutcome(Outcome $outcome, string $public_summary,
@@ -233,7 +426,7 @@ trait StructuredFlow
                 if ($outcome->fields['outcome'] === Outcome::COMPLETED) {
                     return self::structuredResult('rejected', $instance);
                 }
-                $fid = self::structuredFollowup($instance, 'Пояснение результата отдела: ' . $public_summary);
+                $fid = self::structuredFollowup($instance, 'Ответ отдела: ' . $public_summary);
                 self::mustUpdate($outcome, ['id' => $outcome->getID(), 'public_summary' => $public_summary,
                     'public_followups_id' => $fid, 'explanation_pending' => 0]);
                 return self::structuredResult('applied', $instance, $step, $outcome);
@@ -262,7 +455,7 @@ trait StructuredFlow
                 if (!hash_equals((string) $outcome->fields['source_digest'], hash('sha256', DefinitionSnapshot::encode($rows)))) {
                     return self::structuredResult('rejected', $instance);
                 }
-                $fid = self::structuredFollowup($instance, 'Публичный итог отдела: ' . $public_summary);
+                $fid = self::structuredFollowup($instance, 'Результат отдела: ' . $public_summary);
                 self::mustUpdate($outcome, ['id' => $outcome->getID(), 'public_summary' => $public_summary,
                     'public_followups_id' => $fid, 'explanation_pending' => 0]);
                 self::applyStructuredOutcome($instance, $step, $outcome);
@@ -304,7 +497,7 @@ trait StructuredFlow
         $rows = (new Step())->find(['plugin_itilflow_instances_id' => $instance->getID(),
             'attempt_id' => $attempt->getID()], ['ranking DESC']);
         foreach ($rows as $id => $row) {
-            if (in_array($row['state'], [Step::REJECTED, Step::DONE, Step::SKIPPED], true)) {
+            if (in_array($row['state'], [Step::REJECTED, Step::DONE, Step::SKIPPED, Step::NOT_NEEDED], true)) {
                 $step = new Step();
                 return $step->getFromDB((int) $id) ? $step : null;
             }
@@ -330,8 +523,12 @@ trait StructuredFlow
             foreach ($snapshot['stages'] as $prefix) {
                 if ((int) $prefix['ranking'] >= (int) $stage->fields['ranking']) { continue; }
                 $row = $latest[(int) $prefix['id']] ?? null;
-                if ($row === null || !in_array($row['state'], [Step::DONE, Step::SKIPPED], true)) {
+                if ($row === null || !in_array($row['state'], [Step::DONE, Step::SKIPPED, Step::NOT_NEEDED], true)) {
                     throw new \RuntimeException('Принятая часть до точки возврата не подтверждена.');
+                }
+                if ($row['state'] === Step::NOT_NEEDED) {
+                    if (!self::notNeededIsValid($instance, $row)) { throw new \RuntimeException('Пропуск этапа не подтверждён.'); }
+                    continue;
                 }
                 if ($row['execution_mode'] !== Stage::MODE_INLINE) {
                     $outcome = Outcome::forStep((int) $row['id']);
@@ -386,7 +583,8 @@ trait StructuredFlow
         $record = new Outcome();
         $oid = self::mustAdd($record, ['plugin_itilflow_instances_id' => $instance->getID(),
             'plugin_itilflow_steps_id' => $step->getID(), 'attempt_id' => $step->fields['attempt_id'],
-            'artifact_itemtype' => $step->fields['artifact_itemtype'], 'artifact_items_id' => (int) $step->fields['artifact_items_id'],
+            // У визы, которая ещё ждёт согласующего, объекта нет (NULL): исход закрытия — без объекта.
+            'artifact_itemtype' => (string) ($step->fields['artifact_itemtype'] ?? ''), 'artifact_items_id' => (int) $step->fields['artifact_items_id'],
             'outcome' => $outcome, 'source_kind' => $kind, 'source_itemtype' => $source_type,
             'source_items_id' => $source_id, 'source_digest' => $source_digest !== '' ? $source_digest
                 : hash('sha256', DefinitionSnapshot::encode([$kind, $source_actor, $outcome, $reason, $public_summary])),
@@ -398,7 +596,7 @@ trait StructuredFlow
         $text = self::stageLabel($step) . ': ' . $label . '.';
         if ($source_actor > 0) { $text .= ' Автор результата: ' . getUserName($source_actor) . '.'; }
         $text .= $public_summary !== '' ? ' ' . $public_summary
-            : ' Требуется отдельное публичное пояснение.';
+            : ' Нужен отдельный ответ инициатору.';
         $fid = self::structuredFollowup($instance, $text);
         self::mustUpdate($record, ['id' => $oid, 'public_followups_id' => $fid]);
         self::solveStructuredChild($step, $text);
@@ -408,8 +606,17 @@ trait StructuredFlow
     private static function structuredFollowup(Instance $instance, string $text): int
     {
         $parent = $instance->getItilItem();
-        if ($parent === null || !empty($parent->fields['is_deleted'])) {
+        if ($parent === null) {
             throw new \RuntimeException('Публичный итог не сохранён.');
+        }
+        // В корзину не пишем публичный комментарий. Результат остаётся в журнале
+        // того же маршрута и той же транзакции; ошибка журнала не скрывается.
+        if (!empty($parent->fields['is_deleted'])) {
+            if (!Violation::record($instance, $parent->getType(), (int) $parent->getID(),
+                'followup_in_trash', false, $text)) {
+                throw new \RuntimeException('Итог для заявки в корзине не сохранён в журнале.');
+            }
+            return 0;
         }
         self::enter();
         try {
@@ -426,17 +633,308 @@ trait StructuredFlow
         } finally { self::leave(); }
     }
 
-    /** Снятый с маршрута запрос визы не остаётся ждать ответа у согласующего. */
+    /** @var array<string,true> запросы, которые сейчас снимает маршрут: «Тип#номер» */
+    private static array $dropping = [];
+
+    /** Запрос на согласование снимает сам маршрут — сейчас, в dropWaitingValidations. */
+    public static function isDropping(\CommonDBTM $validation): bool
+    {
+        return isset(self::$dropping[$validation->getType() . '#' . (int) $validation->getID()]);
+    }
+
+    /** Маршрут сейчас снимает свои запросы: всё прочее, что ядро удалит заодно, — чужое. */
+    public static function dropInProgress(): bool
+    {
+        return self::$dropping !== [];
+    }
+
+    /**
+     * Снятый с маршрута запрос визы не остаётся ждать ответа у согласующего.
+     *
+     * Удаление — штатным delete. Два его побочных действия в ядре GLPI 11.0.8 перехватываются
+     * штатными хуками (Hook::preItilUpdate, Hook::prePurgeValidation):
+     * - пересчёт «Статуса согласования» идёт до того, как ядро уберёт опустевшую ступень, а пустую
+     *   ступень оно считает отказом: заявка получала «Отклонено» — с уведомлением «Заявка изменена»
+     *   и бизнес-правилами на это значение (CommonITILValidation::post_purgeItem);
+     * - удаление опустевшей ступени удаляет все запросы заявки, а не только этой ступени
+     *   (ITIL_ValidationStep::cleanDBonPurge), — в том числе чужие, например визу из формы.
+     * Промежуточный пересчёт отменяется, чужие запросы не удаляются; итоговый статус записывается
+     * один раз — тем же входом, что у ядра, с его уведомлением и правилами.
+     *
+     * Постусловия: снятых запросов нет, остальные запросы заявки на месте и в прежнем состоянии,
+     * статус совпадает с расчётом ядра. Иначе — исключение: команда откатывается целиком.
+     *
+     * Данные итогового статуса читаются текущим чтением с блокировкой и сверяются со снимком
+     * транзакции, по которому считает ядро (aggregateInputs). Состав этапа, который не сходится,
+     * не превращается в «снимать нечего» (waitingOfStep).
+     */
     private static function dropWaitingValidations(Step $step): void
     {
-        if ($step->fields['execution_mode'] !== Stage::MODE_APPROVAL) { return; }
-        foreach (StructuredAccess::roster($step) ?? [] as $id => $row) {
-            $v = new ($row['_type'])();
-            if ((int) $row['status'] === \CommonITILValidation::WAITING && $v->getFromDB((int) $id)) {
-                self::enter();
-                try { $v->delete(['id' => (int) $id], true); } finally { self::leave(); }
+        $delegated = $step->fields['execution_mode'] === Stage::MODE_DELEGATED;
+        if (!$delegated && $step->fields['execution_mode'] !== Stage::MODE_APPROVAL) { return; }
+        $item = $delegated ? StructuredAccess::child($step) : $step->getInstance()?->getItilItem();
+        if ($item === null || $item::getValidationClassInstance() === null) { return; }
+        if ($delegated) {
+            if (($step->getStage()?->fields['department_result_source'] ?? '') !== 'native_validation') { return; }
+            $rows = StructuredAccess::roster($step, true);
+            if ($rows === null) { self::dropFailed($step, 'не удалось проверить согласования дочерней заявки'); }
+            $drop = [];
+            foreach ($rows as $id => $row) {
+                if ((int) $row['status'] === \CommonITILValidation::WAITING) { $drop[(int) $id] = $row['_type']; }
+            }
+        } else { $drop = self::waitingOfStep($step, $item); }
+        // Снимаются только запросы, созданные маршрутом. Принятый вручную остаётся в заявке;
+        // запрос формы снимает только «Виза из формы» — по квитанции подачи (dropBoundValidations).
+        $kinds = $step->bindingKinds();
+        foreach (array_keys($drop) as $id) {
+            if (($kinds[$id] ?? OutcomeValidation::KIND_CREATED) !== OutcomeValidation::KIND_CREATED) {
+                unset($drop[$id]);
             }
         }
+        if (($step->getStage()?->fields['approver_source'] ?? '') === 'form') {
+            $verified = FormAdoption::verifiedCancellationIds($step);
+            foreach ($verified as $id) {
+                if (($kinds[$id] ?? '') === OutcomeValidation::KIND_FORM) { $drop[$id] = get_class($item::getValidationClassInstance()); }
+            }
+        }
+        self::dropValidations($step, $item, $drop);
+    }
+
+    /**
+     * Снять неотвеченные запросы шага по точным номерам — тем же механизмом. Только внутри
+     * команды маршрута (уровень транзакции открыт); номер, не привязанный к этому шагу или уже
+     * отвеченный, не снимается. Точка подключения «Визы из формы»: доказанный запрос формы
+     * снимается только так, после её собственных проверок (квитанция, исключительность шага).
+     *
+     * @param list<int> $ids
+     */
+    public static function dropBoundValidations(Step $step, array $ids): void
+    {
+        TransactionScope::requireActive();
+        if ($step->fields['execution_mode'] !== Stage::MODE_APPROVAL) { return; }
+        $item = $step->getInstance()?->getItilItem();
+        if ($item === null || $item::getValidationClassInstance() === null) { return; }
+        $verified = FormAdoption::verifiedCancellationIds($step);
+        $kinds = $step->bindingKinds();
+        $ids = array_values(array_filter($ids, static fn($id): bool => is_int($id)
+            && in_array($id, $verified, true) && ($kinds[$id] ?? '') === OutcomeValidation::KIND_FORM));
+        self::dropValidations($step, $item, array_intersect_key(self::waitingOfStep($step, $item), array_flip($ids)));
+    }
+
+    /** Будущий этап не получает фиктивной привязки: право снятия даёт повторно проверенная квитанция. */
+    private static function dropFutureFormValidations(Step $step): void
+    {
+        TransactionScope::requireActive();
+        if ($step->fields['state'] !== Step::PENDING) { return; }
+        $item = $step->getInstance()?->getItilItem();
+        if (!$item instanceof \Ticket) { return; }
+        $ids = FormAdoption::futureCancellationIds($step);
+        if ($ids === []) { return; }
+        self::dropValidations($step, $item, array_fill_keys($ids, 'TicketValidation'), true);
+    }
+
+    /**
+     * Механизм снятия 1.10.1 для заданного набора неотвеченных запросов шага: номер => тип.
+     */
+    private static function dropValidations(Step $step, \CommonITILObject $item, array $drop, bool $futureForm = false): void
+    {
+        if ($drop === []) { return; }
+        [$do] = self::aggregateInputs($step, $item);
+        $prochie = array_diff_key($do, $drop);
+
+        $auditRaw = (string) ($step->fields['approval_dropped'] ?? '');
+        $audit = ApprovalRoster::dropped($auditRaw);
+        if ($audit === [] && trim($auditRaw) !== '' && trim($auditRaw) !== '[]') {
+            self::dropFailed($step, 'история снятых запросов повреждена');
+        }
+        $outcome = Outcome::forStep((int) $step->getID());
+        $dropReason = ($outcome?->fields['outcome'] ?? '') === Outcome::COMPLETED
+            ? 'Этап выполнен; оставшийся без ответа запрос снят.'
+            : 'Этап прерван; запрос без ответа снят.';
+        if ($futureForm) {
+            $dropReason = 'Маршрут закончился раньше этапа «' . (string) $step->fields['stage_name']
+                . '»; запрос на согласование из формы без ответа снят.';
+        }
+        foreach ($drop as $id => $type) {
+            $v = new $type();
+            if (CurrentRead::load($v, (int) $id)) {
+                if ((int) $v->fields['status'] !== \CommonITILValidation::WAITING) {
+                    self::dropFailed($step, 'отвеченный запрос нельзя снять');
+                }
+                if ((Step::ownersMap($type, [(int) $id])[(int) $id] ?? []) !== ($futureForm ? [] : [(int) $step->getID()])) {
+                    self::dropFailed($step, 'запрос связан с другим этапом');
+                }
+                $audit[(int) $id] = ['id' => (int) $id, 'itemtype_target' => (string) $v->fields['itemtype_target'],
+                    'items_id_target' => (int) $v->fields['items_id_target'], 'date' => self::now(),
+                    'reason' => $dropReason, 'users_id' => (int) (\Session::getLoginUserID() ?: 0)];
+            }
+        }
+        $trigger = null;
+        $validationsteps_id = null;
+        foreach ($drop as $id => $type) {
+            self::$dropping[$type . '#' . $id] = true;
+        }
+        self::enter();
+        try {
+            foreach ($drop as $id => $type) {
+                $v = new $type();
+                if (!$v->getFromDB($id)) { continue; } // уже снят: допустимо, постусловие то же
+                $ivs = $item::getValidationStepInstance();
+                if ($ivs !== null && $ivs->getFromDB((int) $v->fields['itils_validationsteps_id'])) {
+                    $validationsteps_id = (int) $ivs->fields['validationsteps_id'];
+                }
+                $v->delete(['id' => $id], true);
+                $trigger = $v;
+            }
+        } finally {
+            self::$dropping = [];
+            self::leave();
+        }
+
+        [$posle, $zayavka] = self::aggregateInputs($step, $item);
+        if (array_intersect_key($posle, $drop) !== []) {
+            self::dropFailed($step, 'неотвеченный запрос на согласование не снят: '
+                . implode(',', array_keys(array_intersect_key($posle, $drop))));
+        }
+        foreach ($prochie as $id => $status) {
+            if (($posle[$id] ?? null) !== $status) {
+                self::dropFailed($step, 'снятие затронуло другой запрос заявки: ' . $id);
+            }
+        }
+        self::mustUpdate($step, ['id' => $step->getID(), 'approval_dropped' => DefinitionSnapshot::encode(array_values($audit))]);
+        // Снимок сверен с текущим чтением — расчёт ядра по нему верен.
+        $want = \CommonITILValidation::computeValidationStatus($item);
+        if ((int) $zayavka['global_validation'] === $want) { return; } // статус и так верный
+        $input = ['id' => $item->getID(), 'global_validation' => $want, '_from_itilvalidation' => true];
+        if ($trigger !== null) { $input['_trigger'] = $trigger; }
+        if ($validationsteps_id !== null) { $input['_validationsteps_id'] = $validationsteps_id; }
+        self::enter();
+        try { $item->update($input); } finally { self::leave(); }
+        if (!CurrentRead::load($item, (int) $item->getID()) || (int) $item->fields['global_validation'] !== $want) {
+            self::dropFailed($step, '«Статус согласования» заявки не записан');
+        }
+    }
+
+    /**
+     * Неотвеченные запросы этапа: номер => тип.
+     *
+     * Штатно — по сверенному составу (StructuredAccess::roster). Запросов ещё нет (согласующего
+     * не указали) — снимать нечего. Если связь есть, а состав не сходится — часть запросов удалили
+     * вне маршрута (ядро GLPI до 1.10.1, вручную) или связь испорчена: это не «снимать нечего».
+     * Тогда берутся сохранённые номера этапа — только запросы этой заявки, связанные только с этим
+     * этапом; неотвеченные из них снимаются, расхождение пишется в журнал и показывается. Номер
+     * чужой заявки или другого этапа, нераспознанная связь — отказ команды.
+     */
+    private static function waitingOfStep(Step $step, \CommonITILObject $item): array
+    {
+        $rows = StructuredAccess::roster($step);
+        if ($rows !== null) {
+            $out = [];
+            foreach ($rows as $id => $row) {
+                if ((int) $row['status'] === \CommonITILValidation::WAITING) { $out[(int) $id] = (string) $row['_type']; }
+            }
+            return $out;
+        }
+        $raw = trim((string) ($step->fields['approver_items_ids'] ?? ''));
+        if ($raw === '' && (int) ($step->fields['artifact_items_id'] ?? 0) <= 0) {
+            return []; // запросов ещё нет
+        }
+        $type = get_class($item::getValidationClassInstance());
+        $ids = $step->validationIds();
+        if ($ids === [] || (string) ($step->fields['artifact_itemtype'] ?? '') !== $type) {
+            self::dropFailed($step, 'связь этапа с запросами записана неверно: ' . $raw);
+        }
+        $fk = $item::getForeignKeyField();
+        $out = [];
+        $naideno = CurrentRead::find(new $type(), ['id' => $ids]);
+        foreach ($naideno as $id => $row) {
+            if ((int) ($row[$fk] ?? 0) !== (int) $item->getID()) {
+                self::dropFailed($step, 'запрос ' . $id . ' из связи этапа относится к другой заявке');
+            }
+            // Та же проверка организации, что у сверенного состава (Step::validationRoster), —
+            // для всех найденных запросов, не только ждущих ответа.
+            if ((int) ($row['entities_id'] ?? -1) !== (int) $item->fields['entities_id']) {
+                self::dropFailed($step, 'запрос ' . $id . ' из связи этапа — в другой организации, чем заявка');
+            }
+            // Владельцы — по прежней строке номеров и по строкам привязок (в том числе этапа заявки
+            // отдела): любая другая связь, идущая или прежняя, значит, что запрос не только этого этапа.
+            $owners = Step::ownersOf($type, (int) $id);
+            if (count($owners) !== 1 || (int) $owners[0]->getID() !== (int) $step->getID()) {
+                self::dropFailed($step, 'запрос ' . $id . ' связан не только с этим этапом');
+            }
+            if ((int) $row['status'] === \CommonITILValidation::WAITING) { $out[(int) $id] = $type; }
+        }
+        \Toolbox::logInFile('itilflow', sprintf("Шаг %d: состав согласования не сходится (в связи %s, найдено %d); "
+            . "снимаются неотвеченные: %s\n", (int) $step->getID(), implode(',', $ids), count($naideno),
+            $out ? implode(',', array_keys($out)) : 'нет'), true, false);
+        self::msg(sprintf('Этап %d «%s»: часть запросов на согласование удалили вне маршрута. Оставшиеся без ответа сняты.',
+            (int) $step->fields['ranking'], (string) $step->fields['stage_name']), WARNING);
+        return $out;
+    }
+
+    /**
+     * Данные итогового «Статуса согласования»: запросы и ступени согласования заявки и сама заявка.
+     *
+     * Ядро считает статус обычным чтением — по снимку транзакции (REPEATABLE READ). Если снимок
+     * сделан раньше, чем другая транзакция изменила эти данные (ответила на чужой запрос, добавила
+     * новый), расчёт по нему устарел. Поэтому данные читаются ещё и текущим чтением с блокировкой —
+     * оно же не даёт им измениться до конца команды, — и сверяются со снимком. Расхождение — отказ
+     * команды: повтор пойдёт в новой транзакции со свежим снимком.
+     *
+     * @return array{0: array<int,int>, 1: array} запросы заявки: номер => статус; строка заявки
+     */
+    private static function aggregateInputs(Step $step, \CommonITILObject $item): array
+    {
+        global $DB;
+        $fk = $item::getForeignKeyField();
+        $id = (int) $item->getID();
+        $chasti = [
+            [get_class($item::getValidationClassInstance()), [$fk => $id], ['status', 'itils_validationsteps_id', $fk]],
+            [get_class($item::getValidationStepInstance()), ['itemtype' => $item->getType(), 'items_id' => $id],
+                ['minimal_required_validation_percent', 'validationsteps_id']],
+            [$item->getType(), ['id' => $id], null],
+        ];
+        $tekushchie = [];
+        foreach ($chasti as [$class, $where, $polya]) {
+            $tek = CurrentRead::find(new $class(), $where);
+            $snimok = [];
+            foreach ($DB->request(['FROM' => $class::getTable(), 'WHERE' => $where]) as $row) {
+                $snimok[(int) $row['id']] = $row;
+            }
+            $vybor = static function (array $rows) use ($polya): array {
+                $out = [];
+                foreach ($rows as $k => $row) {
+                    $out[$k] = array_map('strval', array_map(static fn($v) => $v ?? '', $polya === null ? $row
+                        : array_intersect_key($row, array_flip($polya))));
+                }
+                ksort($out);
+                return $out;
+            };
+            if ($vybor($tek) !== $vybor($snimok)) {
+                self::dropFailed($step, 'данные согласования изменились; обновите страницу');
+            }
+            $tekushchie[] = $tek;
+        }
+        $zapros = [];
+        foreach ($tekushchie[0] as $vid => $row) {
+            $zapros[(int) $vid] = (int) $row['status'];
+        }
+        $zayavka = $tekushchie[2][$id] ?? null;
+        if ($zayavka === null) {
+            self::dropFailed($step, 'заявка недоступна');
+        }
+        return [$zapros, $zayavka];
+    }
+
+    /**
+     * Снятие запросов не подтверждено: команда не выполняется, транзакция откатывается (Engine::locked),
+     * человек видит «Не удалось подтвердить результат действия…», причина — в itilflow.log.
+     */
+    private static function dropFailed(Step $step, string $why): never
+    {
+        \Toolbox::logInFile('itilflow', sprintf("Снятие запросов этапа (шаг %d) не подтверждено: %s\n",
+            (int) $step->getID(), $why), true, false);
+        throw new \RuntimeException('Снятие запросов на согласование не подтверждено.');
     }
 
     private static function closeStructuredAttempt(Instance $instance, Step $source, string $state): void
@@ -451,6 +949,7 @@ trait StructuredFlow
         foreach ($instance->getAttemptSteps() as $row) {
             if ($row['state'] === Step::PENDING) {
                 $pending = new Step(); $pending->getFromDB((int) $row['id']);
+                self::dropFutureFormValidations($pending);
                 self::mustUpdate($pending, ['id' => $pending->getID(), 'state' => Step::SUPERSEDED]);
             }
         }
@@ -463,6 +962,7 @@ trait StructuredFlow
     {
         if ($record->fields['outcome'] === Outcome::COMPLETED) {
             if (!empty($record->fields['explanation_pending'])) { return; }
+            self::dropWaitingValidations($step);
             $end = self::now();
             $duration = Step::elapsedSeconds(['date_start' => $step->fields['date_start'] ?? null, 'date_end' => $end]);
             $update = ['id' => $step->getID(), 'state' => Step::DONE, 'date_end' => $end,
@@ -487,16 +987,23 @@ trait StructuredFlow
     /** Native post-event: голос уже сохранён ядром; локальный сбой не объявляет его отменённым. */
     public static function structuredValidationUpdated(\CommonITILValidation $event): void
     {
-        $step = OutcomeValidation::stepFor($event->getType(), $event->getID())
-            ?? Step::getByValidation($event->getType(), $event->getID());
-        $instance = $step?->getInstance();
-        if ($step === null || $instance === null || !DefinitionSnapshot::enabled($instance)) { return; }
-        $ok = self::locked($instance, static function () use ($instance, $step, $event): bool {
-            if (StructuredAccess::validationError($event, $step) !== null) { return false; }
-            return self::transferStructuredVote($instance, $step, $event);
-        });
-        if (!$ok) {
-            self::msg('Ответ согласующего сохранён ядром; перенос в маршрут не подтверждён. Требуется сверка результата.', ERROR);
+        $instance = null;
+        try {
+            $step = Step::ownerOf($event->getType(), $event->getID());
+            $instance = $step?->getInstance();
+            if ($step === null || $instance === null || !DefinitionSnapshot::enabled($instance)) { return; }
+            // При отказе из-за блокировок согласующий видит правду: ответ сохранён, учтёт сверка.
+            $ok = self::voteLocked($instance, static function () use ($instance, $step, $event): bool {
+                if (StructuredAccess::validationError($event, $step) !== null) { return false; }
+                return self::transferStructuredVote($instance, $step, $event);
+            });
+            if (!$ok) {
+                $instance->getFromDB($instance->getID());
+                self::hookFailed(new \RuntimeException('vote_not_applied'), $instance, 'vote_failed', self::VOTE_FAILED);
+            }
+        } catch (\Throwable $e) {
+            // Ответ уже сохранён ядром: исключение в ядро не выпускаем. Догонит catchUpApprovals.
+            self::hookFailed($e, $instance, 'vote_failed', self::VOTE_FAILED);
         }
     }
 
@@ -525,26 +1032,21 @@ trait StructuredFlow
         $rows = StructuredAccess::roster($step, true);
         $need = (int) ($step->fields['approval_percent_snapshot'] ?? 0);
         if ($rows === null || !isset($rows[$source->getID()]) || $rows[$source->getID()]['_type'] !== $source->getType()
-            || $need < 1 || $need > 100) { return false; }
+            || $need < ($step->hasExternalBindings() ? 0 : 1) || $need > 100) { return false; }
         ksort($rows);
         $digest = hash('sha256', DefinitionSnapshot::encode($rows));
         $existing = Outcome::forStep($step->getID());
         if ($existing !== null) { return hash_equals((string) $existing->fields['source_digest'], $digest); }
-        $accepted = 0; $refused = 0;
-        foreach ($rows as $row) {
-            $accepted += (int) $row['status'] === \CommonITILValidation::ACCEPTED ? 1 : 0;
-            $refused += (int) $row['status'] === \CommonITILValidation::REFUSED ? 1 : 0;
-        }
-        $outcome = intdiv($accepted * 100, count($rows)) >= $need ? Outcome::COMPLETED
-            : (intdiv((count($rows) - $refused) * 100, count($rows)) < $need ? Outcome::REFUSED : null);
+        $outcome = StructuredAccess::decide($step, $rows, $need);
         if ($outcome === null) { return true; } // промежуточный голос не порождает повторяемого объявления
+        if ($outcome === Outcome::COMPLETED && !Decision::ready($step)) { return true; }
         $row = $rows[$source->getID()];
         if (!in_array((int) $row['status'], [\CommonITILValidation::ACCEPTED, \CommonITILValidation::REFUSED], true)
             || (int) ($row['users_id_validate'] ?? 0) <= 0) { return false; }
         // Виза сама по себе — публичный результат этапа: «согласовано» продвигает маршрут сразу,
         // причина отказа — прямой ответ заявителю.
         $comment = trim(strip_tags((string) ($row['comment_validation'] ?? '')));
-        $public = $outcome === Outcome::COMPLETED ? 'Согласовано.' : ($comment !== '' ? $comment : 'Не согласовано.');
+        $public = $outcome === Outcome::COMPLETED ? 'Согласовано.' : ($comment !== '' ? $comment : 'Отклонено.');
         $record = self::recordStructuredOutcome($instance, $step, $outcome, 'native_validation',
             $source->getType(), $source->getID(), (int) $row['users_id_validate'], $comment, $public,
             hash('sha256', 'native:' . $step->getID() . ':' . $digest), $digest);
@@ -558,7 +1060,8 @@ trait StructuredFlow
             || in_array((int) $item->fields['status'], array_merge($item::getSolvedStatusArray(), $item::getClosedStatusArray()), true)) {
             throw new \RuntimeException('Объект запуска недоступен.');
         }
-        $snapshot = DefinitionSnapshot::capture($process);
+        // Номер запуска на заявке — часть ключа своих ступеней согласования (ValidationLadder).
+        $snapshot = DefinitionSnapshot::capture($process, ValidationLadder::nextRun($item));
         $raw = DefinitionSnapshot::encode($snapshot);
         $captured = new Process(); $captured->fields = $snapshot['process'];
         if (!Authorizer::processFitsItem($captured, $item)) {
@@ -577,6 +1080,7 @@ trait StructuredFlow
             $subject = trim(strip_tags((string) $item->fields['name'] . "\n" . (string) ($item->fields['content'] ?? '')));
             self::createStructuredAttempt($instance, (int) $snapshot['stages'][0]['id'], 0, '', $subject,
                 hash('sha256', 'start:' . $iid . ':' . hash('sha256', $raw)), false);
+            if (DefinitionSnapshot::schemaOf($instance) >= 3) { FormFacts::forStart($instance, $item); }
             self::advance($instance);
             return $instance;
         } finally { self::leave(); }
@@ -585,6 +1089,8 @@ trait StructuredFlow
     private static function createStructuredChild(Instance $instance, Step $step, Stage $stage,
         \CommonITILObject $parent): bool|string
     {
+        $date_error = self::delegatedDeadlineError($stage, $parent);
+        if ($date_error !== null) { throw new \RuntimeException($date_error); }
         $attempt = Attempt::current($instance);
         $entity = $stage->resolveEntity($parent);
         if ($attempt === null || !$stage->groupFitsEntity($entity)) { return 'Состав исполнителей недоступен.'; }
@@ -598,8 +1104,7 @@ trait StructuredFlow
         $instruction = \Glpi\RichText\RichText::isRichTextHtmlContent($instruction)
             ? $instruction : '<p>' . nl2br(htmlescape($instruction)) . '</p>';
         $summary = html_entity_decode((string) $attempt->fields['subject_summary'], ENT_QUOTES | ENT_HTML5, 'UTF-8');
-        $input = ['name' => sprintf('[Этап %d, попытка %d] %s', (int) $step->fields['ranking'],
-            (int) $attempt->fields['number'], mb_substr((string) $stage->fields['name'], 0, 100)),
+        $input = ['name' => StepLine::childName((string) $stage->fields['name'], $parent->getID()),
             'content' => $instruction . '<p>' . nl2br(htmlescape($summary)) . '</p>',
             'entities_id' => $entity];
         foreach (['groups_id' => '_groups_id_assign', 'users_id' => '_users_id_assign',
@@ -631,21 +1136,19 @@ trait StructuredFlow
             foreach ($targets as [$target_type, $target_id]) {
                 $vid = self::openValidation($step, $stage, $child, $target_type, $target_id);
                 $v = $child::getValidationClassInstance();
-                if (!is_int($vid) || $v === null || !CurrentRead::load($v, $vid)) {
+                if (!is_int($vid) || $v === null || !CurrentRead::load($v, $vid)
+                    || (int) $v->fields['entities_id'] !== $entity || $v->fields['itemtype_target'] !== $target_type
+                    || (int) $v->fields['items_id_target'] !== $target_id) {
                     throw new \RuntimeException('Полный состав согласований отдела не создан.');
                 }
-                self::mustAdd(new OutcomeValidation(), ['plugin_itilflow_steps_id' => $step->getID(),
-                    'attempt_id' => $attempt->getID(), 'validation_itemtype' => $v->getType(), 'validations_id' => $vid,
-                    'artifact_itemtype' => $type, 'artifact_items_id' => $cid, 'entities_id' => $entity,
-                    'itemtype_target' => $target_type, 'items_id_target' => $target_id,
-                    'validation_step_id' => (int) $v->fields['itils_validationsteps_id']]);
+                OutcomeValidation::bind($step, $v, $child, OutcomeValidation::KIND_CREATED);
             }
             self::mustUpdate($step, ['id' => $step->getID(), 'approval_expected_count' => count($targets)]);
             if (StructuredAccess::roster($step) === null) {
                 throw new \RuntimeException('Полный состав согласований отдела не подтверждён.');
             }
         }
-        return StructuredAccess::child($step) !== null ? true : 'Связь отдела не подтверждена.';
+        return StructuredAccess::child($step) !== null ? true : 'Не удалось проверить связь с дочерней заявкой.';
     }
 
     private static function finishStructured(Instance $instance): void
@@ -656,8 +1159,12 @@ trait StructuredFlow
             throw new \RuntimeException('Завершение попытки не подтверждено.');
         }
         foreach ($steps as $row) {
-            if (!in_array($row['state'], [Step::DONE, Step::SKIPPED], true)) {
+            if (!in_array($row['state'], [Step::DONE, Step::SKIPPED, Step::NOT_NEEDED], true)) {
                 throw new \RuntimeException('Не все этапы завершены.');
+            }
+            if ($row['state'] === Step::NOT_NEEDED) {
+                if (!self::notNeededIsValid($instance, $row)) { throw new \RuntimeException('Пропуск этапа не подтверждён.'); }
+                continue;
             }
             if ($row['execution_mode'] !== Stage::MODE_INLINE) {
                 $outcome = Outcome::forStep((int) $row['id']);
@@ -687,7 +1194,7 @@ trait StructuredFlow
             }
         }
         self::solveStructured($instance->getItilItem(), sprintf('Заявка выполнена: все этапы маршрута «%s» пройдены.',
-            (string) ($process?->fields['name'] ?? '')) . ($final !== '' ? "\nИтог: " . $final : ''));
+            (string) ($process?->fields['name'] ?? '')) . ($final !== '' ? "\nРезультат: " . $final : ''));
     }
 
     /** Ответ заявителю штатным решением; уже решённый или закрытый объект не трогается. */
@@ -726,7 +1233,7 @@ trait StructuredFlow
             // Исход отказа уже окончательный; административное прекращение не переписывает историю попытки.
             self::mustUpdate($instance, ['id' => $instance->getID(), 'state' => Instance::ABORTED,
                 'plugin_itilflow_stages_id_current' => 0, 'date_end' => self::now()]);
-            self::structuredFollowup($instance, 'Маршрут прекращён после отказа: ' . trim(strip_tags($reason)));
+            self::structuredFollowup($instance, 'Маршрут закончен отказом: ' . trim(strip_tags($reason)));
             return;
         }
         if ($attempt === null || !in_array($attempt->fields['state'], [Attempt::RUNNING, Attempt::WAITING_INPUT], true)) {
@@ -737,9 +1244,12 @@ trait StructuredFlow
             if (in_array($row['state'], [Step::PENDING, Step::RUNNING], true)) {
                 $step = new Step(); $step->getFromDB((int) $row['id']);
                 // Открытая работа отдела и запрос визы не остаются висеть в чужой очереди.
-                self::solveStructuredChild($step, 'Работа не требуется: маршрут прекращён. ' . trim(strip_tags($reason)));
+                self::solveStructuredChild($step, 'Работа больше не нужна: маршрут прерван. ' . trim(strip_tags($reason)));
+                self::dropFutureFormValidations($step);
                 self::dropWaitingValidations($step);
                 self::mustUpdate($step, ['id' => $step->getID(), 'state' => Step::SUPERSEDED, 'date_end' => self::now()]);
+                // Задача идущего этапа не остаётся «К выполнению» (после «Начать заново» их было бы две).
+                self::releaseInlineWork($instance, $step);
             }
         }
         self::mustUpdate($attempt, ['id' => $attempt->getID(), 'state' => Attempt::ABORTED, 'date_end' => self::now(),

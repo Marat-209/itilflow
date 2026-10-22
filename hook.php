@@ -190,11 +190,18 @@ function plugin_itilflow_install(): bool
     $migration->addField('glpi_plugin_itilflow_steps', 'approval_snapshot_source', 'string',
         ['value' => '']);
 
+    // Таблицы нового порядка исходов и добавочные поля, в том числе 1.11.0: раздел «Форма»
+    // маршрута, шаг согласования формы и списки согласующих этапа, записи шага о снятых запросах
+    // и замене согласующего, квитанция подачи формы, вид привязки запроса (binding_kind).
+    // Только addField: строки маршрутов, этапов и запусков не переписываются, версии маршрутов
+    // не растут — вырастут при следующем сохранении человеком. Незаполненные списки согласующих
+    // читаются как прежние «группа / сотрудник».
     \GlpiPlugin\Itilflow\StructuredSchema::prepare($migration);
     \GlpiPlugin\Itilflow\StatusSyncSchema::prepare($migration);
     $migration->addRight('plugin_itilflow_process', ALLSTANDARDRIGHT);
     $migration->addRight('plugin_itilflow_bypass', 0);
     $migration->executeMigration();
+    // Строгая проверка — после миграции: сначала колонка, потом проверка.
     \GlpiPlugin\Itilflow\StructuredSchema::verify();
     \GlpiPlugin\Itilflow\StatusSyncSchema::verify();
     if (!\GlpiPlugin\Itilflow\Upgrade::approvalSnapshots()) {
@@ -204,7 +211,7 @@ function plugin_itilflow_install(): bool
     CronTask::register(
         'GlpiPlugin\\Itilflow\\Cron', 'itilflow_status_sync', 60,
         ['mode' => CronTask::MODE_EXTERNAL, 'allowmode' => CronTask::MODE_EXTERNAL, 'state' => CronTask::STATE_DISABLE,
-            'comment' => 'Синхронизация статусов этапов. Включить штатный CLI cron после настройки и проверки.']
+            'comment' => 'Статус заявки по этапам (cron раз в минуту)']
     );
     $status_sync_task = new CronTask();
     if (!$status_sync_task->getFromDBbyName('GlpiPlugin\\Itilflow\\Cron', 'itilflow_status_sync')) { return false; }
@@ -214,7 +221,7 @@ function plugin_itilflow_install(): bool
         'itilflow_deadlines',
         900,
         [
-            'comment' => 'Контроль сроков этапов маршрутов: отметка просрочки и эскалация',
+            'comment' => 'Сроки этапов: отметить просроченные',
             'mode'    => CronTask::MODE_EXTERNAL,
             'state'   => CronTask::STATE_WAITING,
         ]

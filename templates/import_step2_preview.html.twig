@@ -10,11 +10,18 @@
 {% endblock content_title %}
 
 {% block content_body %}
+    {% set question_states = {
+        'found': 'Найдено автоматически',
+        'missing': 'Выберите вопрос',
+        'several': 'Найдено несколько — выберите вопрос',
+        'by_id': 'Проверьте выбранный вопрос',
+        'replaced': 'Выбрано вручную',
+    } %}
     <form method="POST" action="{{ action }}?step=execute" data-submit-once>
         <input type="hidden" name="_glpi_csrf_token" value="{{ csrf_token() }}" />
         <div class="card">
             <div class="card-header py-3 px-4">
-                <h3 class="card-title">Предпросмотр импорта</h3>
+                <h3 class="card-title">Предварительный просмотр импорта</h3>
             </div>
             <div class="card-body py-2 px-4">
                 Маршруты создаются выключенными — включите их после проверки. Существующие маршруты импорт не меняет.
@@ -32,6 +39,9 @@
                         {% if r.status == 'ready' %}
                             {% set icon = 'ti-check text-success' %}
                             {% set status = 'Готов к импорту' %}
+                        {% elseif r.status == 'invalid' and r.choose|default(0) > 0 %}
+                            {% set icon = 'ti-hand-click text-warning' %}
+                            {% set status = 'Нужно выбрать: ' ~ r.choose %}
                         {% elseif r.status == 'exists' %}
                             {% set icon = 'ti-player-skip-forward' %}
                             {% set status = 'Маршрут с таким именем уже есть — будет пропущен' %}
@@ -40,7 +50,21 @@
                             {% set status = 'Не может быть импортирован' %}
                         {% endif %}
                         <tr>
-                            <td class="px-4 align-middle">{{ r.name }}</td>
+                            <td class="px-4 align-middle">
+                                <div>{{ r.name }}</div>
+                                <div class="small mt-2"><strong>Запуск маршрута:</strong> {{ r.start_summary }}</div>
+                                {% if r.start_questions is not empty %}
+                                    <div class="small mt-2">Вопросы запуска: из файла → в выбранной форме</div>
+                                    <ul class="small mb-0 ps-3">
+                                        {% for question in r.start_questions %}
+                                            <li>
+                                                {{ question.label }} → {{ question.mapped_label is not empty ? question.mapped_label : 'Вопрос не выбран' }}
+                                                <span class="d-block text-muted">{{ question_states[question.state]|default('Проверьте сопоставление') }}</span>
+                                            </li>
+                                        {% endfor %}
+                                    </ul>
+                                {% endif %}
+                            </td>
                             <td class="px-4 align-middle">
                                 <div class="d-flex align-items-start">
                                     <i class="ti {{ icon }} me-2 mt-1" aria-hidden="true"></i>

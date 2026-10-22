@@ -23,6 +23,9 @@ $etap = static fn(array $f): array => $f + [
 ];
 
 $sluchai = [
+    ['С, Н, из формы', ['execution_mode' => 'approval', 'approver_source' => 'form'], true, 'Ticket',
+        ['name', 'execution_mode', 'content', 'approver_source', 'form_validationsteps_id', 'deadline', 'negative_policy', 'return_targets'],
+        ['ranking', 'ticket_status']],
     // [название, поля этапа, новый порядок, тип маршрута, основные поля, «Дополнительно»]
     ['З, Н', ['execution_mode' => 'inline'], true, 'Ticket',
         ['name', 'execution_mode', 'completion_comment', 'content', 'groups_id', 'users_id', 'deadline'],
@@ -51,11 +54,11 @@ $sluchai = [
         ['name', 'execution_mode', 'content', 'approver_source', 'deadline', 'negative_policy', 'return_targets'],
         ['ranking', 'ticket_status', 'approval_percent']],
     ['С, Н, указан в этапе', ['execution_mode' => 'approval', 'approver_source' => 'fixed'], true, 'Ticket',
-        ['name', 'execution_mode', 'content', 'approver_source', 'groups_id', 'users_id', 'deadline',
+        ['name', 'execution_mode', 'content', 'approver_source', 'approver_users', 'approver_groups', 'approver_group_mode', 'deadline',
             'negative_policy', 'return_targets'],
         ['ranking', 'ticket_status', 'approval_percent']],
     ['С, П, остановить', ['execution_mode' => 'approval', 'approver_source' => 'fixed'], false, 'Ticket',
-        ['name', 'execution_mode', 'content', 'approver_source', 'groups_id', 'users_id', 'deadline', 'on_reject'],
+        ['name', 'execution_mode', 'content', 'approver_source', 'approver_users', 'approver_groups', 'approver_group_mode', 'deadline', 'on_reject'],
         ['ranking', 'ticket_status', 'approval_percent']],
 ];
 
@@ -100,7 +103,7 @@ ok($smesh === [], 'поля прежнего порядка только у ст
 
 // Правила для скрипта формы — те же, что для сервера.
 $pravila = StageForm::rules();
-ok(isset($pravila['groups_id']['c']) && $pravila['groups_id']['c'] === 'apfixed', 'правило группы — условие «указан в этапе»');
+ok(isset($pravila['groups_id']['c']) && $pravila['groups_id']['c'] === 'notapproval', 'прежняя группа — только исполнитель, не согласующий');
 ok(($pravila['entities_id_target']['m'] ?? null) === ['delegated'], 'организация — только у дочерней заявки');
 
 itog();

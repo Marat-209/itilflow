@@ -1,20 +1,25 @@
 <?php
 
+use GlpiPlugin\Itilflow\Authorizer;
 use GlpiPlugin\Itilflow\Engine;
 use GlpiPlugin\Itilflow\Instance;
 use GlpiPlugin\Itilflow\Step;
+use GlpiPlugin\Itilflow\StepLine;
+use GlpiPlugin\Itilflow\Decision;
+
+global $CFG_GLPI;
 
 // CSRF проверяет штатный middleware GLPI (CSRF_COMPLIANT в setup.php).
 Session::checkLoginUser();
 if (($_SERVER['REQUEST_METHOD'] ?? '') !== 'POST') {
-    throw new \Glpi\Exception\Http\BadRequestHttpException('Действие требует POST.');
+    throw new \Glpi\Exception\Http\BadRequestHttpException('Страница открыта неверно. Вернитесь к заявке и повторите.');
 }
 $actions = array_values(array_intersect(
-    ['start', 'complete', 'skip', 'override', 'set_approver', 'reassign', 'withdraw', 'abort', 'resume'],
+    ['start', 'complete', 'skip', 'override', 'set_approver', 'adopt_existing', 'reassign', 'withdraw', 'abort', 'resume', 'choose_condition'],
     array_keys($_POST)
 ));
 if (count($actions) !== 1) {
-    throw new \Glpi\Exception\Http\BadRequestHttpException('Укажите одно действие маршрута.');
+    throw new \Glpi\Exception\Http\BadRequestHttpException('Страница открыта неверно. Вернитесь к заявке и повторите.');
 }
 $action = $actions[0];
 $id = static function (string $key): int {
@@ -72,7 +77,17 @@ if (!$step->getFromDB($id('steps_id'))) {
 switch ($action) {
     case 'complete':
     case 'skip':
-        Engine::completeStep($step, $text('report'), $action === 'skip', $command_key, $expected_attempt);
+        $answers = array_key_exists('decision_answers', $_POST) ? Decision::fromPost($_POST['decision_answers']) : null;
+        if (!array_key_exists('decision_answers', $_POST) || $answers !== null) {
+            Engine::completeStep($step, $text('report'), $action === 'skip', $command_key, $expected_attempt,
+                Decision::revisionFromPost($_POST['expected_decision_revision'] ?? null), $answers);
+        }
+        break;
+    case 'choose_condition':
+        $result = Engine::chooseCondition($step, $text('choice'), $text('condition_reason'), $text('input_revision'), $command_key, $expected_attempt);
+        $accepted = in_array($result['status'] ?? '', ['applied','already_applied'], true);
+        Session::addMessageAfterRedirect($accepted ? 'Выбор сохранён.'
+            : 'Выбор не сохранён: обновите страницу и укажите причину.', false, $accepted ? INFO : ERROR);
         break;
     case 'override':
         Engine::overrideStep($step, $text('report'), $command_key, $expected_attempt);
@@ -101,13 +116,30 @@ switch ($action) {
         $groups = $ids('appr_groups_id');
         $users = $ids('appr_users_id');
         if ($groups !== null && $users !== null) {
-            Engine::designateApprover($step, $groups, $users, $text('appr_reason'), $command_key, $expected_attempt);
+            Engine::designateApprover($step, $groups, $users, $text('appr_reason'), $command_key, $expected_attempt,
+                $text('appr_group_mode') ?: 'any', isset($_POST['fallback_percent']) ? $id('fallback_percent') : null);
         } else {
-            Session::addMessageAfterRedirect('Согласующий не указан: выбор не распознан. Обновите карточку и выберите заново.', false, ERROR);
+            Session::addMessageAfterRedirect('Согласующий не указан. Обновите страницу и выберите заново.', false, ERROR);
         }
+        break;
+    case 'adopt_existing':
+        $values = $_POST['validation_ids'] ?? [];
+        $chosen = []; $valid = is_array($values);
+        foreach (is_array($values) ? $values : [] as $value) {
+            if ((!is_int($value) && !is_string($value)) || !preg_match('/^[1-9][0-9]*$/D', (string) $value)
+                || (string) (int) $value !== (string) $value) { $valid = false; break; }
+            $chosen[] = (int) $value;
+        }
+        if ($valid) { Engine::adoptExistingRequests($step, $chosen, $text('adopt_reason'), $command_key, $expected_attempt, \GlpiPlugin\Itilflow\ManualAdoptionConfirmation::fromInput($_POST)); }
         break;
     case 'reassign':
         Engine::reassign($step, $id('to_groups_id'), $id('to_users_id'), $text('reassign_reason'), $command_key, $expected_attempt);
         break;
+}
+// После «Завершить этап» или «Передать этап…» группа этапа снимается с заявки, и исполнитель
+// её больше не видит: не на страницу «Доступ запрещен», а на главную (как outcome.form.php).
+$instance = $step->getInstance();
+if ($instance !== null && !Authorizer::stepItemVisible($instance, $step)) {
+    Html::redirect(StepLine::homeUrl((string) Session::getCurrentInterface(), (string) $CFG_GLPI['root_doc']));
 }
 Html::back();

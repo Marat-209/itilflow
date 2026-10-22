@@ -61,6 +61,7 @@ final class TemplateCache
             }
             return $removed;
         } catch (\Throwable $e) {
+            TransactionScope::assertHealthy();
             $text = 'itilflow: скомпилированные шаблоны не сброшены (' . $e->getMessage()
                 . '). Выполните php bin/console cache:clear.';
             if ($log !== null) {

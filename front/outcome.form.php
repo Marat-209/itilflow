@@ -1,14 +1,20 @@
 <?php
 
+use GlpiPlugin\Itilflow\Authorizer;
 use GlpiPlugin\Itilflow\Engine;
 use GlpiPlugin\Itilflow\Instance;
 use GlpiPlugin\Itilflow\Outcome;
+use GlpiPlugin\Itilflow\Stage;
 use GlpiPlugin\Itilflow\Step;
+use GlpiPlugin\Itilflow\StepLine;
+use GlpiPlugin\Itilflow\Decision;
 
-// Штатный CSRF middleware; права проверяются сервером также для Self-Service.
+global $CFG_GLPI;
+
+// Штатный CSRF middleware; права проверяются сервером также для самообслуживания.
 Session::checkLoginUser();
 if (($_SERVER['REQUEST_METHOD'] ?? '') !== 'POST') {
-    throw new \Glpi\Exception\Http\BadRequestHttpException('Действие требует POST.');
+    throw new \Glpi\Exception\Http\BadRequestHttpException('Страница открыта неверно. Вернитесь к заявке и повторите.');
 }
 $id = static function (string $key): int {
     $value = $_POST[$key] ?? null;
@@ -21,8 +27,8 @@ $text = static function (string $key, int $limit = 8000): string {
 };
 $action = $text('action', 40);
 $key = $text('command_key', 64);
-// Кнопки строки этапа: одно поле результата; внутренний комментарий необязателен —
-// без него основанием служит тот же текст.
+// Кнопки строки этапа: одно поле результата; приватный комментарий необязателен —
+// без него причиной служит тот же текст.
 $do = $text('itilflow_do', 20);
 if ($do !== '') {
     $action = match ($do) {
@@ -40,6 +46,7 @@ $attempt = $id('expected_attempt_id');
 $instance = new Instance();
 $step = new Step();
 $result = ['status' => 'rejected'];
+$problem = '';
 if ($instance->getFromDB($id('instances_id'))) {
     if (in_array($action, ['new_attempt', 'activate_attempt'], true)) {
         $result = $action === 'new_attempt'
@@ -48,9 +55,19 @@ if ($instance->getFromDB($id('instances_id'))) {
     } elseif ($step->getFromDB($id('steps_id'))
         && (int) $step->fields['plugin_itilflow_instances_id'] === (int) $instance->getID()) {
         if ($action === 'department_outcome') {
-            $result = Engine::departmentOutcome($step, $text('outcome', 24), $text('reason'), $text('public_summary'), $key, $attempt);
+            // Ответы этапа приходят вместе с результатом (у дочерней заявки нет отдельного «Сохранить ответы»).
+            // Для «Отказ» ответы не нужны: пустые поля не становятся ответом «нет».
+            $answers = array_key_exists('decision_answers', $_POST) ? Decision::fromPost($_POST['decision_answers']) : null;
+            if ($text('outcome', 24) === Outcome::REFUSED) { $answers = null; }
+            if ($text('outcome', 24) === Outcome::REFUSED || !array_key_exists('decision_answers', $_POST) || $answers !== null) {
+                $result = Engine::departmentOutcome($step, $text('outcome', 24), $text('reason'), $text('public_summary'), $key, $attempt,
+                    Decision::revisionFromPost($_POST['expected_decision_revision'] ?? null), $answers);
+            } else {
+                $problem = 'Ответьте на все вопросы этапа — без ответов «Выполнено» не сохранить.';
+            }
         } elseif ($action === 'request_clarification') {
-            $result = Engine::requestClarification($step, $id('target_stage_id'), $text('reason'), $text('public_summary'), $key, $attempt);
+            $result = Engine::requestClarification($step, $id('target_stage_id'), $text('reason'), $text('public_summary'), $key, $attempt,
+                Decision::revisionFromPost($_POST['expected_decision_revision'] ?? null));
         } elseif ($action === 'reconcile_outcome') {
             $result = Engine::reconcileOutcome($step, $text('validation_itemtype', 100), $id('validations_id'), $key, $attempt);
         } elseif ($action === 'retry_status_sync') {
@@ -66,9 +83,34 @@ if ($instance->getFromDB($id('instances_id'))) {
     }
 }
 $status = $result['status'];
+$applied = in_array($status, ['applied', 'already_applied'], true);
+
+// Ответы этапа успели изменить, пока форма была открыта: сказать это, а не «проверьте права».
+if (!$applied && $problem === '' && !$step->isNewItem() && in_array($action, ['department_outcome', 'request_clarification'], true)
+    && ($expected = Decision::revisionFromPost($_POST['expected_decision_revision'] ?? null)) !== null) {
+    try {
+        $fresh = new Step();
+        if ($fresh->getFromDB($step->getID()) && Decision::items($fresh) !== [] && Decision::read($fresh)['revision'] !== $expected) {
+            $problem = 'Ответы этапа уже изменили — посмотрите их и сохраните снова.';
+        }
+    } catch (\Throwable $e) {
+        // Повреждённые ответы этапа — общий текст ниже.
+    }
+}
+
+// После действия человек может потерять доступ к заявке (согласующий из самообслуживания
+// видит её только по своему запросу на согласование). Тогда — не на страницу «нет прав», а домой.
+if ($applied && !$instance->isNewItem()) {
+    if (!Authorizer::stepItemVisible($instance, $step)) {
+        Session::addMessageAfterRedirect($action === 'request_clarification'
+            ? 'Готово: заявка возвращена инициатору на уточнение.' : 'Готово: действие сохранено.', false, INFO);
+        Html::redirect(StepLine::homeUrl((string) Session::getCurrentInterface(), (string) $CFG_GLPI['root_doc']));
+    }
+}
+
 Session::addMessageAfterRedirect(match ($status) {
     'applied' => 'Действие сохранено.', 'already_applied' => 'Это действие уже выполнено.',
-    'unknown' => 'Результат не подтверждён. Сначала обновите карточку и проверьте историю.',
-    default => 'Действие отклонено: проверьте права, состояние и заполнение полей.',
-}, false, in_array($status, ['applied', 'already_applied'], true) ? INFO : ERROR);
+    'unknown' => 'Не удалось проверить, выполнено ли действие. Обновите страницу и посмотрите историю этапа.',
+    default => $problem !== '' ? $problem : 'Действие не выполнено: проверьте поля и обновите страницу.',
+}, false, $applied ? INFO : ERROR);
 Html::back();

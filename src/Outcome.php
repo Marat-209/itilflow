@@ -33,7 +33,8 @@ class Outcome extends \CommonDBChild
 
     public static function labels(): array
     {
-        return [self::COMPLETED => 'Выполнено', self::REFUSED => 'Отказано',
-            self::CLARIFICATION => 'Требуется уточнение'];
+        // Те же слова, что на кнопках отдела и в строке этапа.
+        return [self::COMPLETED => Terms::DONE, self::REFUSED => Terms::REFUSAL,
+            self::CLARIFICATION => Terms::ON_CLARIFICATION];
     }
 }

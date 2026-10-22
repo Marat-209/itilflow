@@ -68,7 +68,8 @@ final class RuleStart
         $signature = self::signature($classes[$class], $input);
         if ($assigned && $signature !== null) {
             self::$pending[spl_object_id($item)] = ['object' => $item,
-                'signature' => $signature, 'process' => $pid, 'rule' => (int) $rule->getID()];
+                'signature' => $signature, 'process' => $pid, 'rule' => (int) $rule->getID(),
+                'rule_name' => (string) ($rule->fields['name'] ?? '')];
         }
     }
 
@@ -81,6 +82,19 @@ final class RuleStart
             return;
         }
         self::$pending[$oid] = ['object' => $item];
+    }
+
+    /** Название именно сработавшего правила; чтение не расходует одноразовое свидетельство. */
+    public static function ruleName(CommonITILObject $item): ?string
+    {
+        $proof = self::$pending[spl_object_id($item)] ?? null;
+        if ($proof === null || ($proof['object'] ?? null) !== $item || !is_array($item->input)
+            || !isset($proof['signature'])
+            || self::signature($item->getType(), $item->input) !== $proof['signature']) {
+            return null;
+        }
+        $name = $proof['rule_name'] ?? null;
+        return is_string($name) && trim($name) !== '' ? $name : null;
     }
 
     public static function consume(CommonITILObject $item): ?int
