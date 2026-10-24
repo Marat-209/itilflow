@@ -25,7 +25,7 @@ class Cron extends CommonDBTM
         }
         if ($name === 'itilflow_deadlines') {
             return [
-                'description' => 'Сроки этапов: отметить просроченные; учесть пропущенные ответы согласующих',
+                'description' => 'Сроки этапов: отметить просроченные; учесть пропущенные ответы согласующих и инициаторов',
             ];
         }
         return [];
@@ -67,9 +67,16 @@ class Cron extends CommonDBTM
             $task->log(sprintf('Учтено ответов согласующих, пропущенных маршрутом: %d', $caught));
         }
 
+        // 1.13.2: ответ инициатора на уточнение, который маршрут сразу не учёл, — тоже.
+        $answers = Engine::catchUpAnswers();
+        if ($answers > 0) {
+            $task->addVolume($answers);
+            $task->log(sprintf('Продолжено маршрутов после ответа инициатора: %d', $answers));
+        }
+
         if ($done > 0) {
             $task->log(sprintf('Отмечено просроченных этапов: %d', $done));
         }
-        return $done > 0 || $caught > 0 ? 1 : 0;
+        return $done > 0 || $caught > 0 || $answers > 0 ? 1 : 0;
     }
 }

@@ -96,7 +96,7 @@
   {% if scheme.rows|length > 1 or has_return or has_reject or has_bypass or has_condition or has_current or has_history %}
   <details class="ifsc-legend"><summary>Обозначения схемы</summary><p>
     {% if scheme.rows|length > 1 %}Стрелка вниз — следующий этап. {% endif %}
-    {% if has_history %}Толстая сплошная линия слева — выполненный возврат из истории. {% endif %}
+    {% if has_history %}Толстая сплошная линия слева — возврат или начало заново, которые уже были. {% endif %}
     {% if has_return %}Пунктирная линия слева — возврат на уточнение. {% endif %}
     {% if has_reject %}Сплошная линия слева — переход при отказе. {% endif %}
     {% if has_bypass %}Линия справа — обход условного этапа. {% endif %}

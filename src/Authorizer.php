@@ -131,10 +131,10 @@ final class Authorizer
             }
         }
         // Несколько текущих шагов — неоднозначное состояние, а не выбор первого.
-        $running = (new Step())->find([
-            'plugin_itilflow_instances_id' => $instance->getID(),
-            'state' => Step::RUNNING,
-        ]);
+        // Этапы своего запуска — по индексу запуска, состояние — здесь (1.13.2): условие по state
+        // в запросе с блокировкой MySQL 8 мог вести по индексу state и блокировать идущие этапы других заявок.
+        $running = array_filter((new Step())->find(['plugin_itilflow_instances_id' => $instance->getID()]),
+            static fn(array $row): bool => $row['state'] === Step::RUNNING);
         if (count($running) !== 1 || (int) array_key_first($running) !== (int) $step->getID()) {
             return 'Не удалось понять, какой этап идёт. Сообщите администратору маршрутов.';
         }

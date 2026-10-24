@@ -20,6 +20,10 @@ request):
 
 ## Step 0. Prepare GLPI
 
+Everything except the plugin is created the standard GLPI way: the entity,
+groups and users — **Administration**, the approval step — **Setup →
+Dropdowns**, the form — **Administration → Forms**.
+
 - The plugin is installed, cron and `itilflow_status_sync` are on
   ([INSTALL.en.md](INSTALL.en.md)); you have “Маршруты этапов” (Stage routes):
   Read and Update.
@@ -30,9 +34,12 @@ request):
 - A GLPI approval step “Согласование руководителя”.
 - The form “Пример: заказ оборудования”: “Что нужно” (What is needed — list
   “Монитор” / Monitor, “Гарнитура” / Headset, “Доступ к сетевой папке” /
-  Network folder access, mandatory), “Руководитель” (Manager — user),
-  “Срочно” (Urgent — yes / no), “Комментарий” (Comment). Destination
-  “Заявка” (Ticket) creates a ticket in “Пример” for the group “Исполнители”;
+  Network folder access), “Срочно” (Urgent — yes / no), “Руководитель”
+  (Manager — user), “Комментарий” (Comment); the first three are mandatory.
+  The screenshot in step 9 also shows “Когда нужно” (When needed) and “Что ещё
+  сделать” (What else to do) — optional; the route does not use them, you can
+  skip them.
+  Destination “Заявка” (Ticket) creates a ticket in “Пример” for the group “Исполнители”;
   approval — the “Руководитель” answer, approval step “Согласование
   руководителя”.
 
@@ -40,13 +47,16 @@ request):
 
 **Administration → Маршруты этапов → Add:** “Название маршрута” (Route name) —
 “Пример: выдача оборудования”, entity “Пример”, “Маршрут включён” (Route
-enabled) — Yes. After “Добавить” (Add) the readiness line says “Нет ни одного
-этапа.” (No stages yet.)
+enabled) — Yes (already set). After “Добавить” (Add) the readiness line says
+“Не готов к запуску: 1 проблема” (Not ready to start: 1 problem) with the item
+“Нет ни одного этапа.” (No stages yet.)
 
 In the “Запуск маршрута” (Route start) block choose “Форма” (Form) —
-“Пример: заказ оборудования”, save, then “Назначение формы” (Form
-destination) — “Заявка”. Leave “Запускать, если” (Start if) at “Не запускать
-по форме” (Not started from the form) for now — step 7 turns it on.
+“Пример: заказ оборудования” and save — the form destinations appear.
+“Назначение формы” (Form destination) — “«Заявка» — создаётся всегда”
+(“Заявка” — always created). Leave “Запускать, если” (Start if) at
+“Не запускать по форме” (Not started from the form) for now — step 7 turns
+it on.
 
 ![New route: readiness line, main fields, “Запуск маршрута”, collapsed “Дополнительно”](img/route-new.png)
 
@@ -97,11 +107,13 @@ conditions are met); “Что проверяем” (What to check) — “20. 
 «Нужна закупка?»”, “Сравнение” (Comparison) — “да” (yes). The sentence under
 it: “Этап выполняется, если на этапе 20 ответили «да» на «Нужна закупка?».”
 “Если ответа нет” (If no answer) — “выполнять этап” (run the stage). “Что
-дальше” (What next) shows both branches at once.
+дальше” (What next) → “После этапа 20 «Подготовить» — сюда попадают так”
+(After stage 20 — how you get here): “Выполнено → этап 25 «Согласовать
+закупку» (если 20: «Нужна закупка?» — да), затем маршрут закончен” (Done →
+stage 25 if yes, then the route ends). Stage 30 does not exist yet — it
+appears here after step 5.
 
 ![Stage 25: “Когда выполнять”, condition, sentence, “Если ответа нет”](img/stage-25-condition.png)
-
-![Stage 25: “Что дальше” — two branches after stage 20](img/stage-25-next.png)
 
 ## Step 5. Stage 30
 
@@ -121,11 +133,15 @@ it: “Этап выполняется, если на этапе 20 ответи
 “Этапы”: “Готов к запуску · запуск вручную” (Ready to start · started manually;
 the form start is enabled in step 7), the “Когда” (When) column shows the
 condition of stage 25, arrows ↑ ↓ change the order.
-“Схема” (Scheme): the bypass of stage 25 on the right.
+“Схема” (Scheme): the bypass of stage 25 on the right. In stage 25, “Что
+дальше” after stage 20 now ends with “затем этап 30 «Выдача»” (then stage
+30): on “no” the route goes straight to stage 30.
 
 ![The “Этапы” tab: readiness line, “Когда”, arrows](img/stages-list.png)
 
 ![The “Схема” tab: four stages and the bypass of stage 25](img/route-scheme.png)
+
+![Stage 25: “Что дальше” — after stage 20, stage 25 by condition, then stage 30](img/stage-25-next.png)
 
 ## Step 7. Start from a form answer
 
@@ -134,6 +150,12 @@ condition of stage 25, arrows ↑ ↓ change the order.
 readiness line: “Готов к запуску · 4 этапа · запускается по ответу формы
 «Пример: заказ оборудования»” (… started from the form …). No business rule
 is needed.
+
+Below it, until the second route exists, there is a note: “Назначение «Заявка»:
+если «Что нужно» — «Доступ к сетевой папке», не запускается ни один маршрут —
+заявка останется без маршрута.” (if the answer is “Network folder access”, no
+route starts — the ticket stays without a route). This is not an error: the
+second route takes such tickets, and the note disappears.
 
 The second route “Пример: доступ к папке” (Example: folder access) — same
 form and destination, the same stage 10, stage 20 a task “Открыть доступ”
@@ -157,9 +179,10 @@ GLPI right “Утверждения заявок” (Ticket approvals); self-se
 
 Test as each participant, not as the administrator.
 
-The requester submits the form: “Что нужно” — “Монитор”, the manager. On the
-“Маршрут этапов” (Stage route) tab: stage 10 is “Сейчас” (Current), the others
-“Впереди” (Upcoming). The requester does not see conditions or stage
+The requester submits the form: “Что нужно” — “Монитор”, “Срочно” — “Нет”
+(No), “Руководитель” — their manager. On the “Маршрут этапов” (Stage route)
+tab, with the counter of passed stages “0/4”: stage 10 is “Сейчас” (Current),
+the others “Впереди” (Upcoming). The requester does not see conditions or stage
 questions. On a phone — cards.
 
 ![The form in the service catalog](img/form-submit.png)
@@ -179,8 +202,10 @@ Stage 10 row → “Одобрить или отказать” (Approve or refu
 ## Step 11. Assignee
 
 Stage 20 row → “Завершить этап” (Complete stage): answer “Нужна закупка?”,
-fill in “Что сделано” (What was done), “Завершить этап”. The stage group stops
-being the ticket's assignee, and the assignee returns to the home page.
+fill in “Что сделано” (What was done), “Завершить этап”. If the assignee can
+no longer see the ticket afterwards, their home page opens. Here, on “Нет”,
+stage 30 is run by the same group “Исполнители”, so the assignee stays on the
+ticket.
 
 ![“Завершить этап”: stage question and “Что сделано”](img/ticket-task-complete.png)
 
@@ -213,14 +238,19 @@ Result: …). The requester accepts the solution.
 
 ## Step 15. The tab for the route administrator
 
-The header shows “Нужно пройти: 3 из 4 этапов (1 не нужен по условию).” (To
-pass: 3 of 4 stages, 1 not needed), “Лист согласования” (Approval sheet) and
-the “…” menu; rows have a “…” menu (“Передать этап…” — Reassign stage,
-“Закрыть принудительно…” — Force close); below the table — “Схема”. “Журнал
-маршрута” (Route log) appears under it when it has entries: actions out of
-stage order, stops, overdue stages.
+On the solved ticket the header shows “Все этапы пройдены, заявка решена.”
+(All stages passed, the ticket is solved), “Нужно пройти: 3 из 4 этапов
+(1 не нужен по условию).” (To pass: 3 of 4 stages, 1 not needed), “Лист
+согласования” (Approval sheet) and “Пройден” (Passed); below the table —
+“Схема”. “Журнал маршрута” (Route log) appears under it when it has entries:
+actions out of stage order, stops, overdue stages.
 
-![The tab for the route administrator](img/ticket-tab-admin.png)
+While the route runs there are also “…” menus: in the header — “Прервать
+маршрут…” (Abort route), in the current stage row — “Передать этап…”
+(Reassign stage), “Закрыть принудительно…” (Force close), as permitted
+([RIGHTS.en.md](RIGHTS.en.md)). A solved ticket has none of these menus.
+
+![The tab for the route administrator while stage 30 runs](img/ticket-tab-admin.png)
 
 ![“Лист согласования” of a completed ticket](img/approval-sheet.png)
 

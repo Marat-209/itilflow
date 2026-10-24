@@ -360,9 +360,18 @@ final class Hook
         });
     }
 
-    /** Обработчик события ядра: любой сбой маршрута — в itilflow.log, не в ядро GLPI (HTTP 500). */
+    /**
+     * Обработчик события ядра: любой сбой маршрута — в itilflow.log, не в ядро GLPI (HTTP 500).
+     *
+     * 1.13.2: кроме потери транзакции, когда обработчик вызван внутри транзакции самого GLPI
+     * (отправка формы, слияние заявок). Сервер откатил и её — ядро должно узнать об этом и отменить
+     * операцию целиком, иначе оно продолжит писать мимо транзакции и сохранит операцию наполовину.
+     * Вне транзакции GLPI (обычный комментарий, ответ согласующего) — как раньше: комментарий и ответ
+     * уже сохранены, исключение в ядро не выходит.
+     */
     public static function safely(string $what, callable $handler): void
     {
+        $inCore = TransactionScope::coreDepth() > 0;
         try {
             $handler();
         } catch (\Throwable $e) {
@@ -370,7 +379,10 @@ final class Hook
                 \Toolbox::logInFile('itilflow', sprintf("Обработчик %s не завершён: %s: %s\n", $what, get_class($e),
                     mb_substr($e->getMessage(), 0, 500)), true, false);
             } catch (\Throwable) {}
+            if ($inCore && ($e instanceof TransactionLost || TransactionScope::isConflict($e))) { throw $e; }
         }
+        // Потерю, которую обработчик записал в журнал и не выпустил (hookFailed), — тоже ядру.
+        if ($inCore) { TransactionScope::assertHealthy(); }
     }
 
     /** Native ответ не превращается в полномочие для другого адресата или старой попытки. */

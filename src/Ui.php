@@ -207,7 +207,8 @@ final class Ui
             $instance->fields['state'] === Instance::ABORTED && self::withdrawal($instance) !== null => ['Отозвана', 'bg-secondary-lt', 'Заявку отозвал инициатор.'],
             $instance->fields['state'] === Instance::ABORTED && $attempt?->fields['state'] === Attempt::REFUSED => [Terms::REFUSAL, 'bg-red-lt', $solved ? 'Причина — в решении заявки.' : 'Отказ на одном из этапов.'],
             $instance->fields['state'] === Instance::ABORTED => [Terms::ABORTED, 'bg-secondary-lt', 'Маршрут прерван.'],
-            $attempt?->fields['state'] === Attempt::WAITING_INPUT => [Terms::WAITING_INITIATOR, 'bg-orange-lt',
+            // Инициатору — от первого лица (1.13.2): «Ждём ответа инициатора» читалось как о ком-то другом.
+            $attempt?->fields['state'] === Attempt::WAITING_INPUT => [$initiator ? Terms::WAITING_YOUR_ANSWER : Terms::WAITING_INITIATOR, 'bg-orange-lt',
                 StepLine::waitingHeader($initiator, (string) ($attempt->fields['subject_summary'] ?? ''))],
             $instance->fields['state'] === Instance::HALTED => [Terms::STOPPED, 'bg-yellow-lt', 'Решает администратор маршрутов.'],
             default => [Terms::IN_PROGRESS, 'bg-blue-lt', ''],
@@ -530,6 +531,7 @@ final class Ui
             $summary = $why; $problem = true;
         }
         [$label, $class] = self::OUTCOME[$kind];
+        if ($kind === 'waiting_input' && $initiator) { $label = Terms::WAITING_YOUR_ANSWER; }
         // У этапа согласования — «Согласовано» / «Отклонено», те же слова, что в листе (Sheet::resultLabel).
         if (in_array($kind, ['done', 'refused'], true)) {
             $label = Sheet::resultLabel($row, $kind === 'done' ? Outcome::COMPLETED : Outcome::REFUSED, false,
@@ -693,8 +695,12 @@ final class Ui
                     'fallback_percent' => (int) ($step->fields['approval_percent_snapshot'] ?? 100)];
             }
             if ($staff && $step->awaitsExistingRequests() && Authorizer::formAdoptionError($step) === null) {
-                $acts[] = ['action' => 'adopt_existing', 'label' => 'Засчитать согласование',
-                    'groups' => self::formRequestChoices($instance, $step), 'reason' => FormAdoption::reasonForStep($step)];
+                $answeredHidden = false;
+                $groups = self::formRequestChoices($instance, $step, $answeredHidden);
+                // 1.13.2: если засчитать нечего — кто поможет (Ui::nothingToAdopt).
+                $acts[] = ['action' => 'adopt_existing', 'label' => 'Засчитать согласование', 'groups' => $groups,
+                    'reason' => FormAdoption::reasonForStep($step), 'empty_text' => $groups === [] ? self::nothingToAdopt($answeredHidden,
+                        in_array('set_approver', array_column($acts, 'action'), true)) : ''];
             }
             if ($staff && Authorizer::stepError($step, 'complete') === null) {
                 $stage = $step->getStage();
@@ -777,8 +783,25 @@ final class Ui
         return $line === '' ? [] : [$line];
     }
 
-    /** Показывается весь этап согласования GLPI; права и список снова проверяются под блокировкой POST. */
-    private static function formRequestChoices(Instance $instance, Step $step): array
+    /**
+     * Текст, когда засчитать нечего: что произошло и к кому идти. $answeredHidden — в заявке есть уже отвеченное
+     * согласование, а засчитать его может только администратор маршрутов; $canSetApprover — у человека
+     * есть «Указать согласующего».
+     */
+    public static function nothingToAdopt(bool $answeredHidden, bool $canSetApprover): string
+    {
+        return 'В заявке нет подходящего согласования.' . match (true) {
+            $answeredHidden => ' Уже отвеченное согласование засчитывает администратор маршрутов.',
+            $canSetApprover => ' Укажите согласующего — ему уйдёт запрос.',
+            default => ' Обратитесь к администратору маршрутов.',
+        };
+    }
+
+    /**
+     * Показывается весь этап согласования GLPI; права и список снова проверяются под блокировкой POST.
+     * $answeredHidden — есть уже отвеченное согласование, которое этому человеку засчитать нельзя.
+     */
+    private static function formRequestChoices(Instance $instance, Step $step, bool &$answeredHidden = false): array
     {
         global $DB;
         $item = $instance->getItilItem();
@@ -805,7 +828,8 @@ final class Ui
                 $labels[] = self::targetName($row) . ' — ' . match ((int) $row['status']) { 2 => 'ждёт ответа', 3 => 'одобрил', 4 => 'отказал', default => 'недоступен' }
                     . ((int) $row['status'] !== 2 ? ', ответил ' . ManualAdoptionConfirmation::answerDate($row) : '');
             }
-            if (!$valid || Authorizer::formAdoptionError($step, $answered) !== null) { continue; }
+            if (!$valid) { continue; }
+            if (Authorizer::formAdoptionError($step, $answered) !== null) { $answeredHidden = $answeredHidden || $answered; continue; }
             $name = \Dropdown::getDropdownName(\ValidationStep::getTable(), (int) $native->fields['validationsteps_id']);
             $dates = array_values(array_unique(array_map([ManualAdoptionConfirmation::class, 'answerDate'], array_filter($group['rows'], static fn(array $r): bool => (int) $r['status'] !== 2))));
             $out[] = ['ids' => $ids, 'label' => 'Этап согласования «' . $name . '», нужно ' . (int) $native->fields['minimal_required_validation_percent'] . ' % одобрений', 'requests' => $labels,
@@ -858,7 +882,7 @@ final class Ui
         foreach ((new Violation())->find(['plugin_itilflow_instances_id' => $instance->getID(),
             'NOT' => ['action' => ['LIKE', 'action%']]], ['date DESC'], 20) as $row) {
             $row['user_name'] = (int) $row['users_id'] > 0 ? getUserName((int) $row['users_id']) : '—';
-            $row['out_of_order'] = !in_array((string) $row['action'], ['halt', 'deadline', 'form_cleanup_skipped', 'initiator_answered', 'continue_failed', 'vote_failed', 'vote_caught_up'], true);
+            $row['out_of_order'] = !in_array((string) $row['action'], ['halt', 'deadline', 'form_cleanup_skipped', 'initiator_answered', 'continue_failed', 'vote_failed', 'vote_caught_up', 'answer_caught_up', 'answer_catch_up_failed'], true);
             $out[] = $row;
         }
         return $out;

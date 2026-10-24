@@ -116,7 +116,9 @@
         <div class="row mt-3">
             <div class="col">
                 <div class="justify-content-end align-items-center d-flex gap-2">
-                    {% if ready == 0 %}
+                    {# Маршрут с занятым именем ждёт «Создать копией» — строка этого маршрута уже это говорит,
+                       вторая причина рядом читалась бы как «импорт невозможен». #}
+                    {% if ready == 0 and rows|filter(r => r.status == 'exists')|length == 0 %}
                         <span class="me-auto">Нечего импортировать: нет маршрутов «Готов к импорту».</span>
                     {% endif %}
                     <a href="{{ list }}" class="btn btn-outline-secondary">Отмена</a>

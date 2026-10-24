@@ -21,20 +21,20 @@
 Каталог плагина должен называться `itilflow` и лежать в `plugins/` вашей GLPI.
 
 ```bash
-tar -xzf itilflow-1.13.1.tar.gz -C /var/www/glpi/plugins/
+tar -xzf itilflow-1.13.2.tar.gz -C /var/www/glpi/plugins/
 chown -R www-data:www-data /var/www/glpi/plugins/itilflow
 ```
 
-Или скачайте архив `itilflow-1.13.1.zip` со страницы выпусков (Releases) этого
+Или скачайте архив `itilflow-1.13.2.zip` со страницы выпусков (Releases) этого
 репозитория и распакуйте его в `plugins/` — внутри уже лежит каталог `itilflow`:
 
 ```bash
-unzip itilflow-1.13.1.zip -d /var/www/glpi/plugins/
+unzip itilflow-1.13.2.zip -d /var/www/glpi/plugins/
 chown -R www-data:www-data /var/www/glpi/plugins/itilflow
 ```
 
 Путь и веб-пользователя подставьте свои. Архив собирайте на Linux
-(`git archive --prefix=itilflow/ -o itilflow-1.13.1.tar.gz v1.13.1`): у архива,
+(`git archive --prefix=itilflow/ -o itilflow-1.13.2.tar.gz v1.13.2`): у архива,
 собранного на Windows, у каталогов может не оказаться права `x`, и GLPI отдаст
 404 на файлы плагина.
 
@@ -81,7 +81,7 @@ php bin/console cache:clear
 
 ### 5. Проверка
 
-- `php bin/console plugin:list` — itilflow 1.13.1 «Включен».
+- `php bin/console plugin:list` — itilflow 1.13.2 «Включен».
 - В меню **Администрирование** есть **«Маршруты этапов»**.
 - В `files/_log/php-errors.log` нет ошибок со словом `itilflow`.
 
@@ -106,7 +106,7 @@ php bin/console cache:clear
 - с 1.12 и раньше у всех маршрутов «Запускать, если» — «Не запускать
   по форме»: их запускают те же бизнес-правила. На запуск по форме маршрут
   переводится вручную ([REFERENCE.md](REFERENCE.md#5-запуск-маршрута));
-- с 1.13.0 на 1.13.1 структура базы не меняется;
+- с 1.13.0 и 1.13.1 на 1.13.2 структура базы не меняется;
 - этапы, сохранённые до 1.13, не пересматриваются: если у вас есть сроки или
   SLA на годы вперёд, откройте такие этапы и сохраните — срок проверится.
 

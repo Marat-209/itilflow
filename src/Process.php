@@ -159,7 +159,8 @@ class Process extends CommonDBTM
             'start'        => $structured && ($this->fields['itemtype'] ?? '') === 'Ticket' ? $this->startView() : null,
             'readiness'    => $this->isNewItem() ? null : Readiness::check($this),
             // Пересчёт строки готовности и «Назначения формы» без сохранения (front/draft.php).
-            'draft_url'    => $this->isNewItem() ? '' : \Plugin::getWebDir('itilflow') . '/front/draft.php',
+            // Только тому, кто правит маршрут: front/draft.php требует права изменять.
+            'draft_url'    => $this->isNewItem() || !$this->can($this->getID(), UPDATE) ? '' : \Plugin::getWebDir('itilflow') . '/front/draft.php',
             'new_contract' => $this->isNewItem() ? (string) $this->fields['outcome_contract'] : '',
             'legacy'       => $this->isNewItem() || $structured ? null : [
                 'lines'       => self::conversionLines(self::conversionPlan($this->getStages()), $this->runningCount()),
@@ -187,7 +188,7 @@ class Process extends CommonDBTM
         $editor = null; $siblings = [];
         if ($formId > 0 && !$this->isNewItem()) {
             $editor = ConditionEditor::view(ConditionEditor::SCOPE_START, self::START_EDITOR, $mode, $rule, $p)
-                + ['draft_url' => \Plugin::getWebDir('itilflow') . '/front/draft.php'];
+                + ['draft_url' => $this->can($this->getID(), UPDATE) ? \Plugin::getWebDir('itilflow') . '/front/draft.php' : ''];
             foreach (StartReadiness::siblings($p) as $row) {
                 $siblings[] = $row + ['url' => self::getFormURLWithID((int) $row['id'])];
             }

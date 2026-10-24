@@ -59,10 +59,16 @@ if ($action === 'start') {
 if (in_array($action, ['abort', 'resume'], true)) {
     $instance = new Instance();
     if ($instance->getFromDB($id('instances_id'))) {
-        if ($action === 'abort') {
-            Engine::abort($instance, $text('abort_reason'), $command_key, $expected_attempt);
-        } else {
-            Engine::resume($instance, $command_key, $expected_attempt);
+        $done = $action === 'abort'
+            ? Engine::abort($instance, $text('abort_reason'), $command_key, $expected_attempt)
+            : Engine::resume($instance, $command_key, $expected_attempt);
+        // Задача этапа закрыта, и тот, кто видел заявку только через неё, её больше не видит:
+        // не на страницу «Доступ запрещен», а на главную с подтверждением, как после «Завершить этап».
+        if (!Authorizer::stepItemVisible($instance, null)) {
+            if ($done && $action === 'abort') {
+                Session::addMessageAfterRedirect('Готово: маршрут прерван.', false, INFO);
+            }
+            Html::redirect(StepLine::homeUrl((string) Session::getCurrentInterface(), (string) $CFG_GLPI['root_doc']));
         }
     }
     Html::back();
@@ -74,12 +80,13 @@ if (!$step->getFromDB($id('steps_id'))) {
     Html::back();
     return;
 }
+$done = false;
 switch ($action) {
     case 'complete':
     case 'skip':
         $answers = array_key_exists('decision_answers', $_POST) ? Decision::fromPost($_POST['decision_answers']) : null;
         if (!array_key_exists('decision_answers', $_POST) || $answers !== null) {
-            Engine::completeStep($step, $text('report'), $action === 'skip', $command_key, $expected_attempt,
+            $done = Engine::completeStep($step, $text('report'), $action === 'skip', $command_key, $expected_attempt,
                 Decision::revisionFromPost($_POST['expected_decision_revision'] ?? null), $answers);
         }
         break;
@@ -140,6 +147,10 @@ switch ($action) {
 // её больше не видит: не на страницу «Доступ запрещен», а на главную (как outcome.form.php).
 $instance = $step->getInstance();
 if ($instance !== null && !Authorizer::stepItemVisible($instance, $step)) {
+    // На главной — подтверждение, как у соседних действий (outcome.form.php): заявки человек больше не видит.
+    if ($done) {
+        Session::addMessageAfterRedirect($action === 'skip' ? 'Готово: этап пропущен.' : 'Готово: этап завершён.', false, INFO);
+    }
     Html::redirect(StepLine::homeUrl((string) Session::getCurrentInterface(), (string) $CFG_GLPI['root_doc']));
 }
 Html::back();

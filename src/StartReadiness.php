@@ -559,6 +559,48 @@ final class StartReadiness
         } catch (\Throwable $e) { TransactionScope::keepGoing($e); return null; }
     }
 
+    /**
+     * 1.13.2. Формы, заявки которых правило этого маршрута не запустит: у формы есть другой включённый
+     * маршрут с «Запускать, если», видный в тех же организациях — тогда маршрут для её заявок выбирает форма
+     * (FormStart::suppressesRuleStart). Своя форма маршрута с «Запускать, если» — в ruleNotes. Только формы
+     * маршрутов, которые видит пользователь. Названия — по алфавиту.
+     *
+     * @return list<string>
+     */
+    public static function formsChoosingRoute(array $process): array
+    {
+        global $DB;
+        if (($process['itemtype'] ?? 'Ticket') !== 'Ticket') { return []; }
+        $own = (int) ($process['id'] ?? 0);
+        $ownForm = StartRule::isOn($process) ? (int) ($process['forms_forms_id'] ?? 0) : 0;
+        $scope = self::entityScope($process);
+        $names = [];
+        foreach ($DB->request(['FROM' => Process::getTable(), 'WHERE' => ['itemtype' => 'Ticket', 'outcome_contract' => DefinitionSnapshot::MODE,
+            'is_active' => 1, 'forms_forms_id' => ['>', 0]], 'ORDER' => 'id']) as $row) {
+            $formId = (int) $row['forms_forms_id'];
+            if ((int) $row['id'] === $own || $formId === $ownForm || isset($names[$formId]) || !StartRule::isOn($row)
+                || array_intersect($scope, self::entityScope($row)) === []) { continue; }
+            $route = new Process();
+            $form = new Form();
+            if (!$route->can((int) $row['id'], READ) || !$form->getFromDB($formId)) { continue; }
+            $names[$formId] = (string) $form->fields['name'];
+        }
+        $names = array_values($names);
+        usort($names, static fn(string $a, string $b): int => strcmp(mb_strtolower($a), mb_strtolower($b)));
+        return $names;
+    }
+
+    /** «Для заявок с формы «А» правило не сработает: там маршрут выбирает «Запускать, если».»; null — форм нет. */
+    public static function rulesSkipFormsLine(array $forms, int $rules): ?string
+    {
+        $forms = array_values(array_unique(array_map('strval', $forms)));
+        $n = count($forms);
+        if ($n === 0 || $rules <= 0) { return null; }
+        $shown = implode(', ', array_map(static fn(string $f): string => '«' . $f . '»', array_slice($forms, 0, 2)));
+        return 'Для заявок ' . ($n === 1 ? 'с формы ' : 'с форм ') . $shown . ($n > 2 ? ' и ещё ' . ($n - 2) : '')
+            . ($rules === 1 ? ' правило не сработает' : ' правила не сработают') . ': там маршрут выбирает «Запускать, если».';
+    }
+
     private static function entityScope(array $process): array
     {
         $entity = (int) ($process['entities_id'] ?? 0);

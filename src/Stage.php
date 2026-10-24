@@ -418,7 +418,9 @@ class Stage extends CommonDBChild
             'position'     => $position,
             'total'        => count($stages),
             'neighbours'   => $neighbours,
-            'draft_url'    => $structured ? \Plugin::getWebDir('itilflow') . '/front/draft.php' : '',
+            // Пересчёт без сохранения — только тому, кто правит этап (front/draft.php требует права изменять).
+            'draft_url'    => $structured && (Process::formButtons($this)['add'] || Process::formButtons($this)['update'])
+                ? \Plugin::getWebDir('itilflow') . '/front/draft.php' : '',
             'field_errors' => self::takeFieldErrors((int) $this->getID()),
             'readiness'    => $this->isNewItem() || $processes_id <= 0 ? null
                 : Readiness::forStageSplit($process, (int) $this->getID()),

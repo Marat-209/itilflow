@@ -97,11 +97,12 @@ final class Scheme extends CommonGLPI
                 $urls[$id] = '#itilflow-row-' . (int) $r['step_id'];
             }
         }
-        foreach ((new Attempt())->find(['plugin_itilflow_instances_id' => $instance->getID()], ['number ASC']) as $a) {
+        $attempts = (new Attempt())->find(['plugin_itilflow_instances_id' => $instance->getID()], ['number ASC']);
+        foreach ($attempts as $a) {
             $source = $stepsById[(int) $a['source_step_id']] ?? null;
             if ($source !== null && (int) $a['target_stage_id'] > 0) {
-                $history[] = ['from_id' => (int) $source['plugin_itilflow_stages_id'],
-                    'to_id' => (int) $a['target_stage_id'], 'label' => 'Выполненный возврат: попытка ' . (int) $a['number']];
+                $history[] = ['from_id' => (int) $source['plugin_itilflow_stages_id'], 'to_id' => (int) $a['target_stage_id'],
+                    'label' => self::historyLabel($attempts[(int) ($a['previous_attempt_id'] ?? 0)]['state'] ?? null)];
             }
         }
         $model = self::build($snapshot['process'], $snapshot['stages'], [
@@ -117,6 +118,16 @@ final class Scheme extends CommonGLPI
             $model['notices'][] = 'Показана версия на момент запуска.';
         }
         return $model;
+    }
+
+    /**
+     * Подпись уже пройденного перехода на схеме заявки — словами, без номера попытки (1.13.2):
+     * прежняя попытка закончилась возвратом на уточнение — «Возврат на уточнение», иначе маршрут начинали
+     * заново («Начать заново с этапа…»).
+     */
+    public static function historyLabel(?string $previousState): string
+    {
+        return $previousState === Attempt::RETURNED ? 'Возврат на уточнение' : 'Начато заново';
     }
 
     private static function stateLabel(string $state): string

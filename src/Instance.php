@@ -88,16 +88,16 @@ class Instance extends CommonDBTM
 
     public function getCurrentStep(): ?Step
     {
-        $found = (new Step())->find([
-            'plugin_itilflow_instances_id' => $this->getID(),
-            'state'                        => Step::RUNNING,
-        ], ['ranking ASC'], 1);
-        if (!count($found)) {
-            return null;
+        // Все этапы запуска по его индексу, текущий — здесь: в команде это чтение с блокировкой, и условие
+        // по state могло вести по индексу state — блокировать идущие этапы других заявок (1.13.2).
+        foreach ((new Step())->find(['plugin_itilflow_instances_id' => $this->getID()], ['ranking ASC', 'id ASC']) as $id => $row) {
+            if ($row['state'] === Step::RUNNING) {
+                $s = new Step();
+                $s->getFromDB((int) $id);
+                return $s;
+            }
         }
-        $s = new Step();
-        $s->getFromDB((int) array_key_first($found));
-        return $s;
+        return null;
     }
 
     public function getAttemptSteps(): array

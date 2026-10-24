@@ -7,7 +7,6 @@ final class ValidationAuthority
 {
     public static function canAnswer(\CommonITILValidation $validation): bool
     {
-        global $DB;
         $uid = (int) \Session::getLoginUserID();
         if ($uid <= 0) { return false; }
         $scope = TransactionScope::hasActive() ? null : new TransactionScope();
@@ -16,23 +15,7 @@ final class ValidationAuthority
                 if ($scope !== null) { $scope->commit(); }
                 return false;
             }
-            $users = [$uid];
-            // Точные источники CommonITILValidation::getTargetCriteriaForUser GLPI 11.0.8.
-            foreach (CurrentRead::find(new \ValidatorSubstitute(), ['users_id_substitute' => $uid]) as $binding) {
-                $query = $DB->doQuery('SELECT * FROM ' . $DB->quoteName(\User::getTable())
-                    . ' WHERE id=' . (int) $binding['users_id']
-                    . ' AND (substitution_start_date IS NULL OR substitution_start_date<=NOW())'
-                    . ' AND (substitution_end_date IS NULL OR substitution_end_date>=NOW()) FOR UPDATE');
-                $user = $DB->fetchAssoc($query);
-                if ($user) { $users[] = (int) $user['id']; }
-            }
-            $users = array_values(array_unique($users));
-            $target = (int) ($validation->fields['items_id_target'] ?? 0);
-            $kind = $validation->fields['itemtype_target'] ?? '';
-            $current = $kind === \User::class && in_array($target, $users, true);
-            if ($kind === \Group::class && $target > 0) {
-                $current = count(CurrentRead::find(new \Group_User(), ['groups_id' => $target, 'users_id' => $users])) > 0;
-            }
+            $current = self::addressedTo($uid, $validation->fields);
             // Native canAnswer делает plain SELECT. Его false не повышается до true;
             // его stale true не принимается без текущей адресности выше.
             $allowed = $current && $validation->canAnswer();
@@ -43,5 +26,33 @@ final class ValidationAuthority
             TransactionScope::assertHealthy();
             throw $e;
         }
+    }
+
+    /**
+     * Запрос сейчас адресован пользователю $uid: он адресат, участник группы-адресата или действующий
+     * заместитель адресата (или участника группы). Точные источники
+     * CommonITILValidation::getTargetCriteriaForUser GLPI 11.0.8, без сессии: этим же проверяется, что
+     * ответ, который догоняет сверка «Сроки этапов», дал настоящий согласующий (1.13.2).
+     */
+    public static function addressedTo(int $uid, array $validation): bool
+    {
+        global $DB;
+        if ($uid <= 0) { return false; }
+        $users = [$uid];
+        foreach (CurrentRead::find(new \ValidatorSubstitute(), ['users_id_substitute' => $uid]) as $binding) {
+            // Строка отсутствующего согласующего — общей блокировкой, как и другие справочники (1.13.2): два заместителя одного человека отвечают одновременно и не ждут друг друга.
+            $query = $DB->doQuery('SELECT * FROM ' . $DB->quoteName(\User::getTable())
+                . ' WHERE id=' . (int) $binding['users_id']
+                . ' AND (substitution_start_date IS NULL OR substitution_start_date<=NOW())'
+                . ' AND (substitution_end_date IS NULL OR substitution_end_date>=NOW())' . CurrentRead::lockClause(\User::class));
+            $user = $DB->fetchAssoc($query);
+            if ($user) { $users[] = (int) $user['id']; }
+        }
+        $users = array_values(array_unique($users));
+        $target = (int) ($validation['items_id_target'] ?? 0);
+        $kind = $validation['itemtype_target'] ?? '';
+        if ($kind === \User::class) { return in_array($target, $users, true); }
+        return $kind === \Group::class && $target > 0
+            && count(CurrentRead::find(new \Group_User(), ['groups_id' => $target, 'users_id' => $users])) > 0;
     }
 }

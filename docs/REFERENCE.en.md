@@ -138,7 +138,8 @@ blocked, the ticket stays with the destination group; the readiness line
 shows such tickets for the last 30 days.
 
 **One start path per form.** If the form has a route with “Запускать, если”,
-a rule does not start the route for that form's tickets. Conditions of the
+a rule does not start the route for that form's tickets — the readiness of
+a route started by rules names such forms. Conditions of the
 routes of one form must exclude each other — readiness shows overlaps and
 gaps, and the block lists “Другие маршруты этой формы” (Other routes of this
 form).
@@ -164,12 +165,16 @@ return.
 
 1. The child ticket's assignee or the approver writes what to clarify and
    picks “С этапа” (From stage) if there are several.
-2. “Ждём ответа инициатора” (Waiting for the requester): the requester answers
+2. “Ждём ответа инициатора” (Waiting for the requester; the requester sees
+   “Ждём вашего ответа”, Waiting for your answer): the requester answers
    with a public followup in the ticket.
 3. If an approval stage returned the ticket, the route continues by itself,
    also from an email through the mail collector: the stage reopens and the
-   same approvers (including the approver from the form) get a new request.
-   A second followup changes nothing.
+   same approvers (including the approver from the form) get a new request —
+   everyone who was asked, including those who had already approved; the
+   “Нужно одобрений” (Approvals needed) value stays. A second followup changes
+   nothing. If the answer was not taken at once (simultaneous actions,
+   a failure), “Сроки этапов” (Stage deadlines) continues the route.
 4. If the assignee returned it, the approver no longer fits the ticket or the
    answer did not come as a followup, the main ticket's assignee or the route
    administrator clicks “Продолжить” (Continue). No stage choice: it was
@@ -202,7 +207,10 @@ with the reason.
   a route log entry.
 - The same action catches up an approval stage when the approver's answer
   is saved but the stage did not move (for example, with simultaneous
-  answers). A working GLPI cron is needed.
+  answers) — if the answer came from the current addressee of the request
+  (or their substitute) — and continues the route from a requester's answer
+  the route did not take at once. All running stages are checked. A working
+  GLPI cron is needed.
 - Deadlines and SLAs ending after 18 January 2038 are not saved.
 - “Статус заявки на этапе” (Ticket status at the stage, in “Дополнительно”) is
   set by `itilflow_status_sync` within a minute; “Не менять” (Keep) leaves it.
@@ -212,8 +220,9 @@ with the reason.
 **The readiness line** above the route form and the stage list: “Готов
 к запуску · 4 этапа · запускается по ответу формы «…»” (Ready to start ·
 4 stages · started from form “…”) or “Не готов к запуску: N проблем” (Not
-ready: N problems) with a link to the stage. It is recalculated without
-saving, as is “Что дальше” (What next) on the stage form.
+ready: N problems) with a link to the stage. For whoever may edit the route
+it is recalculated without saving, as is “Что дальше” (What next) on the
+stage form.
 
 **“Схема”** (Scheme) — a route tab: stages top to bottom, returns on the left,
 bypasses on the right. On a ticket — the route as it was at start.

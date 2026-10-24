@@ -248,7 +248,7 @@ trait StructuredFlow
     /**
      * Этот запуск ждёт ответа инициатора и продолжится от его комментария сам. Решает этап, с которого
      * маршрут продолжится: согласование «из формы» / «укажет исполнитель» получит запросы само, только
-     * если это тот же этап, что вернул на уточнение, и адресаты его снятых запросов известны (planFrom).
+     * если это тот же этап, что вернул на уточнение, и адресаты его запросов известны (planFrom).
      */
     public static function answerContinues(Instance $instance): bool
     {
@@ -268,19 +268,23 @@ trait StructuredFlow
         return self::continuesOnAnswer((string) ($source->fields['execution_mode'] ?? ''), $kind, $known);
     }
 
+    /** Имя сеанса автоматического действия сборщика почты GLPI (CronTask::launch: «cron_» + имя задачи). */
+    public const MAILGATE_CRON = 'cron_mailgate';
+
     /**
      * Комментарий годится как ответ инициатора: публичный, автор — инициатор заявки, и он же вошёл.
-     * Письмо из сборщика почты (сеанс автоматического действия, без вошедшего) — тоже: автор там —
+     * Письмо из сборщика почты (сеанс его автоматического действия, без вошедшего) — тоже: автор там —
      * инициатор, найденный ядром по адресу отправителя, как и для самого комментария. Подделать
      * сеанс автоматического действия из браузера нельзя; поля формы (_mailgate, users_id) — можно,
-     * поэтому без сеанса cron они не учитываются.
+     * поэтому без сеанса cron они не учитываются. $cronTask — имя сеанса автоматического действия
+     * (Session::getLoginUserID(false)), пусто — не cron; 1.13.2: годится только сборщик почты.
      */
-    public static function answerAuthor(array $fields, array $input, int $sessionUser, bool $cron): int
+    public static function answerAuthor(array $fields, array $input, int $sessionUser, string $cronTask): int
     {
         $author = (int) ($fields['users_id'] ?? 0);
         if (!empty($fields['is_private']) || $author <= 0) { return 0; }
         if ($author === $sessionUser) { return $author; }
-        return $cron && !empty($input['_mailgate']) ? $author : 0;
+        return $cronTask === self::MAILGATE_CRON && !empty($input['_mailgate']) ? $author : 0;
     }
 
     /**
@@ -297,17 +301,25 @@ trait StructuredFlow
             self::initiatorAnsweredOnce($followup, $instance);
         } catch (\Throwable $e) {
             // Комментарий уже сохранён ядром: исключение в ядро не выпускаем (HTTP 500 у инициатора).
-            self::hookFailed($e, $instance, 'continue_failed',
-                'Инициатор ответил на уточнение, но маршрут сам не продолжился. Проверьте этап и нажмите «Продолжить».');
+            // Запись — с номером комментария: по ней ответ догонит сверка «Сроки этапов» (catchUpAnswers).
+            self::hookFailed($e, $instance, 'continue_failed', self::ANSWER_FAILED, 'ITILFollowup', (int) $followup->getID());
         }
     }
+
+    /**
+     * Запись журнала: инициатор ответил, а маршрут сразу не продолжился (отказ из-за блокировок, сбой). Пишется
+     * с номером комментария; инициатору обещано «маршрут продолжится сам» — его продолжит сверка.
+     */
+    public const ANSWER_FAILED = 'Инициатор ответил на уточнение, но маршрут сразу не продолжился. Продолжит автоматическое '
+        . 'действие «Сроки этапов» или «Продолжить» в строке этапа.';
 
     /**
      * Сбой обработчика события ядра: строка в itilflow.log; если маршрут уже известен — запись журнала
      * маршрута для администратора. Людям — без ошибки: маршрут ждёт, есть «Продолжить» и догоняющая сверка.
      * Ничего не бросает, даже при потерянной транзакции.
      */
-    public static function hookFailed(\Throwable $error, ?Instance $instance, string $action, string $message): void
+    public static function hookFailed(\Throwable $error, ?Instance $instance, string $action, string $message,
+        ?string $itemtype = null, int $items_id = 0): void
     {
         try {
             \Toolbox::logInFile('itilflow', sprintf("Обработчик маршрута не завершён (%s): %s: %s\n", $action, get_class($error),
@@ -315,7 +327,8 @@ trait StructuredFlow
         } catch (\Throwable) {}
         if ($instance === null || (int) $instance->getID() <= 0) { return; }
         try {
-            Violation::record($instance, (string) $instance->fields['itemtype'], (int) $instance->fields['items_id'], $action, false, $message);
+            Violation::record($instance, $itemtype ?? (string) $instance->fields['itemtype'],
+                $itemtype !== null ? $items_id : (int) $instance->fields['items_id'], $action, false, $message);
         } catch (\Throwable) {}
     }
 
@@ -325,7 +338,7 @@ trait StructuredFlow
         $type = (string) ($followup->fields['itemtype'] ?? '');
         if (!in_array($type, ['Ticket', 'Change', 'Problem'], true)) { return; }
         $author = self::answerAuthor($followup->fields, is_array($followup->input ?? null) ? $followup->input : [],
-            (int) \Session::getLoginUserID(), \Session::isCron());
+            (int) \Session::getLoginUserID(), \Session::isCron() ? (string) \Session::getLoginUserID(false) : '');
         if ($author <= 0) { return; }
         $item = new $type();
         if (!$item->getFromDB((int) ($followup->fields['items_id'] ?? 0)) || !$item->isUser(\CommonITILActor::REQUESTER, $author)) { return; }
@@ -333,15 +346,43 @@ trait StructuredFlow
         $attempt = $instance !== null && DefinitionSnapshot::enabled($instance) ? Attempt::current($instance) : null;
         if ($attempt === null || $attempt->fields['state'] !== Attempt::WAITING_INPUT) { return; }
         $known = $instance;
-        $text = trim(html_entity_decode(strip_tags((string) ($followup->fields['content'] ?? '')), ENT_QUOTES | ENT_HTML5, 'UTF-8'));
+        $text = self::answerText($followup);
         if ($text === '' || !self::answerContinues($instance)) {
             self::journalAnswer($instance, 'initiator_answered', 'Инициатор ответил на уточнение. Продолжите маршрут: «Продолжить».');
             return;
         }
+        if (!self::continueFromAnswer($instance, $followup, $author, $text)) {
+            $instance->getFromDB($instance->getID());
+            // Комментарий и письмо (или «Продолжить») в один момент: маршрут продолжил другой ответ — это не сбой,
+            // записи «сразу не продолжился» нет (её обещание про «Сроки этапов» было бы неправдой).
+            if (self::answerStillAwaited(Attempt::current($instance)?->fields['state'] ?? null)) {
+                self::journalAnswer($instance, 'continue_failed', self::ANSWER_FAILED, 'ITILFollowup', (int) $followup->getID());
+            }
+        }
+    }
+
+    /** Запуск по-прежнему ждёт ответа инициатора (состояние текущей попытки после неудачного продолжения). */
+    public static function answerStillAwaited(?string $attemptState): bool
+    {
+        return $attemptState === Attempt::WAITING_INPUT;
+    }
+
+    /** Текст комментария без разметки. */
+    private static function answerText(\ITILFollowup $followup): string
+    {
+        return trim(html_entity_decode(strip_tags((string) ($followup->fields['content'] ?? '')), ENT_QUOTES | ENT_HTML5, 'UTF-8'));
+    }
+
+    /**
+     * Продолжить маршрут от ответа инициатора $author комментарием $followup. Ключ команды — по номеру
+     * комментария: живой обработчик и догоняющая сверка не продолжат маршрут дважды. Без вошедшего (письмо,
+     * сверка) этап переводит автор ответа.
+     */
+    private static function continueFromAnswer(Instance $instance, \ITILFollowup $followup, int $author, string $text): bool
+    {
         $was = self::$quiet;
         $wasActor = self::$proxyActor;
         self::$quiet = true;
-        // Письмо: вошедшего нет, этап переводит автор письма (answerAuthor уже проверил сеанс сборщика).
         if ((int) \Session::getLoginUserID() <= 0) { self::$proxyActor = $author; }
         try {
             $result = self::continueAttempt($instance, mb_substr($text, 0, 4000), 'Ответ инициатора в ленте заявки.',
@@ -350,18 +391,75 @@ trait StructuredFlow
             self::$quiet = $was;
             self::$proxyActor = $wasActor;
         }
-        if (!in_array($result['status'] ?? '', ['applied', 'already_applied'], true)) {
+        return in_array($result['status'] ?? '', ['applied', 'already_applied'], true);
+    }
+
+    /**
+     * 1.13.2. Догнать ответ инициатора: заявка ждёт его ответа, а его комментарий маршрут сразу не
+     * учёл (в журнале — «не продолжился» с номером комментария этой попытки). Комментарий проверяется заново:
+     * в этой заявке, публичный, с текстом, автор — инициатор. Продолжение — тем же путём, что живой ответ.
+     *
+     * @return bool маршрут продолжен
+     */
+    public static function catchUpAnswer(Instance $instance): bool
+    {
+        try {
+            if (!DefinitionSnapshot::enabled($instance)) { return false; }
+            $attempt = Attempt::current($instance);
+            if ($attempt === null || $attempt->fields['state'] !== Attempt::WAITING_INPUT || !self::answerContinues($instance)) { return false; }
+            $since = (string) ($attempt->fields['date_creation'] ?? '');
+            $records = (new Violation())->find(['plugin_itilflow_instances_id' => (int) $instance->getID(), 'action' => 'continue_failed',
+                'itemtype' => 'ITILFollowup'] + ($since !== '' ? [['date' => ['>=', $since]]] : []), ['id DESC'], 1);
+            $record = reset($records);
+            $followup = new \ITILFollowup();
+            $item = $instance->getItilItem();
+            if ($record === false || $item === null || !$followup->getFromDB((int) $record['items_id'])
+                || $followup->fields['itemtype'] !== $item->getType() || (int) $followup->fields['items_id'] !== (int) $item->getID()
+                || !empty($followup->fields['is_private'])) { return false; }
+            $author = (int) $followup->fields['users_id'];
+            $text = self::answerText($followup);
+            if ($author <= 0 || $text === '' || !$item->isUser(\CommonITILActor::REQUESTER, $author)) { return false; }
+            if (!self::continueFromAnswer($instance, $followup, $author, $text)) { return false; }
             $instance->getFromDB($instance->getID());
-            self::journalAnswer($instance, 'continue_failed',
-                'Инициатор ответил на уточнение, но маршрут сам не продолжился. Проверьте этап и нажмите «Продолжить».');
+            self::journalAnswer($instance, 'answer_caught_up', 'Ответ инициатора учтён автоматической сверкой — маршрут продолжился.',
+                'ITILFollowup', (int) $followup->getID());
+            return true;
+        } catch (\Throwable $e) {
+            self::hookFailed($e, $instance, 'answer_catch_up_failed', 'Ответ инициатора сверка не учла. Проверьте этап и нажмите «Продолжить».');
+            return false;
         }
     }
 
+    /**
+     * Сверка ответов инициаторов по всем запускам, которые ждут ответа на уточнение (автоматическое действие
+     * «Сроки этапов»), страницами по $page.
+     *
+     * @return int сколько маршрутов продолжено
+     */
+    public static function catchUpAnswers(int $page = 200): int
+    {
+        $done = 0;
+        $after = 0;
+        $page = max(1, $page);
+        do {
+            $rows = (new Attempt())->find(['state' => Attempt::WAITING_INPUT, ['id' => ['>', $after]]], ['id ASC'], $page);
+            if ($rows === []) { break; }
+            $after = (int) max(array_keys($rows));
+            foreach ($rows as $aid => $row) {
+                $instance = new Instance();
+                if ($instance->getFromDB((int) $row['plugin_itilflow_instances_id'])
+                    && (int) $instance->fields['current_attempt_id'] === (int) $aid && self::catchUpAnswer($instance)) { $done++; }
+            }
+        } while (count($rows) === $page);
+        return $done;
+    }
+
     /** Запись журнала маршрута об ответе инициатора; сбой записи не мешает его комментарию. */
-    private static function journalAnswer(Instance $instance, string $action, string $message): void
+    private static function journalAnswer(Instance $instance, string $action, string $message, ?string $itemtype = null, int $items_id = 0): void
     {
         try {
-            Violation::record($instance, (string) $instance->fields['itemtype'], (int) $instance->fields['items_id'], $action, false, $message);
+            Violation::record($instance, $itemtype ?? (string) $instance->fields['itemtype'],
+                $itemtype !== null ? $items_id : (int) $instance->fields['items_id'], $action, false, $message);
         } catch (\Throwable) {
             TransactionScope::assertHealthy();
         }
@@ -1118,6 +1216,7 @@ trait StructuredFlow
         if (!CurrentRead::load($child, $cid) || (int) $child->fields['entities_id'] !== $entity) {
             throw new \RuntimeException('Объект отдела не подтверждён.');
         }
+        self::childWithoutInitiator($child, $parent);
         if ((int) $stage->fields['users_id'] > 0 && !Authorizer::userFitsItem((int) $stage->fields['users_id'], $child)) {
             throw new \RuntimeException('Исполнитель недоступен в организации отдела.');
         }

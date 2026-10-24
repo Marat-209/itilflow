@@ -65,6 +65,12 @@ final class Readiness
         }
 
         $notes = self::notes($stages, $previews);
+        // 1.13.2: правило этого маршрута молча не запускает заявки форм с «Запускать, если» —
+        // администратор маршрута видит это здесь, а не только в журнале каждой заявки.
+        if ($rules !== []) {
+            $line = StartReadiness::rulesSkipFormsLine(StartReadiness::formsChoosingRoute($p), count($rules));
+            if ($line !== null) { $notes[] = self::problem($line, null, false); }
+        }
         foreach ($start['notes'] as $text) {
             $notes[] = self::problem($text, null, false);
         }

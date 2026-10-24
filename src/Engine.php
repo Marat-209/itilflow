@@ -219,10 +219,16 @@ final class Engine
                     $id = (int) ($object->fields['id'] ?? 0);
                     if ($id > 0 && !$object->getFromDB($id)) { $object->fields = []; }
                 }
-                if (!$conflict->retryable || $try >= self::CONFLICT_TRIES) {
+                // 1.13.2: откат возвращает базу, но не то, что хук другого плагина уже сделал наружу
+                // (письмо, HTTP, файл). Если команда успела менять объекты, на которые подписаны другие
+                // плагины, повтор сделал бы это ещё раз — тогда без повтора: понятный отказ; ответ согласующего
+                // и инициатора догонит сверка «Сроки этапов».
+                $foreign = $conflict->retryable && $conflict->afterStart && $try < self::CONFLICT_TRIES ? self::foreignHooks() : [];
+                if (!$conflict->retryable || $try >= self::CONFLICT_TRIES || $foreign !== []) {
                     try {
-                        \Toolbox::logInFile('itilflow', sprintf("Команда маршрута отклонена сервером из-за блокировок (попыток: %d): %s\n",
-                            $try, mb_substr($conflict->getPrevious()?->getMessage() ?? '', 0, 300)), true, false);
+                        \Toolbox::logInFile('itilflow', sprintf("Команда маршрута отклонена сервером из-за блокировок (попыток: %d)%s: %s\n",
+                            $try, $foreign !== [] ? '; без повтора — изменения видят другие плагины: ' . implode(', ', $foreign) : '',
+                            mb_substr($conflict->getPrevious()?->getMessage() ?? '', 0, 300)), true, false);
                     } catch (\Throwable) {}
                     self::$gaveUp = true;
                     self::msg(self::$conflictText ?? self::CONFLICT_MESSAGE, self::$conflictText === null ? ERROR : WARNING);
@@ -233,6 +239,42 @@ final class Engine
                 self::$touched = $outer;
             }
         }
+    }
+
+    /** События объектов, на которые подписываются плагины GLPI (Glpi\Plugin\Hooks). */
+    private const OBJECT_HOOKS = ['pre_item_add', 'item_add', 'pre_item_update', 'item_update', 'pre_item_delete', 'item_delete',
+        'pre_item_purge', 'item_purge', 'pre_item_restore', 'item_restore'];
+
+    /** Объекты GLPI, которые создаёт, меняет или снимает команда маршрута. */
+    private const WRITTEN_TYPES = ['Ticket', 'Change', 'Problem', 'ITILFollowup', 'ITILSolution', 'TicketTask', 'ChangeTask',
+        'ProblemTask', 'TicketValidation', 'ChangeValidation', 'TicketValidationStep', 'ChangeValidationStep', 'ValidationStep',
+        'Ticket_User', 'Group_Ticket', 'Change_User', 'Change_Group', 'Problem_User', 'Group_Problem', 'Ticket_Ticket',
+        'Change_Change', 'Problem_Problem'];
+
+    /**
+     * Другие включённые плагины, подписанные на изменения объектов, которые меняет команда маршрута
+     * (их хук мог уже сработать в откаченной попытке). Пусто — повтор безопасен.
+     *
+     * @return list<string> ключи плагинов
+     */
+    public static function foreignHooks(): array
+    {
+        global $PLUGIN_HOOKS;
+        $out = [];
+        foreach (self::OBJECT_HOOKS as $event) {
+            foreach (is_array($PLUGIN_HOOKS[$event] ?? null) ? $PLUGIN_HOOKS[$event] : [] as $plugin => $types) {
+                $plugin = (string) $plugin;
+                if ($plugin === 'itilflow' || isset($out[$plugin]) || !is_array($types)
+                    || array_intersect(array_map('strval', array_keys($types)), self::WRITTEN_TYPES) === []) { continue; }
+                try {
+                    if (\Plugin::isPluginActive($plugin)) { $out[$plugin] = $plugin; }
+                } catch (\Throwable) {
+                    $out[$plugin] = $plugin; // не узнать — считаем подписанным: лучше отказ, чем двойной вызов
+                }
+            }
+        }
+        ksort($out);
+        return array_values($out);
     }
 
     /**
@@ -265,6 +307,7 @@ final class Engine
     {
         global $DB;
         $scope = null;
+        $started = false;
         try {
             $scope = new TransactionScope();
             $result = $DB->doQuery('SELECT * FROM ' . $DB->quoteName(Instance::getTable())
@@ -289,6 +332,7 @@ final class Engine
                 $DB->doQuery('SELECT * FROM ' . $DB->quoteName(Step::getTable())
                     . ' WHERE plugin_itilflow_instances_id=' . (int) $instance->getID() . ' ORDER BY id FOR UPDATE');
             }
+            $started = true; // дальше команда меняет объекты GLPI
             $ok = $operation();
             if (!$ok) {
                 $scope->rollback();
@@ -300,7 +344,7 @@ final class Engine
             if ($scope !== null && TransactionScope::isConflict($e)) {
                 // Сервер откатил транзакцию сам — состояние известно, попытку можно повторить.
                 $scope->rollbackAfterConflict();
-                throw new TransactionConflict($e);
+                throw new TransactionConflict($e, $started);
             }
             if ($scope !== null) {
                 try {
@@ -631,16 +675,20 @@ final class Engine
 
     private static function startTransaction(CommonITILObject $item, int $processes_id, bool $from_rule = false): ?Instance
     {
-        return self::retrying(static fn(): ?Instance => self::startOnce($item, $processes_id, $from_rule), null);
+        // Заявка — такой, какой её увидели правило, форма или человек: снимается один раз, до всех попыток.
+        // 1.13.2: при повторе после 1213 объекты перечитываются из базы, и сравнение «как увидели»
+        // с «как в базе» шло бы базы с базой — запуск на уже изменённой заявке не ловился.
+        $observed = $item->fields;
+        return self::retrying(static fn(): ?Instance => self::startOnce($item, $processes_id, $from_rule, $observed), null);
     }
 
     /** Одна попытка запуска: отказ из-за блокировок — TransactionConflict (транзакция откачена). */
-    private static function startOnce(CommonITILObject $item, int $processes_id, bool $from_rule): ?Instance
+    private static function startOnce(CommonITILObject $item, int $processes_id, bool $from_rule, array $observed): ?Instance
     {
         $scope = null;
+        $started = false;
         try {
             $scope = new TransactionScope();
-            $observed = $item->fields;
             if (!CurrentRead::load($item, (int) $item->getID())) { $scope->rollback(); return null; }
             foreach (['entities_id', 'status', 'is_deleted', 'name', 'content'] as $field) {
                 if (($observed[$field] ?? null) !== ($item->fields[$field] ?? null)) {
@@ -650,6 +698,7 @@ final class Engine
             }
             if (!$from_rule && Authorizer::startError($item, $processes_id) !== null) { $scope->rollback(); return null; }
             // Уникальная связь instance(itemtype,items_id) сохраняется; конкурентный start не повторяется.
+            $started = true; // дальше запуск создаёт объекты GLPI
             $instance = self::startInternal($item, $processes_id);
             if ($instance === null) {
                 $scope->rollback();
@@ -663,7 +712,7 @@ final class Engine
         } catch (\Throwable $e) {
             if ($scope !== null && TransactionScope::isConflict($e)) {
                 $scope->rollbackAfterConflict();
-                throw new TransactionConflict($e);
+                throw new TransactionConflict($e, $started);
             }
             if ($scope !== null) {
                 try {
@@ -845,10 +894,29 @@ final class Engine
         if ($rows === null || $rows === [] || $need < ($step->hasExternalBindings() ? 0 : 1) || $need > 100) { return null; }
         $outcome = StructuredAccess::decide($step, $rows, $need);
         if ($outcome === null || ($structured && $outcome === Outcome::COMPLETED && !Decision::ready($step))) { return null; }
+        if (!self::answersByAddressees($rows)) { return null; }
         $id = self::decisiveVote($rows, $outcome);
         if ($id === null) { return null; }
         $type = (string) ($rows[$id]['_type'] ?? $step->fields['artifact_itemtype']);
         return in_array($type, ['TicketValidation', 'ChangeValidation'], true) ? ['type' => $type, 'id' => $id, 'outcome' => $outcome] : null;
+    }
+
+    /**
+     * 1.13.2. Каждый ответ этапа дал тот, кому запрос сейчас адресован: адресат, участник группы
+     * или его действующий заместитель (ValidationAuthority::addressedTo — та же проверка, что у живого
+     * ответа, только без сессии). Ответ, который маршрут отклонил из-за гонки (заместителя сняли, человек
+     * вышел из группы), сверка не засчитывает — этап решает администратор маршрутов («Перенести ответ
+     * согласующего»).
+     *
+     * @param array<int,array> $rows строки запросов этапа
+     */
+    public static function answersByAddressees(array $rows): bool
+    {
+        foreach ($rows as $row) {
+            if (!in_array((int) ($row['status'] ?? 0), [CommonITILValidation::ACCEPTED, CommonITILValidation::REFUSED], true)) { continue; }
+            if (!ValidationAuthority::addressedTo((int) ($row['users_id_validate'] ?? 0), $row)) { return false; }
+        }
+        return true;
     }
 
     /** Догнать один этап (catchUpPlan). true — маршрут учёл ответ. Сбой — в журнал маршрута, без исключения. */
@@ -892,17 +960,64 @@ final class Engine
 
     /**
      * Догоняющая сверка по всем идущим этапам согласования (автоматическое действие «Сроки этапов»).
+     * 1.13.2: все идущие этапы, страницами по $page по возрастанию номера, — а не только первые
+     * 200: этапы с большими номерами не ждут, пока впереди висят законно ждущие. Подробная сверка — только
+     * у этапов, где в GLPI уже есть хотя бы один ответ на их запросы (answeredSteps, один запрос на тип
+     * на страницу): без ответов решения быть не может.
+     *
      * @return int сколько этапов догнано
      */
-    public static function catchUpApprovals(int $limit = 200): int
+    public static function catchUpApprovals(int $page = 200): int
     {
         $done = 0;
-        foreach ((new Step())->find(['state' => Step::RUNNING,
-            'execution_mode' => [Stage::MODE_APPROVAL, Stage::MODE_DELEGATED]], ['id ASC'], $limit) as $id => $_) {
-            $step = new Step();
-            if ($step->getFromDB((int) $id) && self::catchUpPlan($step) !== null && self::catchUpApproval($step)) { $done++; }
-        }
+        $after = 0;
+        $page = max(1, $page);
+        do {
+            $rows = (new Step())->find(['state' => Step::RUNNING,
+                'execution_mode' => [Stage::MODE_APPROVAL, Stage::MODE_DELEGATED], ['id' => ['>', $after]]], ['id ASC'], $page);
+            if ($rows === []) { break; }
+            $after = (int) max(array_keys($rows));
+            foreach (self::answeredSteps($rows) as $id) {
+                $step = new Step();
+                if ($step->getFromDB($id) && self::catchUpPlan($step) !== null && self::catchUpApproval($step)) { $done++; }
+            }
+        } while (count($rows) === $page);
         return $done;
+    }
+
+    /**
+     * Этапы из $rows (номер => строка этапа), у которых хотя бы на один запрос согласования в GLPI уже
+     * ответили. Запросы — по строкам привязок (1.11) и по прежней строке номеров.
+     *
+     * @param array<int,array> $rows
+     * @return list<int>
+     */
+    public static function answeredSteps(array $rows): array
+    {
+        if ($rows === []) { return []; }
+        $byType = [];
+        foreach ((new OutcomeValidation())->find(['plugin_itilflow_steps_id' => array_map('intval', array_keys($rows))]) as $b) {
+            $byType[(string) $b['validation_itemtype']][(int) $b['validations_id']][] = (int) $b['plugin_itilflow_steps_id'];
+        }
+        foreach ($rows as $id => $row) {
+            $step = new Step();
+            $step->fields = $row + ['id' => (int) $id];
+            if ($step->hasLegacyBinding()) {
+                foreach ($step->validationIds() as $vid) { $byType[(string) ($row['artifact_itemtype'] ?? '')][$vid][] = (int) $id; }
+            }
+        }
+        $out = [];
+        foreach ($byType as $type => $byId) {
+            if (!in_array($type, ['TicketValidation', 'ChangeValidation'], true)) { continue; }
+            foreach (array_chunk(array_keys($byId), 500) as $chunk) {
+                foreach ((new $type())->find(['id' => $chunk,
+                    'status' => [CommonITILValidation::ACCEPTED, CommonITILValidation::REFUSED]]) as $vid => $_) {
+                    foreach ($byId[(int) $vid] ?? [] as $sid) { $out[$sid] = $sid; }
+                }
+            }
+        }
+        ksort($out);
+        return array_values($out);
     }
 
     // ================================================================= запуск
@@ -1513,6 +1628,7 @@ final class Engine
             return sprintf('Не удалось создать дочернюю заявку в организации «%s».',
                 \Dropdown::getDropdownName('glpi_entities', $target_entity));
         }
+        if (CurrentRead::load($child, (int) $cid)) { self::childWithoutInitiator($child, $item); }
 
         $linkclass = CommonITILObject_CommonITILObject::getLinkClass($class, $class);
         if ($linkclass !== null) {
@@ -1532,6 +1648,42 @@ final class Engine
             'artifact_items_id' => (int) $cid,
         ]);
         return true;
+    }
+
+    /**
+     * Пользователь — инициатор заявки маршрута (участник «Инициатор»). Читается из базы, а не из кэша
+     * участников объекта: внутри команды — текущим чтением.
+     */
+    private static function isRequester(CommonITILObject $item, int $uid): bool
+    {
+        $link = $uid > 0 ? $item->getActorObjectForItem(\User::class) : null;
+        return is_object($link) && CurrentRead::find($link, [$link::getItilObjectForeignKey() => (int) $item->getID(),
+            'users_id' => $uid, 'type' => \CommonITILActor::REQUESTER]) !== [];
+    }
+
+    /** Маршрут двигает действие самого инициатора заявки: его ответ на уточнение, отправка формы. */
+    private static function initiatorActs(?CommonITILObject $item): bool
+    {
+        $uid = (int) Session::getLoginUserID();
+        return $item !== null && $uid > 0 && self::isRequester($item, $uid);
+    }
+
+    /**
+     * 1.13.2. Автор («Автор» GLPI, users_id_recipient) дочерней заявки маршрута — не инициатор
+     * основной заявки. GLPI пишет автором вошедшего, а этап иногда открывает действие самого инициатора:
+     * его ответ на уточнение, отправка формы. Тогда автора нет — как у дочерней заявки, открытой ответом
+     * письмом: иначе по праву «Видеть мои заявки» инициатор открыл бы внутреннюю заявку отдела и получал
+     * бы её уведомления автору. Только поле автора, без хуков и правил: заявка создана в этой же команде.
+     */
+    private static function childWithoutInitiator(CommonITILObject $child, CommonITILObject $parent): void
+    {
+        global $DB;
+        $author = (int) ($child->fields['users_id_recipient'] ?? 0);
+        if ($author <= 0 || !self::isRequester($parent, $author)) { return; }
+        $DB->update($child::getTable(), ['users_id_recipient' => 0], ['id' => (int) $child->getID()]);
+        if (!CurrentRead::load($child, (int) $child->getID()) || (int) $child->fields['users_id_recipient'] !== 0) {
+            throw new \RuntimeException('Автор дочерней заявки не записан.');
+        }
     }
 
     private static function linkFields(string $class): array
@@ -1639,25 +1791,37 @@ final class Engine
     }
 
     /**
-     * Адресаты снятых запросов прохода этапа согласования (approval_dropped: при возврате на уточнение
-     * неотвеченные запросы этапа снимаются). Без повторов, только пользователи и группы.
+     * Все адресаты прохода этапа согласования: и те, чьи запросы сняты при возврате на уточнение
+     * (approval_dropped), и те, кто к этому времени уже ответил (запросы прохода остаются в заявке).
+     * 1.13.2: повтор спрашивает всех, как у «Задан в этапе», — прежнее «нужно одобрений»
+     * считается от того же состава, а не только от тех, кто не успел ответить. Без повторов, только
+     * пользователи и группы.
      *
      * @return list<array{0:string,1:int}>
      */
     public static function passTargets(Step $pass): array
     {
         $out = [];
-        foreach (ApprovalRoster::dropped($pass->fields['approval_dropped'] ?? null) as $row) {
-            $out[$row['itemtype_target'] . '#' . (int) $row['items_id_target']] = [(string) $row['itemtype_target'], (int) $row['items_id_target']];
+        $add = static function (array $row) use (&$out): void {
+            $type = (string) ($row['itemtype_target'] ?? ''); $id = (int) ($row['items_id_target'] ?? 0);
+            if (in_array($type, [\User::class, Group::class], true) && $id > 0) { $out[$type . '#' . $id] = [$type, $id]; }
+        };
+        if (!$pass->isNewItem()) {
+            foreach (OutcomeValidation::forStep($pass) as $row) { $add($row); }
+            $type = (string) ($pass->fields['artifact_itemtype'] ?? '');
+            if ($pass->hasLegacyBinding() && is_a($type, CommonITILValidation::class, true) && ($ids = $pass->validationIds()) !== []) {
+                foreach ((new $type())->find(['id' => $ids]) as $row) { $add($row); }
+            }
         }
-        return array_values(array_filter($out, static fn(array $t): bool => in_array($t[0], [\User::class, Group::class], true) && $t[1] > 0));
+        foreach (ApprovalRoster::dropped($pass->fields['approval_dropped'] ?? null) as $row) { $add($row); }
+        return array_values($out);
     }
 
     /**
      * Повтор этапа «Согласование из формы» / «Указывает исполнитель заявки», который сам вернул заявку
-     * на уточнение: запросы — адресатам снятых при возврате запросов того прохода, с его «нужно одобрений».
-     * Пусто — попытку начал не возврат с этого же этапа (другой этап, «Начать заново»), снятых
-     * запросов нет или кто-то из адресатов больше не подходит заявке: этап ждёт, как раньше
+     * на уточнение: запросы — всем адресатам того прохода (passTargets), с его «нужно одобрений».
+     * Пусто — попытку начал не возврат с этого же этапа (другой этап, «Начать заново»), у прохода
+     * не было запросов или кто-то из адресатов больше не подходит заявке: этап ждёт, как раньше
      * (указать согласующего или засчитать вручную).
      *
      * @return array{targets:list<array{0:string,1:int}>,percent:int}
@@ -1681,7 +1845,7 @@ final class Engine
     }
 
     /**
-     * Запросы повтора по проходу, который вернул на уточнение: адресаты его снятых запросов (все должны
+     * Запросы повтора по проходу, который вернул на уточнение: все его адресаты — снятые и ответившие (все должны
      * по-прежнему подходить заявке) и его «нужно одобрений».
      *
      * @return array{targets:list<array{0:string,1:int}>,percent:int}
@@ -1760,6 +1924,12 @@ final class Engine
         $vs = self::ladderFor($step, $percent);
         if ($vs > 0) {
             $input['_validationsteps_id'] = $vs;
+        }
+        // 1.13.2: запрос, который маршрут создаёт от действия самого инициатора (ответ на уточнение,
+        // отправка формы), — без «Инициатора запроса на согласование», как запрос, созданный по письму. Иначе
+        // GLPI записывал инициатора: ему шли уведомления об ответе и предлагалось удалить запрос.
+        if (self::initiatorActs($step->getInstance()?->getItilItem())) {
+            $input['_auto_update'] = true;
         }
 
         $vid = (int) $val->add($input);
@@ -2208,7 +2378,7 @@ final class Engine
         if (($step->fields['execution_mode'] ?? '') !== Stage::MODE_INLINE) { return; }
         self::enter();
         try {
-            self::closeArtifact($step);
+            self::closeArtifact($step, self::TASK_ABORTED);
             if ((int) ($step->fields['group_attached'] ?? 0) === 1 && ($item = $instance->getItilItem()) !== null) {
                 self::detachGroup($item, (int) $step->fields['groups_id']);
             }
@@ -2217,7 +2387,14 @@ final class Engine
         }
     }
 
-    private static function closeArtifact(Step $step): void
+    /**
+     * 1.13.2: пометка в тексте задачи прерванного этапа. Отдельного состояния «Отменено» у задачи
+     * GLPI нет, поэтому задача по-прежнему «Выполнено», а из текста видно, что работу не делали.
+     */
+    public const TASK_ABORTED = 'Этап прерван вместе с маршрутом — задача закрыта без выполнения.';
+
+    /** Закрыть задачу этапа; $note — пометка в конце текста задачи (прерванный этап). */
+    private static function closeArtifact(Step $step, string $note = ''): void
     {
         $type = (string) $step->fields['artifact_itemtype'];
         $id = (int) $step->fields['artifact_items_id'];
@@ -2227,7 +2404,11 @@ final class Engine
         if (is_a($type, \CommonITILTask::class, true)) {
             $t = new $type();
             if ($t->getFromDB($id) && (int) $t->fields['state'] !== Planning::DONE) {
-                self::mustUpdate($t, ['id' => $id, 'state' => Planning::DONE]);
+                $input = ['id' => $id, 'state' => Planning::DONE];
+                if ($note !== '') {
+                    $input['content'] = (string) $t->fields['content'] . '<p><em>' . htmlescape($note) . '</em></p>';
+                }
+                self::mustUpdate($t, $input);
             }
         }
     }

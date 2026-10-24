@@ -53,7 +53,7 @@ standard.
 ## Installation
 
 ```bash
-tar -xzf itilflow-1.13.1.tar.gz -C /var/www/glpi/plugins/
+tar -xzf itilflow-1.13.2.tar.gz -C /var/www/glpi/plugins/
 cd /var/www/glpi
 php bin/console plugin:install itilflow --username=<GLPI administrator>
 php bin/console plugin:activate itilflow

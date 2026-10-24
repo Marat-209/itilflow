@@ -70,11 +70,16 @@ without an answer.
 **The approver answered, but the stage did not move.**
 The answer is saved but the route has not taken it yet — for example, with
 simultaneous answers. The “Сроки этапов” (Stage deadlines) automatic action
-catches the stage up within 15 minutes; check that GLPI's cron works.
+catches the stage up within 15 minutes; check that GLPI's cron works. If the
+answer came from someone who is no longer an addressee (left the group, the
+substitution ended), the check leaves the stage alone — the route
+administrator decides: “Перенести ответ согласующего” (Transfer the
+approver's answer) in the stage menu.
 
 **The requester answered the clarification, but the route is waiting.**
 The requester's public followup or email continues the route by itself if
-an approval stage returned the ticket. If the assignee returned it or the
+an approval stage returned the ticket; if the answer was not taken at once,
+“Сроки этапов” catches it up within 15 minutes. If the assignee returned it or the
 approver no longer fits the ticket, the main ticket's assignee or the route
 administrator clicks “Продолжить” (Continue).
 

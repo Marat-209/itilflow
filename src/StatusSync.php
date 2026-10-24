@@ -90,6 +90,12 @@ final class StatusSync
             self::save($step, ['status_sync_state'=>self::EXECUTING,'status_sync_error'=>'execution_unconfirmed']);
             $tx->commit(); // Сначала фиксируем начало исполнения, затем меняем штатный статус.
         } catch (\Throwable $e) {
+            if (TransactionScope::isConflict($e)) {
+                // 1.13.2: сервер откатил транзакцию из-за блокировок — ничего не записано, запрос
+                // по-прежнему в очереди; следующий запуск задачи попробует снова. Проход не теряется.
+                $tx->rollbackAfterConflict();
+                return self::result(self::QUEUED, 'conflict_retry');
+            }
             try { $tx->rollback(); } catch (\Throwable $ignored) {}
             TransactionScope::assertHealthy();
             return self::result(self::UNKNOWN,'claim_unknown');
@@ -105,7 +111,8 @@ final class StatusSync
                 $tx->commit(); return self::result(self::CANCELLED,'stale_after_claim');
             }
             [$instance, $item] = $context;
-            $actorRow = self::lockedRow(\User::getTable(),(int)$step->fields['status_sync_actor']);
+            // Строка человека — общей блокировкой, как в командах маршрута (1.13.2).
+            $actorRow = self::lockedRow(\User::getTable(),(int)$step->fields['status_sync_actor'], CurrentRead::lockClause(\User::class));
             if ($actorRow===null || empty($actorRow['is_active']) || !empty($actorRow['is_deleted'])) {
                 self::record($step,self::CANCELLED,'source_actor_inactive',(int)$item->fields['status']);
                 $tx->commit(); return self::result(self::CANCELLED,'source_actor_inactive');
@@ -129,10 +136,43 @@ final class StatusSync
             self::record($step,$state,$code,$actual);
             $tx->commit(); return self::result($state,$code);
         } catch (\Throwable $e) {
+            if (TransactionScope::isConflict($e)) {
+                // Откат из-за блокировок известен: смена статуса не записана — запрос снова в очередь.
+                $tx->rollbackAfterConflict();
+                return self::requeueAfterConflict($step);
+            }
             // После ошибки нет новых записей. Начало исполнения сохраняется и при неизвестном исходе отката.
             try { $tx->rollback(); } catch (\Throwable $ignored) {}
             TransactionScope::assertHealthy();
             return self::result(self::UNKNOWN,'execution_unknown');
+        }
+    }
+
+    /**
+     * Исполнение откатил сервер из-за блокировок (1213/1205): статус заявки не менялся, запись «начато»
+     * осталась от первой транзакции. Запрос возвращается в очередь — следующий запуск задачи повторит
+     * его со всеми проверками. Не вышло вернуть — прежний исход «неизвестно».
+     */
+    private static function requeueAfterConflict(Step $step): array
+    {
+        $tx = new TransactionScope();
+        try {
+            $row = self::lockedRow(Step::getTable(), (int) $step->getID());
+            if ($row === null || ($row['status_sync_state'] ?? '') !== self::EXECUTING) {
+                $tx->commit(); return self::result(self::UNKNOWN, 'execution_unknown');
+            }
+            $step->fields = $row;
+            // Если на изменение заявки подписаны другие плагины, их хук мог уже сработать — сама
+            // задача не повторяет, смену статуса повторяет человек («Повторить смену статуса»).
+            $state = Engine::foreignHooks() === [] ? self::QUEUED : self::FAILED;
+            self::save($step, ['status_sync_state' => $state, 'status_sync_error' => 'conflict_retry']);
+            $tx->commit();
+            return self::result($state, 'conflict_retry');
+        } catch (\Throwable $e) {
+            if (TransactionScope::isConflict($e)) { $tx->rollbackAfterConflict(); }
+            else { try { $tx->rollback(); } catch (\Throwable $ignored) {} }
+            TransactionScope::assertHealthy();
+            return self::result(self::UNKNOWN, 'execution_unknown');
         }
     }
 
@@ -190,11 +230,14 @@ final class StatusSync
         $itemRow=self::lockedRow($item::getTable(),(int)$i->fields['items_id']);
         if ($itemRow===null) { return null; }
         $item->fields=$itemRow;
+        // Этапы своего запуска — по индексу запуска; идущие отбираются здесь (1.13.2).
         $runningResult=$DB->doQuery('SELECT * FROM '.$DB->quoteName(Step::getTable())
-            .' WHERE plugin_itilflow_instances_id='.$iid." AND state='running' ORDER BY id FOR UPDATE");
+            .' WHERE plugin_itilflow_instances_id='.$iid.' ORDER BY id FOR UPDATE');
         if ($runningResult===false) { throw new \RuntimeException('Состав текущих шагов не прочитан.'); }
-        $running=$DB->fetchAssoc($runningResult);
-        if ((int)$DB->numrows($runningResult)!==1 || (int)($running['id']??0)!==$sid
+        $runningRows=[];
+        while ($r=$DB->fetchAssoc($runningResult)) { if (($r['state']??'')===Step::RUNNING) { $runningRows[]=$r; } }
+        $running=$runningRows[0]??[];
+        if (count($runningRows)!==1 || (int)($running['id']??0)!==$sid
             || !empty($item->fields['is_deleted'])
             || (int)$item->fields['entities_id']!==(int)$i->fields['entities_id']
             || in_array((int)$item->fields['status'],array_merge($item::getSolvedStatusArray(),$item::getClosedStatusArray()),true)) { return null; }
@@ -202,11 +245,11 @@ final class StatusSync
     }
 
     /** Используем именно актуальную строку блокирующего чтения, а не последующий обычный снимок. */
-    private static function lockedRow(string $table,int $id): ?array
+    private static function lockedRow(string $table,int $id,string $lock=' FOR UPDATE'): ?array
     {
         global $DB;
         if ($id<=0) { return null; }
-        $result=$DB->doQuery('SELECT * FROM '.$DB->quoteName($table).' WHERE id='.$id.' FOR UPDATE');
+        $result=$DB->doQuery('SELECT * FROM '.$DB->quoteName($table).' WHERE id='.$id.$lock);
         if ($result===false) { throw new \RuntimeException('Блокирующее чтение не выполнено.'); }
         if ((int)$DB->numrows($result)!==1) { return null; }
         return $DB->fetchAssoc($result);

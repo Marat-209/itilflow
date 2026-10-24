@@ -11,7 +11,11 @@ final class TransactionConflict extends \RuntimeException
 {
     public readonly bool $retryable;
 
-    public function __construct(\Throwable $previous)
+    /**
+     * @param bool $afterStart отказ пришёл, когда команда уже начала менять объекты GLPI (их видят хуки
+     *   других плагинов); false — ещё на блокировке своих строк, до изменений.
+     */
+    public function __construct(\Throwable $previous, public readonly bool $afterStart = true)
     {
         parent::__construct('Транзакция маршрута откачена сервером из-за блокировок.', 0, $previous);
         $this->retryable = TransactionScope::isDeadlock($previous);

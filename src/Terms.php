@@ -106,6 +106,8 @@ final class Terms
     // Действия и поля
     public const RETURN_FOR_CLARIFICATION = 'Вернуть на уточнение';
     public const WAITING_INITIATOR = 'Ждём ответа инициатора';
+    /** То же состояние глазами самого инициатора заявки. */
+    public const WAITING_YOUR_ANSWER = 'Ждём вашего ответа';
     public const RETURN_TARGET = 'Куда вернуть после уточнения';
     public const RETURN_STAGE = 'этап для возврата';
     public const ON_REFUSE_FINISH = 'Отказать инициатору и закончить маршрут';

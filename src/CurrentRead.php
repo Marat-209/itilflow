@@ -56,12 +56,15 @@ final class CurrentRead
     /**
      * Справочники GLPI (люди, группы, профили, замещения, правила), которые команда маршрута только
      * читает, — общей блокировкой: она тоже даёт текущие данные, но две команды с общим согласующим
-     * или группой не ждут друг друга и не встают во взаимную блокировку (MySQL 8). Таблицы
-     * плагина, заявки и запросы согласования — по-прежнему исключительной: их команда меняет.
+     * или группой не ждут друг друга и не встают во взаимную блокировку (MySQL 8). Так же —
+     * маршрут и его этапы (1.13.2): команды по разным заявкам одного маршрута их только
+     * читают; правка маршрута берёт исключительную блокировку строки маршрута сама (DefinitionMutation)
+     * и ждёт, пока читающие команды закончат. Запуски, этапы запусков, заявки и запросы согласования —
+     * по-прежнему исключительной: их команда меняет.
      */
     public const SHARED = [\User::class, \Group::class, \Group_User::class, \Profile_User::class, \ProfileRight::class,
         \Profile::class, \Entity::class, \ValidatorSubstitute::class, \Rule::class, \RuleAction::class, \RuleCriteria::class,
-        \ITILValidationTemplate_Target::class];
+        \ITILValidationTemplate_Target::class, Process::class, Stage::class];
 
     /** Окончание запроса текущего чтения: общая (справочники) или исключительная блокировка строк. */
     public static function lockClause(\CommonDBTM|string $object): string

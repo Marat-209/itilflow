@@ -41,7 +41,8 @@ ok(DefinitionSnapshot::targets(DefinitionSnapshot::encode([0])) === null,
 // ---- После «Завершить этап» исполнитель без доступа к заявке — на главную, а не на «Доступ запрещен».
 $step = (string) file_get_contents($koren . '/front/step.form.php');
 $outcome = (string) file_get_contents($koren . '/front/outcome.form.php');
-ok(preg_match('/Authorizer::stepItemVisible\(\$instance, \$step\)\)\s*\{\s*Html::redirect\(StepLine::homeUrl\(/u', $step) === 1
+// 1.13.2: перед переходом на главную — «Готово: этап завершён.» (если этап завершён).
+ok(preg_match('/Authorizer::stepItemVisible\(\$instance, \$step\)\)\s*\{(?:(?!\n\}).)*?Html::redirect\(StepLine::homeUrl\(/us', $step) === 1
     && strrpos($step, 'Authorizer::stepItemVisible') < strrpos($step, 'Html::back();'),
     'step.form.php: после действия этапа проверяет, видна ли заявка, и ведёт на главную, если нет');
 ok(str_contains($outcome, 'Authorizer::stepItemVisible($instance, $step)'),
@@ -166,14 +167,14 @@ ok(StepLine::waitingInput(false, false) === 'Ждём вашего ответа.
 
 // Ответ годится только свой — вошедшего инициатора; письмо — только в сеансе сборщика почты.
 $k = ['users_id' => 47, 'is_private' => 0];
-ok(\GlpiPlugin\Itilflow\Engine::answerAuthor($k, [], 47, false) === 47, 'комментарий вошедшего автора — его ответ');
-ok(\GlpiPlugin\Itilflow\Engine::answerAuthor($k, ['_mailgate' => true], 5, false) === 0,
+ok(\GlpiPlugin\Itilflow\Engine::answerAuthor($k, [], 47, '') === 47, 'комментарий вошедшего автора — его ответ');
+ok(\GlpiPlugin\Itilflow\Engine::answerAuthor($k, ['_mailgate' => true], 5, '') === 0,
     'поля «_mailgate» и автор из формы без сеанса сборщика почты не делают комментарий ответом инициатора');
-ok(\GlpiPlugin\Itilflow\Engine::answerAuthor($k, ['_mailgate' => true], 0, true) === 47,
+ok(\GlpiPlugin\Itilflow\Engine::answerAuthor($k, ['_mailgate' => true], 0, 'cron_mailgate') === 47,
     'письмо в сеансе сборщика почты — ответ автора, которого ядро нашло по адресу');
-ok(\GlpiPlugin\Itilflow\Engine::answerAuthor($k, [], 0, true) === 0, 'автоматическое действие без письма — не ответ');
-ok(\GlpiPlugin\Itilflow\Engine::answerAuthor(['users_id' => 47, 'is_private' => 1], [], 47, false) === 0
-    && \GlpiPlugin\Itilflow\Engine::answerAuthor(['users_id' => 0, 'is_private' => 0], ['_mailgate' => true], 0, true) === 0,
+ok(\GlpiPlugin\Itilflow\Engine::answerAuthor($k, [], 0, 'cron_mailgate') === 0, 'автоматическое действие без письма — не ответ');
+ok(\GlpiPlugin\Itilflow\Engine::answerAuthor(['users_id' => 47, 'is_private' => 1], [], 47, '') === 0
+    && \GlpiPlugin\Itilflow\Engine::answerAuthor(['users_id' => 0, 'is_private' => 0], ['_mailgate' => true], 0, 'cron_mailgate') === 0,
     'приватный комментарий и комментарий без автора — не ответ');
 
 // Инициатору — просьба и вопрос согласующего в шапке; сотруднику — вопрос; без «Он».
@@ -226,7 +227,7 @@ ok(\GlpiPlugin\Itilflow\ValidationLadder::isService(sprintf(\GlpiPlugin\Itilflow
 $etap = (string) file_get_contents($koren . '/templates/stage.html.twig');
 ok(str_contains($etap, ": 'Пусто — без срока.'") && !str_contains($etap, 'Пусто или 0'), 'подсказка срока — «Пусто — без срока.»');
 $chernovikPhp = (string) file_get_contents($koren . '/front/draft.php');
-ok(str_contains($chernovikPhp, '$processForm && !$process->can($pid, UPDATE)')
+ok(str_contains($chernovikPhp, 'if (!$process->can($pid, UPDATE)) {') // 1.13.2: и форма этапа
     && str_contains($chernovikPhp, '!$form->can($draftForm, READ)'),
     'пересчёт формы маршрута — только с правом изменять маршрут; чужая форма из ввода — только видимая');
 $setup = (string) file_get_contents($koren . '/setup.php');

@@ -96,15 +96,17 @@ final class DefinitionSnapshot
     {
         global $DB;
         TransactionScope::requireActive();
+        // Общей блокировкой (1.13.2): правку маршрута она не пропустит до конца запуска, а запуски
+        // одного маршрута по разным заявкам друг друга не ждут.
         $result = $DB->doQuery('SELECT * FROM ' . $DB->quoteName(Process::getTable())
-            . ' WHERE id=' . (int) $process->getID() . ' FOR UPDATE');
+            . ' WHERE id=' . (int) $process->getID() . CurrentRead::lockClause(Process::class));
         if ((int) $DB->numrows($result) !== 1) {
             throw new \RuntimeException('Определение маршрута недоступно.');
         }
         $p = $DB->fetchAssoc($result);
         $result = $DB->doQuery('SELECT * FROM ' . $DB->quoteName(Stage::getTable())
             . ' WHERE plugin_itilflow_processes_id=' . (int) $process->getID()
-            . ' ORDER BY ranking,id FOR UPDATE');
+            . ' ORDER BY ranking,id' . CurrentRead::lockClause(Stage::class));
         $stages = [];
         $stage_fields = array_flip(self::stageFields(self::SCHEMA));
         while ($row = $DB->fetchAssoc($result)) {

@@ -139,6 +139,16 @@ final class TransactionScope
     }
     public static function hasActive(): bool { self::assertHealthy(); return self::$owned > 0; }
 
+    /**
+     * Уровень транзакций штатного соединения GLPI сейчас: больше нуля — идёт транзакция (ядра или своя).
+     * Не DBmysql (проверки без базы) — 0.
+     */
+    public static function coreDepth(): int
+    {
+        global $DB;
+        return $DB instanceof \DBmysql ? (int) (new \ReflectionProperty(\DBmysql::class, 'transaction_level'))->getValue($DB) : 0;
+    }
+
     private function close(): void
     {
         if ($this->open) { $this->open = false; self::$owned--; }

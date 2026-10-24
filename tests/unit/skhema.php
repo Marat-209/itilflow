@@ -18,7 +18,7 @@ $options = ['subtitle' => 'Снимок редакции 3. Демонстрац
     'states' => [1 => ['state' => 'done', 'label' => 'Выполнено', 'is_current' => false],
         2 => ['state' => 'running', 'label' => 'Попытка 2 · ожидается ответ', 'is_current' => true]],
     'urls' => [1 => '/plugins/itilflow/front/stage.form.php?id=1'], 'day_minutes' => 480,
-    'history' => [['from_id' => 2, 'to_id' => 1, 'label' => 'Выполненный возврат, попытка 1']]];
+    'history' => [['from_id' => 2, 'to_id' => 1, 'label' => 'Возврат на уточнение']]];
 $loader = new FilesystemLoader();
 $loader->addPath(dirname(__DIR__, 2) . '/templates', 'itilflow');
 $twig = new Environment($loader, ['autoescape' => 'html', 'strict_variables' => true, 'cache' => false]);
@@ -107,8 +107,8 @@ ok($noCalendar['rows'][0]['deadline_label'] === '8 ч', 'без рабочего
 ok($calendar['rows'][0]['deadline_label'] === '1 р. д.', 'с календарём 480 минут в рабочем дне срок равен одному дню');
 $anchor = Scheme::build($process, $saved, ['urls' => [1 => '#itilflow-row-42']]);
 ok($anchor['rows'][0]['url'] === '#itilflow-row-42', 'ссылка экземпляра может вести к существующей строке таблицы');
-ok(str_contains($html, 'ifsc-history') && str_contains($html, 'выполненный возврат из истории'), 'выполненный возврат имеет отдельные стиль и легенду');
-ok(str_contains($model['rows'][1]['transition_text'], 'Выполненный возврат, попытка 1'), 'исторический возврат доступен текстом, не только линией');
+ok(str_contains($html, 'ifsc-history') && str_contains($html, 'возврат или начало заново, которые уже были'), 'выполненный возврат имеет отдельные стиль и легенду');
+ok(str_contains($model['rows'][1]['transition_text'], 'Возврат на уточнение'), 'исторический возврат доступен текстом, не только линией');
 
 $conditionStages = $saved;
 $conditionStages[2]['run_if'] = ['future_schema' => true]; // Второй по порядку этап; движок условий здесь не подменяется.
@@ -128,7 +128,7 @@ $sharedTarget = Scheme::build($process, [
 ok($sharedTarget['left_lanes'] === 1 && count($sharedTarget['edges']) === 2, 'возвраты к общей цели используют одну дорожку без потери переходов');
 $runtime = Scheme::build($process, $saved, ['runtime' => true,
     'states' => [1 => ['state' => 'done', 'label' => 'Выполнено'], 2 => ['state' => 'refused', 'label' => 'Отказ'], 3 => ['state' => 'notrun', 'label' => 'Не выполнялся']],
-    'history' => [['from_id' => 2, 'to_id' => 1, 'label' => 'Выполненный возврат']]]);
+    'history' => [['from_id' => 2, 'to_id' => 1, 'label' => 'Возврат на уточнение']]]);
 ok(count(array_filter($runtime['edges'], static fn($e) => $e['kind'] === 'return')) === 0, 'у завершённых строк в runtime не нарисованы неиспользованные возможные возвраты');
 ok(count(array_filter($runtime['edges'], static fn($e) => $e['kind'] === 'history')) === 1, 'фактический возврат сохраняется после завершения строки');
 $runtimeHtml = $render($runtime);

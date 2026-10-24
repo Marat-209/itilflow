@@ -135,7 +135,7 @@
             </label>
             <button class="btn btn-primary" name="adopt_existing" value="1">Засчитать это согласование</button>
          </form>
-      {% else %}<p class="text-muted">В заявке нет подходящего согласования.</p>{% endfor %}
+      {% else %}<p class="text-muted">{{ a.empty_text|default('В заявке нет подходящего согласования.') }}</p>{% endfor %}
    </div>
 {% elseif a.action == 'complete' %}
    <form method="post" action="{{ step_url }}" class="p-1">
