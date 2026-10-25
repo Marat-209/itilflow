@@ -116,8 +116,12 @@ administrator decides).
 
 **“Вопросы этапа”** (Stage questions) — up to four yes/no questions. The
 assignee answers in “Завершить этап” or “Отметить результат”, the approver —
-“Сохранить ответы” (Save answers) or “Сохранить и одобрить” (Save and
-approve). Conditions of later stages rely on the answers.
+“Вопросы этапа” in their row → “Сохранить ответы” (Save answers) or
+“Сохранить и одобрить” (Save and approve), in self-service too. Only the
+addressee of the stage's approval request (or their substitute) answers.
+Approved without answers — the stage waits for the answers, and the approver
+answers later in the same place. Conditions of later stages rely on the
+answers.
 
 ## 5. Starting a route
 
@@ -161,7 +165,9 @@ withdrawal and abort; given answers stay.
 
 **Return for clarification.** “Куда вернуть после уточнения” (Where to return
 after clarification) — from which stages the route may continue; empty — no
-return.
+return: while nothing is checked, the field shows “Ничего не отмечено —
+вернуть на уточнение нельзя.” (Nothing checked — no return for
+clarification).
 
 1. The child ticket's assignee or the approver writes what to clarify and
    picks “С этапа” (From stage) if there are several.
@@ -240,13 +246,24 @@ action is cancelled. Ticket rights are always checked.
 Start with “Только записать”, review the log after a month, then
 “Предупредить” and “Запретить”.
 
+**“Решить заявку — только после всех этапов”** (Solve the ticket only after
+all stages, in the same place) — “Да” (Yes): while the route runs or is
+stopped, the ticket cannot be solved or closed — neither by a solution nor by
+its status — whatever “Если действие не по порядку этапов” says. Only someone
+with the “Закрытие этапа без ответа” right may solve it earlier; this is
+written to “Журнал маршрута”. “Нет” (No) — the route does not hold the
+solution. Tickets started before 1.13.3 follow the previous rule: the solution
+was cancelled only with “Запретить”, and with “Предупредить” and “Только
+записать” it was saved with a log entry. An old-mode route also follows the
+previous rule.
+
 ## 10. Who sees what
 
 | Who | What they see on the “Маршрут этапов” tab |
 |---|---|
 | assignees and approvers (central interface) | all stages, “если …” (if …), reasons for “Не нужен по условию”, stage questions, “Лист согласования” (Approval sheet) |
 | requester | the table without conditions and stage questions — if “Вкладка маршрута у инициатора” (Route tab for the requester) is on; “Отозвать заявку” |
-| approver in self-service | “Одобрить или отказать” (Approve or refuse) in their row |
+| approver in self-service | “Одобрить или отказать” (Approve or refuse) in their row; if the stage has questions — “Вопросы этапа” with “Сохранить и одобрить”. While stage questions wait for them, they see the tab even without “Вкладка маршрута у инициатора” |
 | route administrator | also “Схема”, “Журнал маршрута”, the “…” menu |
 
 An action button is shown only to whoever may perform it. On a phone rows

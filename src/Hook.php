@@ -197,6 +197,18 @@ final class Hook
         );
     }
 
+    /** Чем маршрут держит заявку — для «Журнала маршрута», без совета, что делать (1.13.3). */
+    private static function blockState(Instance $instance): string
+    {
+        $process = $instance->getProcess();
+        $name = $process ? (string) $process->fields['name'] : '';
+        if ($instance->fields['state'] === Instance::HALTED) {
+            return sprintf('маршрут «%s» остановлен', $name);
+        }
+        $cur = $instance->getCurrentStep();
+        return sprintf('маршрут «%s» не пройден, открыт этап «%s»', $name, $cur ? (string) $cur->fields['stage_name'] : '—');
+    }
+
     private static function firstOpenStageName(Instance $instance, int $before_ranking): string
     {
         foreach ($instance->getSteps() as $row) {
@@ -208,7 +220,11 @@ final class Hook
         return '—';
     }
 
-    /** Пока маршрут идёт, заявку нельзя решить или закрыть. */
+    /**
+     * Пока маршрут идёт, заявку нельзя решить или закрыть. С 1.13.3 — при любом «Если действие не по порядку
+     * этапов», кроме права «Закрытие этапа без ответа» (Engine::denyResolution); запуски, начатые раньше, —
+     * по прежнему правилу.
+     */
     public static function preItilUpdate(CommonITILObject $item): void
     {
         // Промежуточный пересчёт ядра, пока маршрут снимает свой запрос (см. dropWaitingValidations):
@@ -236,7 +252,8 @@ final class Hook
             return;
         }
         $msg = self::blockReason($instance) . ' Закрыть заявку можно после завершения всех этапов.';
-        if (Engine::deny($instance, $item->getType(), $item->getID(), 'resolve_with_open_stages', $msg)) {
+        if (Engine::denyResolution($instance, $item->getType(), $item->getID(), 'resolve_with_open_stages', $msg,
+            self::blockState($instance))) {
             $item->input = false;
         }
     }
@@ -281,7 +298,8 @@ final class Hook
             return;
         }
         $msg = 'Нельзя добавить решение. ' . self::blockReason($instance);
-        if (Engine::deny($instance, $itemtype, $items_id, 'solution_with_open_stages', $msg)) {
+        if (Engine::denyResolution($instance, $itemtype, $items_id, 'solution_with_open_stages', $msg,
+            self::blockState($instance))) {
             $solution->input = false;
         }
     }

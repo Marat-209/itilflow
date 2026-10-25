@@ -47,6 +47,10 @@
 {% macro approvalDropdown(type, name, value, show) %}
    {{ call(type ~ '::dropdown', [{'name': name ~ '[]', 'value': value, 'right': 'all', 'entity': -1, 'multiple': true, 'display': false, 'width': '100%', 'specific_tags': show ? {} : {'disabled': 'disabled'}}])|raw }}
 {% endmacro %}
+{# 1.13.3: подсказка «Ничего не отмечено…» — только пока ни один этап не отмечен; галочки отслеживает скрипт формы. #}
+{% macro noTargetsHint(text, checked) %}
+   <div class="form-text itilflow-hint" data-itilflow-none-checked {% if checked %}hidden{% endif %}>{{ text }}</div>
+{% endmacro %}
 {% macro targets(list, selected, disabled) %}
    <input type="hidden" name="_structured_return_targets_present" value="1" {% if disabled %}disabled{% endif %}>
    {% for t in list %}
@@ -321,11 +325,12 @@
                      {% endif %}
 
                      {% if L.return_targets is defined %}
+                        {% set return_checked = targets|filter(t => t.value in targets_selected)|length > 0 %}
                         {{ fields.field('_structured_return_targets', _self.targets(targets, targets_selected, not L.return_targets.show),
                               'Куда вернуть после уточнения', {
                            'full_width': true,
                            'add_field_attribs': L.return_targets.attrs,
-                           'add_field_html': _self.hint('Ничего не отмечено — вернуть на уточнение нельзя.'),
+                           'add_field_html': _self.noTargetsHint('Ничего не отмечено — вернуть на уточнение нельзя.', return_checked),
                         }) }}
                      {% endif %}
 
@@ -547,7 +552,15 @@
             }
          }
       });
+      noneChecked();
       updateSummary();
+   }
+   // «Ничего не отмечено…» — пока в этом же поле не отмечен ни один этап (1.13.3).
+   function noneChecked() {
+      form.querySelectorAll('[data-itilflow-none-checked]').forEach(function (hint) {
+         var box = hint.closest('.field-container') || hint.parentElement;
+         hint.hidden = !!(box && box.querySelector('input[type="checkbox"]:checked'));
+      });
    }
 
    // Срок: пересчёт при смене единицы и подсказка «= N рабочих ч».

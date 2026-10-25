@@ -44,16 +44,25 @@ final class Decision
     {
         return self::items($step) === [] || ($expected !== null && self::read($step)['revision'] === $expected && self::ready($step));
     }
+    /**
+     * Кто сохраняет ответы этапа. В основном интерфейсе — администратор маршрутов, исполнитель задачи,
+     * адресат запроса на согласование этапа, исполнитель дочерней заявки. В самообслуживании (1.13.3) —
+     * только адресат запроса на согласование этого этапа: он отвечает на вопросы и одобряет, как в основном
+     * интерфейсе. Права администратора маршрутов в самообслуживании ответов не дают.
+     */
     public static function canWrite(Step $step): bool
     {
-        if (self::items($step) === [] || StructuredAccess::context($step) === null || Outcome::forStep($step->getID()) !== null
-            || ($_SESSION['glpiactiveprofile']['interface'] ?? '') !== 'central') { return false; }
+        if (self::items($step) === [] || StructuredAccess::context($step) === null || Outcome::forStep($step->getID()) !== null) { return false; }
+        $central = ($_SESSION['glpiactiveprofile']['interface'] ?? '') === 'central';
+        $stage = $step->getStage();
+        $byApproval = $step->fields['execution_mode'] === Stage::MODE_APPROVAL
+            || ($stage?->fields['department_result_source'] ?? '') === 'native_validation';
+        if (!$central && !$byApproval) { return false; }
         $parent = $step->getInstance()?->getItilItem();
         if ($parent === null || Authorizer::itemError($parent, READ) !== null) { return false; }
-        if (Authorizer::isAdministrator()) { return true; }
-        $stage = $step->getStage();
+        if ($central && Authorizer::isAdministrator()) { return true; }
         if ($step->fields['execution_mode'] === Stage::MODE_INLINE) { return Authorizer::stepError($step, 'complete') === null; }
-        if ($step->fields['execution_mode'] === Stage::MODE_APPROVAL || ($stage->fields['department_result_source'] ?? '') === 'native_validation') {
+        if ($byApproval) {
             foreach (StructuredAccess::roster($step) ?? [] as $row) {
                 $type = $row['_type']; $v = new $type(); $v->fields = $row;
                 if (ValidationAuthority::canAnswer($v) && $v->can($v->getID(), UPDATE)) { return true; }

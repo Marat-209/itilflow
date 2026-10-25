@@ -23,20 +23,20 @@ The plugin directory must be named `itilflow` and sit in your GLPI's
 `plugins/`.
 
 ```bash
-tar -xzf itilflow-1.13.2.tar.gz -C /var/www/glpi/plugins/
+tar -xzf itilflow-1.13.3.tar.gz -C /var/www/glpi/plugins/
 chown -R www-data:www-data /var/www/glpi/plugins/itilflow
 ```
 
-Or download the `itilflow-1.13.2.zip` archive from this repository's Releases
+Or download the `itilflow-1.13.3.zip` archive from this repository's Releases
 page and unpack it into `plugins/` — the `itilflow` directory is already inside:
 
 ```bash
-unzip itilflow-1.13.2.zip -d /var/www/glpi/plugins/
+unzip itilflow-1.13.3.zip -d /var/www/glpi/plugins/
 chown -R www-data:www-data /var/www/glpi/plugins/itilflow
 ```
 
 Use your own path and web user. Build the archive on Linux
-(`git archive --prefix=itilflow/ -o itilflow-1.13.2.tar.gz v1.13.2`): in an
+(`git archive --prefix=itilflow/ -o itilflow-1.13.3.tar.gz v1.13.3`): in an
 archive built on Windows directories may lack the `x` permission, and GLPI
 returns 404 for the plugin's files.
 
@@ -83,7 +83,7 @@ routes) tab.** Who gets what — [RIGHTS.en.md](RIGHTS.en.md).
 
 ### 5. Check
 
-- `php bin/console plugin:list` — itilflow 1.13.2 enabled.
+- `php bin/console plugin:list` — itilflow 1.13.3 enabled.
 - The **Administration** menu has **“Маршруты этапов”**.
 - `files/_log/php-errors.log` has no errors mentioning `itilflow`.
 
@@ -109,7 +109,13 @@ After the upgrade:
   “Не запускать по форме” (Not started from the form): the same business
   rules start them. A route is moved to form start by hand
   ([REFERENCE.en.md](REFERENCE.en.md#5-starting-a-route));
-- from 1.13.0 and 1.13.1 to 1.13.2 the database structure does not change;
+- from 1.13.0, 1.13.1 and 1.13.2 to 1.13.3 the database structure does not change;
+- since 1.13.3 “Решить заявку — только после всех этапов” (Solve the ticket
+  only after all stages) = “Да” forbids solving the ticket before the route
+  is complete with “Предупредить” (Warn) and “Только записать” (Log only) too
+  (only the “Закрытие этапа без ответа” right may solve earlier, with a log
+  entry). This applies to tickets started after the upgrade; tickets started
+  earlier are solved as before ([REFERENCE.en.md](REFERENCE.en.md#9-out-of-order-actions));
 - stages saved before 1.13 are not re-checked: if you have deadlines or SLAs
   years ahead, open such stages and save them — the deadline will be checked.
 

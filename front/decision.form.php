@@ -1,12 +1,17 @@
 <?php
 
+use GlpiPlugin\Itilflow\Authorizer;
 use GlpiPlugin\Itilflow\Decision;
 use GlpiPlugin\Itilflow\Engine;
 use GlpiPlugin\Itilflow\Step;
+use GlpiPlugin\Itilflow\StepLine;
+
+global $CFG_GLPI;
 
 // CSRF проверяется middleware; права и номер изменения ответов повторно проверяет команда.
+// 1.13.3: и из самообслуживания — согласующий отвечает на вопросы этапа сам; кто может — решает
+// Decision::canWrite (там самообслуживанию доступен только адресат запроса на согласование этапа).
 Session::checkLoginUser();
-Session::checkCentralAccess();
 if (($_SERVER['REQUEST_METHOD'] ?? '') !== 'POST') {
     throw new \Glpi\Exception\Http\BadRequestHttpException('Страница открыта неверно. Вернитесь к заявке и повторите.');
 }
@@ -47,4 +52,9 @@ if (!$applied) {
     }
 }
 Session::addMessageAfterRedirect($message, false, $applied ? INFO : ERROR);
+// Как после «Вернуть на уточнение»: если заявка после ответа больше не видна — на главную, а не на «нет прав».
+$instance = $found ? $step->getInstance() : null;
+if ($applied && $instance !== null && !Authorizer::stepItemVisible($instance, $step)) {
+    Html::redirect(StepLine::homeUrl((string) Session::getCurrentInterface(), (string) $CFG_GLPI['root_doc']));
+}
 Html::back();

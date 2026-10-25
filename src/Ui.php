@@ -327,8 +327,10 @@ final class Ui
             $duration = $structured ? Step::elapsedSeconds($latest) : (int) $latest['duration'];
             [$actions, $menu] = $only !== null && !$is_current ? [[], []] : self::actions($instance, $step, $staff, $admin, $is_current,
                 $waiting_target === (int) $stage_id && $latest['state'] === Step::PENDING);
+            // В самообслуживании «Вопросы этапа» получает только адресат запроса на согласование (1.13.3) — его очередь.
             if ($result['kind'] === 'running' && self::yourTurn(array_column($actions, 'action'),
-                $step->isOwnedBy((int) Session::getLoginUserID(), Engine::myGroups()))) {
+                $step->isOwnedBy((int) Session::getLoginUserID(), Engine::myGroups())
+                    || (!$staff && in_array('decision', array_column($actions, 'action'), true)))) {
                 $result['summary'] = 'Ждём вашего действия.';
             }
             $out[] = [
@@ -661,7 +663,9 @@ final class Ui
         }
         if ($current && $instance->fields['state'] === Instance::RUNNING) {
             $decision = null;
-            if ($staff && Decision::canWrite($step)) {
+            // 1.13.3: и в самообслуживании — адресату запроса на согласование этапа (Decision::canWrite):
+            // вопросы этапа и «Сохранить и одобрить», как в основном интерфейсе.
+            if (Decision::canWrite($step)) {
                 $approveId = 0;
                 foreach (StructuredAccess::roster($step) ?? [] as $v) {
                     $type = $v['_type']; $vo = new $type(); $vo->fields = $v;

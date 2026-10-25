@@ -169,4 +169,21 @@ final class StepLine
     {
         return rtrim($rootDoc, '/') . ($interface === 'helpdesk' ? '/Helpdesk' : '/front/central.php');
     }
+
+    /**
+     * 1.13.3: заявку решили до конца маршрута по праву «Закрытие этапа без ответа». $state — чем маршрут
+     * держит заявку, со строчной буквы и без точки: «маршрут «…» не пройден, открыт этап «…»».
+     * Запись «Журнала маршрута»; отметку «разрешено, записано» к ней добавляет вкладка.
+     */
+    public static function earlyResolutionLog(string $state): string
+    {
+        return 'Решено до конца маршрута по праву «' . Terms::FORCE_CLOSE_RIGHT . '»: ' . trim($state) . '.';
+    }
+
+    /** То же — тому, кто решает: что решение разрешено и где оно записано. */
+    public static function earlyResolutionMessage(string $state): string
+    {
+        return 'Решение до конца маршрута разрешено по праву «' . Terms::FORCE_CLOSE_RIGHT . '» и записано в «'
+            . Terms::ROUTE_LOG . '»: ' . trim($state) . '.';
+    }
 }

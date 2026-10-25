@@ -47,7 +47,7 @@ GLPI. Пока маршрут не пройден, заявку нельзя р�
 ## Установка
 
 ```bash
-tar -xzf itilflow-1.13.2.tar.gz -C /var/www/glpi/plugins/
+tar -xzf itilflow-1.13.3.tar.gz -C /var/www/glpi/plugins/
 cd /var/www/glpi
 php bin/console plugin:install itilflow --username=<администратор GLPI>
 php bin/console plugin:activate itilflow

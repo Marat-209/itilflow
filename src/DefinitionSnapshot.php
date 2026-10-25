@@ -21,6 +21,15 @@ final class DefinitionSnapshot
     /** Схема, которую пишет этот выпуск. */
     public const SCHEMA = 3;
 
+    /**
+     * 1.13.3: отметка запуска «Решить заявку — только после всех этапов» — запрет сам по себе,
+     * без оглядки на «Если действие не по порядку этапов» (Engine::denyResolution). Ставится при запуске;
+     * у запусков, начатых раньше, её нет — они решаются по прежнему правилу, с которым начали.
+     * Схема снимка не растёт: лишний ключ допускается (valid), прежний выпуск его просто не читает.
+     */
+    public const RESOLUTION_KEY = 'resolution';
+    public const RESOLUTION_ALL_STAGES = 'all_stages';
+
     /** Как отвечает группа-согласующий: «любой участник» — один запрос группе, «каждый участник» — каждому. */
     public const GROUP_ANY = 'any';
     public const GROUP_EACH = 'each';
@@ -116,7 +125,19 @@ final class DefinitionSnapshot
         if (!self::valid($snapshot)) {
             throw new \RuntimeException('Заполните источник исхода, политику отказа и точки возврата новой версии.');
         }
+        $snapshot[self::RESOLUTION_KEY] = self::RESOLUTION_ALL_STAGES;
         return $snapshot;
+    }
+
+    /**
+     * Запуск решается по правилу 1.13.3: «Решить заявку — только после всех этапов» запрещает решение
+     * при любом «Если действие не по порядку этапов». false — запуск начат до 1.13.3, маршрут прежнего
+     * порядка или снимок недействителен: прежнее правило.
+     */
+    public static function resolutionAfterAllStages(Instance $instance): bool
+    {
+        $snapshot = self::load($instance);
+        return $snapshot !== null && ($snapshot[self::RESOLUTION_KEY] ?? null) === self::RESOLUTION_ALL_STAGES;
     }
 
     /** Снимок текущей схемы из строк маршрута и этапов — для проверки до запуска (строка готовности, перенос). */

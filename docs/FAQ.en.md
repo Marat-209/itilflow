@@ -76,6 +76,13 @@ substitution ended), the check leaves the stage alone — the route
 administrator decides: “Перенести ответ согласующего” (Transfer the
 approver's answer) in the stage menu.
 
+**The approver approved, but the stage says “Ждём ответы на вопросы этапа”
+(Waiting for answers to stage questions).**
+The stage has questions, and the approver clicked “Одобрить” without
+answering. They answer themselves — “Вопросы этапа” in their row on the
+“Маршрут этапов” tab → “Сохранить ответы” (Save answers), in self-service
+too. Answer and approval at once — “Сохранить и одобрить” (Save and approve).
+
 **The requester answered the clarification, but the route is waiting.**
 The requester's public followup or email continues the route by itself if
 an approval stage returned the ticket; if the answer was not taken at once,
@@ -96,9 +103,19 @@ Self-service is enough for an approver, but they need the GLPI right
 `front/cron.php`. **Setup → Automatic actions.**
 
 **The ticket cannot be solved.**
-The route is not complete or is “Остановлен” (Stopped) after a refusal. The
-route administrator chooses “Начать заново с этапа…” (Restart from stage) or
-“Прервать маршрут…”.
+The route is not complete or is “Остановлен” (Stopped) after a refusal, and
+the route has “Решить заявку — только после всех этапов” (Solve the ticket
+only after all stages) set to “Да” (Yes). This holds whatever “Если действие
+не по порядку этапов” says. The route administrator chooses “Начать заново
+с этапа…” (Restart from stage) or “Прервать маршрут…”. Someone with
+“Закрытие этапа без ответа” may solve it earlier — this is written to
+“Журнал маршрута”. If the route should not hold the solution — “Нет” (No) in
+that field (for new tickets).
+
+**The ticket used to be solved with a warning, now it cannot.**
+Since 1.13.3 “Решить заявку — только после всех этапов” forbids the solution
+with “Предупредить” (Warn) and with “Только записать” (Log only) too. Tickets
+started before the upgrade are solved as before.
 
 **The child ticket has a different SLA than the stage.**
 A GLPI business rule with an SLA action overrode it. Exclude the stage's

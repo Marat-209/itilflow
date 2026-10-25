@@ -143,9 +143,10 @@ class Instance extends CommonDBTM
 
         // В интерфейсе самообслуживания вкладку показываем, только если
         // маршрут это разрешает: не всякий процесс стоит раскрывать инициатору.
+        // 1.13.3: согласующему, которого ждут вопросы этапа, — и без этого: ответить на них можно только здесь.
         if (Session::getCurrentInterface() !== 'central') {
             $process = $inst->getProcess();
-            if ($process === null || !$process->fields['helpdesk_tab']) {
+            if ($process === null || (!$process->fields['helpdesk_tab'] && !self::questionsAwaitMe($inst))) {
                 return '';
             }
         }
@@ -160,6 +161,23 @@ class Instance extends CommonDBTM
         $total = count($latest);
         $done = count(array_filter($latest, fn($s) => in_array($s['state'], [Step::DONE, Step::SKIPPED], true)));
         return self::createTabEntry('Маршрут этапов', $total > 0 ? "{$done}/{$total}" : 0);
+    }
+
+    /**
+     * Текущий этап ждёт ответов на вопросы этапа от вошедшего — адресата запроса на согласование
+     * (Decision::canWrite). Повреждённые вопросы — нет: вкладка не падает.
+     */
+    private static function questionsAwaitMe(self $instance): bool
+    {
+        if ($instance->fields['state'] !== self::RUNNING || ($step = $instance->getCurrentStep()) === null) {
+            return false;
+        }
+        try {
+            return Decision::canWrite($step);
+        } catch (\Throwable $e) {
+            TransactionScope::keepGoing($e);
+            return false;
+        }
     }
 
     public static function displayTabContentForItem(CommonGLPI $item, $tabnum = 1, $withtemplate = 0)

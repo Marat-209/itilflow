@@ -2790,6 +2790,42 @@ final class Engine
         return true;
     }
 
+    /** Решения до конца маршрута, уже записанные в этом запросе: «Тип#номер». */
+    private static array $earlyResolutions = [];
+
+    /**
+     * «Решить заявку — только после всех этапов» (1.13.3). У запуска, начатого на 1.13.3 и позже
+     * (DefinitionSnapshot::resolutionAfterAllStages), решение запрещено при любом «Если действие не по порядку
+     * этапов». Право «Закрытие этапа без ответа» решение разрешает — с записью в «Журнал маршрута»: одна запись,
+     * хотя GLPI проверяет и само решение, и смену статуса заявки. Запуски, начатые раньше, решаются по прежнему
+     * правилу (deny). $state — чем маршрут держит заявку, со строчной буквы, без точки.
+     * Возвращает true, если решение надо ЗАБЛОКИРОВАТЬ.
+     */
+    public static function denyResolution(
+        Instance $instance,
+        string $itemtype,
+        int $items_id,
+        string $action,
+        string $blocked,
+        string $state
+    ): bool {
+        if (!DefinitionSnapshot::resolutionAfterAllStages($instance)) {
+            return self::deny($instance, $itemtype, $items_id, $action, $blocked);
+        }
+        if (self::userMayBypass()) {
+            $key = $itemtype . '#' . $items_id;
+            if (!isset(self::$earlyResolutions[$key])) {
+                self::$earlyResolutions[$key] = true;
+                Violation::record($instance, $itemtype, $items_id, $action, false, StepLine::earlyResolutionLog($state));
+                self::msg(StepLine::earlyResolutionMessage($state), WARNING);
+            }
+            return false;
+        }
+        Violation::record($instance, $itemtype, $items_id, $action, true, $blocked);
+        self::msg($blocked, ERROR);
+        return true;
+    }
+
     public static function myGroups(): array
     {
         return array_map('intval', $_SESSION['glpigroups'] ?? []);

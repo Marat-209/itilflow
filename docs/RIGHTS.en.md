@@ -16,7 +16,7 @@ tab.**
 | | Update | route administrator: setting up routes and stages, managing the route on a ticket |
 | | Create | new routes; with Update — import |
 | | Purge | deleting routes and stages |
-| “Закрытие этапа без ответа” (Closing a stage without an answer) | “Закрыть принудительно” (Force close) | close the current stage without an answer, with a reason |
+| “Закрытие этапа без ответа” (Closing a stage without an answer) | “Закрыть принудительно” (Force close) | close the current stage without an answer, with a reason; solve the ticket before the route is complete — with an entry in “Журнал маршрута” (Route log) |
 
 - The tab exists only for central-interface profiles. It is changed by
   whoever has the GLPI right Profiles: update.
@@ -38,9 +38,9 @@ another approver.
 | assignee of a “Задача” (Task) stage | “Завершить этап” (Complete stage), “Пропустить” (Skip), “Передать этап…” (Reassign stage) | central-interface profile in the ticket's entity |
 | ticket assignee | “Указать согласующего” (Set approver), “Засчитать согласование”, “Выполнять этап?” (Run the stage?), “Продолжить” (Continue) after clarification | the same |
 | child ticket assignee | “Отметить результат” (Record result), “Ответить инициатору” (Answer the requester) | profile in the child ticket's entity |
-| approver | “Одобрить” (Approve), “Отказать” (Refuse), “Вернуть на уточнение” (Return for clarification) | GLPI right “Утверждения заявок” (Ticket approvals); self-service is enough |
+| approver | “Одобрить” (Approve), “Отказать” (Refuse), “Вернуть на уточнение” (Return for clarification), answers to “Вопросы этапа” (Stage questions) and “Сохранить и одобрить” (Save and approve) | GLPI right “Утверждения заявок” (Ticket approvals); self-service is enough |
 | requester | see the route tab if enabled; answer a clarification with a followup; “Отозвать заявку” (Withdraw ticket) if allowed | access to their ticket |
-| duty administrator | “Закрыть принудительно…” for any current stage, including a child ticket | “Закрытие этапа без ответа” |
+| duty administrator | “Закрыть принудительно…” for any current stage, including a child ticket; solve the ticket before the route is complete | “Закрытие этапа без ответа” |
 
 “Продолжить” is needed only if the assignee asked for clarification, the
 approver no longer fits the ticket or the requester did not answer with a
